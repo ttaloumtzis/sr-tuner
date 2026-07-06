@@ -1,0 +1,12 @@
+data/
+ckpts/
+*.pt
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+uv.lock
+.pytest_cache/
+

@@ -1,0 +1,17 @@
+FROM nvidia/cuda:12.1-runtime-ubuntu22.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 python3-pip curl git \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:${PATH}"
+
+WORKDIR /app
+COPY pyproject.toml README.md ./
+RUN uv sync --extra cuda --index-url https://download.pytorch.org/whl/cu121 --no-dev
+
+COPY src/ src/
+RUN uv sync --extra cuda --index-url https://download.pytorch.org/whl/cu121 --no-dev
+
+ENTRYPOINT ["uv", "run", "srtool"]

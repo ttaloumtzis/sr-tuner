@@ -1,0 +1,13 @@
+# SwinIR model configuration
+name: swinir
+type: swinir
+num_in_ch: 3
+num_out_ch: 3
+embed_dim: 180
+depths: [6, 6, 6, 6, 6, 6]
+num_heads: [6, 6, 6, 6, 6, 6]
+window_size: 8
+mlp_ratio: 2.0
+img_range: 1.0
+upsampler: pixelshuffle
+scale: 4
