@@ -24,19 +24,29 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_DIR"
 
 case "$BACKEND" in
-    cuda)   INDEX_URL="https://download.pytorch.org/whl/cu121" ;;
-    rocm)   INDEX_URL="https://download.pytorch.org/whl/rocm6.2" ;;
-    cpu)    INDEX_URL="https://download.pytorch.org/whl/cpu" ;;
-    *)      echo "Error: backend must be cuda, rocm, or cpu"; exit 1 ;;
+    cuda|rocm|cpu) ;;
+    *) echo "Error: backend must be cuda, rocm, or cpu"; exit 1 ;;
 esac
 
-echo "==> Creating virtual environment..."
+echo "==> Checking for existing build lock caches..."
+if [ -d ".venv" ]; then
+    echo "    ♻️ Found existing '.venv' directory. Purging for clean workspace rebuild..."
+    rm -rf .venv
+fi
+
+if [ -f "uv.lock" ]; then
+    echo "    ♻️ Found matching 'uv.lock' snapshot footprint. Dropping to force pristine indexing resolution..."
+    rm -f uv.lock
+fi
+
+echo "==> Ensuring clean virtual environment structure..."
 uv venv
 
-echo "==> Installing with --extra $BACKEND (index: $INDEX_URL)..."
-uv sync --extra "$BACKEND" --extra-index-url "$INDEX_URL"
+echo "==> Syncing hardware workspace environment targeting configuration extra: [$BACKEND]..."
+# 💡 Native and clean execution:
+uv sync --extra "$BACKEND"
 
-echo "==> Running environment verification..."
+echo "==> Running environment verification metrics..."
 uv run python "$SCRIPT_DIR/verify_env.py"
 
 echo "==> Build complete."

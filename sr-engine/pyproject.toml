@@ -12,24 +12,26 @@ dependencies = [
     "opencv-python>=4.8",
     "pillow>=10.0",
     "tqdm>=4.66",
+    # 💡 torch removed from here to allow targeted backend installations
 ]
 
 [project.optional-dependencies]
+cpu = [
+    "torch>=2.12.1",
+    "torchvision",
+]
 cuda = [
-    "torch>=2.2",
-    "torchvision>=0.17",
+    "torch>=2.12.1",
+    "torchvision",
 ]
 rocm = [
-    "torch>=2.2",
-    "torchvision>=0.17",
-]
-cpu = [
-    "torch>=2.2",
-    "torchvision>=0.17",
+    "torch>=2.12.1; sys_platform == 'linux'",
+    "torchvision; sys_platform == 'linux'",
 ]
 
 [project.scripts]
 srengine = "sr_engine.cli.main:cli"
+dataset = "sr_engine.cli.cmd_dataset:dataset"
 
 [dependency-groups]
 dev = [
@@ -43,3 +45,41 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# --- ⚙️ UV HARDWARE ACCELERATION INDEXES ---
+
+[tool.uv]
+conflicts = [
+    [
+        { extra = "cpu" },
+        { extra = "cuda" },
+        { extra = "rocm" }
+    ]
+]
+
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-rocm"
+url = "https://download.pytorch.org/whl/rocm7.2"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cuda", extra = "cuda" },
+    { index = "pytorch-rocm", extra = "rocm" },
+    { index = "pytorch-cpu", extra = "cpu" },
+]
+torchvision = [
+    { index = "pytorch-cuda", extra = "cuda" },
+    { index = "pytorch-rocm", extra = "rocm" },
+    { index = "pytorch-cpu", extra = "cpu" },
+]

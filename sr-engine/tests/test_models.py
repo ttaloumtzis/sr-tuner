@@ -2,9 +2,9 @@
 
 import pytest
 
-from sr_engine.models.registry import build_model, register
 from sr_engine.models.archs.rrdbnet import RRDBNet
 from sr_engine.models.archs.swinir import SwinIR
+from sr_engine.models.registry import build_model, register
 
 
 class TestModelRegistry:
@@ -28,6 +28,7 @@ class TestRRDBNet:
 
     def test_forward_raises(self) -> None:
         import torch
+
         model = RRDBNet()
         dummy = torch.randn(1, 3, 64, 64)
         with pytest.raises(NotImplementedError):
@@ -39,6 +40,7 @@ class TestSwinIR:
 
     def test_forward_raises(self) -> None:
         import torch
+
         model = SwinIR()
         dummy = torch.randn(1, 3, 64, 64)
         with pytest.raises(NotImplementedError):

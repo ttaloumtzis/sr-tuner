@@ -14,5 +14,7 @@ degradation:
     prob: 1.0
   resize:
     method: bicubic  # bicubic, bilinear, lanczos
-frame_rate: 24
+frame_rate: 10
 frame_format: png
+start_time: 0.0
+duration: null
