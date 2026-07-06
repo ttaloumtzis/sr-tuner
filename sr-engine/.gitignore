@@ -9,4 +9,4 @@ dist/
 build/
 uv.lock
 .pytest_cache/
-
+.idea/
