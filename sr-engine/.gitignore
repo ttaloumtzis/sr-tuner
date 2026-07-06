@@ -1,4 +1,3 @@
-data/
 ckpts/
 *.pt
 .venv/
@@ -10,3 +9,5 @@ build/
 uv.lock
 .pytest_cache/
 .idea/
+graphify-out/
+.opencode/
