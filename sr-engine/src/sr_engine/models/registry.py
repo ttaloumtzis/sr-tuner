@@ -8,7 +8,7 @@ _registry: dict[str, type[nn.Module]] = {}
 def register(name: str):
     def wrapper(cls: type[nn.Module]) -> type[nn.Module]:
         _registry[name] = cls
-        print(f"Registered model: {name}") # Debugging aid
+        #print(f"Registered model: {name}") # Debugging aid
         return cls
     return wrapper
 

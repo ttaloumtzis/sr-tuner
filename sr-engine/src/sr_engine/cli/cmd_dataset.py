@@ -4,7 +4,7 @@ from pathlib import Path
 import click
 from sr_engine.data.dataset_builder import build_from_video, build_from_preprocessed
 from sr_engine.data.dataset_validator import validate
-from sr_engine.utils.config import load_config
+from sr_engine.utils.config import load_config, DefaultConfigs
 from pathlib import Path
 from sr_engine.data.dataset_health import check_dataset_health, prune_black_frames
 
@@ -16,43 +16,28 @@ def dataset() -> None:
 @dataset.command()
 @click.option("--input", "-i", required=True, type=click.Path(exists=True, path_type=Path),
               help="Input video file or preprocessed dataset directory.")
-# CHANGED: required=False, and added an informative help string
 @click.option("--config", "-c", required=False, default=None, type=click.Path(exists=True, path_type=Path),
-              help="Dataset config YAML. If omitted, defaults to sr_engine/configs/datasets/video_pairs.yml")
+              help="Dataset config YAML. Defaults to internal project config.")
 @click.option("--out", "-o", required=False, type=click.Path(path_type=Path),
               help="Output dataset directory. Required if input is a video file.")
 def build(input: Path, config: Path | None, out: Path | None) -> None:
-    """Build a dataset from a video file or validate a preprocessed directory.
+    """Build a dataset from a video file or validate a preprocessed directory."""
+    cfg_loader = DefaultConfigs()
+    # 1. Check if user passed a custom config
+    if config is not None:
+        cfg = load_config(config)
 
-    If --config is not specified, the system automatically falls back to the
-    default configuration file located inside the package installation directory.
-    """
-    # 1. Fallback to package default config if none is provided
-    if config is None:
-        # __file__ is /.../src/sr_engine/cli/cmd_dataset.py
-        cli_dir = Path(__file__).resolve().parent  # /.../src/sr_engine/cli
-        package_root = cli_dir.parent  # /.../src/sr_engine
+    # 2. Load the default config
+    else:
+        cfg = cfg_loader.datasets
 
-        # FIXED: Corrected extension from .yml to .yaml to match your file tree exactly
-        config = package_root / "configs" / "datasets" / "video_pairs.yaml"
-
-        if not config.is_file():
-            raise FileNotFoundError(
-                f"Expected internal default configuration template at '{config}', "
-                f"but it could not be located. Please check the asset layout."
-            )
-
-        click.echo(f"No configuration provided. Using package defaults: {config.name}")
-
-    # 2. Load the resolved config path
-    cfg = load_config(config)
-
+    # 3. Execution logic remains the same
     if input.is_dir():
         click.echo(f"Processing and validating preprocessed directory: {input}")
         result = build_from_preprocessed(input, cfg)
     else:
         if out is None:
-            raise click.BadParameter("The '--out / -o' option is required when the input is a video file.")
+            raise click.BadParameter("The '--out / -o' option is required for video files.")
         click.echo(f"Extracting and degrading video: {input} -> {out}")
         result = build_from_video(input, out, cfg)
 

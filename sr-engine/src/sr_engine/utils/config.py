@@ -5,6 +5,9 @@ from pathlib import Path
 import yaml
 
 
+
+
+
 def load_config(path: Path | None) -> dict:
     """Load a YAML configuration file and return it as a nested dict.
 
@@ -54,3 +57,25 @@ def save_config(config: dict, path: Path) -> None:
         # default_flow_style=False keeps everything formatted as clean, indented blocks
         # sort_keys=False preserves your logical dictionary structure layout
         yaml.safe_dump(config, f, default_flow_style=False, sort_keys=False)
+
+
+class DefaultConfigs:
+    def __init__(self):
+        # Base path pointing to src/sr_engine/utils/configs/
+        self.base_path = Path(__file__).resolve().parents[1] / "utils" / "configs"
+
+        # 1. Load your training and dataset configs
+        self.train = load_config(self.base_path / "train" / "base.yaml")
+        self.datasets = load_config(self.base_path / "datasets" / "video_pairs.yaml")
+
+        # 2. Load ALL models into a dictionary
+        # This gives you a clean way to access model_configs['swinir']
+        self.models = {
+            "swinir": load_config(self.base_path / "models" / "swinir.yaml"),
+            "rrdb_esrgan": load_config(self.base_path / "models" / "rrdb_esrgan.yaml")
+        }
+
+    def get_full_config(self, model_name: str) -> dict:
+        """Merges train + dataset + specific model into one config dict."""
+        base = merge_overrides(self.train, self.datasets)
+        return merge_overrides(base, self.models[model_name])

@@ -121,22 +121,24 @@ def _process_single_frame(
         lr_dir: Path,
         scale: int,
         kwargs: dict
-) -> Path | None:
-    """Helper worker task to read, degrade, and write a single frame."""
+) -> tuple[Path, Path | None]:
+    """Helper worker task to read, degrade, and write a single frame.
+
+    Always returns the *hr_path* alongside the result (or None on failure)
+    so callers can match results back to their source frame by identity
+    rather than by relying on list position/order.
+    """
     hr_img = cv2.imread(str(hr_path))
     if hr_img is None:
         logger.warning(f"[degrade] Skipping unreadable frame: {hr_path}")
         print(f"[degrade] Skipping unreadable frame: {hr_path}")
-        return None
+        return hr_path, None
 
     lr_img = _degrade_image(hr_img, scale, **kwargs)
 
     lr_path = lr_dir / hr_path.name
     cv2.imwrite(str(lr_path), lr_img)
-    return lr_path
-
-
-
+    return hr_path, lr_path
 
 
 def batch_degrade(
@@ -144,16 +146,20 @@ def batch_degrade(
     lr_dir: Path,
     scale: int,
     config: dict,
-) -> list[Path]:
+) -> list[tuple[Path, Path]]:
     """Generate LR images for all HR images in *hr_paths* and write to *lr_dir*.
 
-    Returns a sorted list of generated LR frame paths.
+    Returns a sorted list of ``(hr_path, lr_path)`` pairs for every frame that
+    was successfully degraded. Frames that failed to read/decode (see
+    ``_process_single_frame``) are simply omitted from the result — callers
+    must NOT assume the returned list lines up positionally with *hr_paths*,
+    since a dropped frame would otherwise silently shift every pair after it.
     """
     lr_dir.mkdir(parents=True, exist_ok=True)
-    lr_paths: list[Path] = []
+    pairs: list[tuple[Path, Path]] = []
 
     if not hr_paths:
-        return lr_paths
+        return pairs
 
     # Extract kwargs mapping exactly to the degrade_image signature
     deg_cfg = config.get("degradation", {})
@@ -176,9 +182,9 @@ def batch_degrade(
             unit="img"
         )
 
-        for result in results:
-            if result is not None:
-                lr_paths.append(result)
+        for hr_path, lr_path in results:
+            if lr_path is not None:
+                pairs.append((hr_path, lr_path))
 
-    lr_paths.sort()
-    return lr_paths
+    pairs.sort(key=lambda pair: pair[0])
+    return pairs

@@ -18,6 +18,10 @@ dependencies = [
 [project.scripts]
 srengine = "sr_engine.cli.main:cli"
 dataset = "sr_engine.cli.cmd_dataset:dataset"
+env = "sr_engine.cli.cmd_env:env"
+infer = "sr_engine.cli.cmd_infer:infer"
+model = "sr_engine.cli.cmd_model:model"
+train = "sr_engine.cli.cmd_train:train"
 
 [dependency-groups]
 dev = [

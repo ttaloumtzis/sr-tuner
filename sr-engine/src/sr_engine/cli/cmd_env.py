@@ -5,7 +5,7 @@ import click
 import torch
 
 from sr_engine.device.backend import get_device, is_rocm, autocast_dtype, supports_flash_attn
-from sr_engine.utils.config import load_config
+from sr_engine.utils.config import load_config, DefaultConfigs
 
 @click.group()
 def env() -> None:
@@ -31,25 +31,31 @@ def check() -> None:
     click.echo(f"Autocast dtype:   {autocast_dtype()}")
     click.echo(f"Flash attention:  {supports_flash_attn()}")
 
+
 @env.command()
-@click.option("--model", "-m", required=True, type=click.Path(exists=True, path_type=Path),
-              help="Model config YAML to benchmark.")
-def bench(model: Path) -> None:
+@click.option("--model", "-m", default="rrdb_esrgan", help="Model name (e.g., 'swinir').")
+def bench(model: str) -> None:
     """Run a micro-benchmark (forward+backward pass) and report throughput."""
     from sr_engine.models.registry import build_model
     import time
 
     try:
-        model_cfg = load_config(model)
-        net = build_model(model_cfg["name"], model_cfg)
-        device = get_device()
-        net = net.to(device).train() # Ensure in training mode
+        # 1. Initialize loader and get the full model configuration
+        cfg_loader = DefaultConfigs()
+        model_cfg = cfg_loader.models.get(model)
 
-        # Warm-up pass
+        if not model_cfg:
+            raise click.ClickException(f"Model '{model}' not found.")
+
+        # 2. Build model using the name and config dict
+        net = build_model(model, model_cfg)
+        device = get_device()
+        net = net.to(device).train()
+
+        # Warm-up and Benchmark (as before)
         dummy = torch.randn(1, 3, 128, 128, device=device)
         _ = net(dummy)
 
-        # Benchmark pass
         start_time = time.perf_counter()
         out = net(dummy)
         loss = out.sum()

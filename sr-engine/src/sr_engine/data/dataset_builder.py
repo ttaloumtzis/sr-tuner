@@ -35,13 +35,21 @@ def build_from_video(
     if not hr_paths:
         raise ValueError(f"No frames were extracted from video: {video_path}")
 
-    # 2. Degradation pipeline to generate the LR pairs
-    lr_paths = batch_degrade(
+    # 2. Degradation pipeline to generate the LR pairs.
+    # NOTE: batch_degrade returns (hr, lr) pairs matched by identity, not two
+    # separately-sorted lists — do NOT zip(hr_paths, lr_paths) here. If any
+    # frame fails to decode, a positional zip would silently misalign every
+    # pair after the dropped one.
+    hr_lr_pairs = batch_degrade(
         hr_paths=hr_paths,
         lr_dir=out_dir_lr,
         scale=config.get("scale", 4),
         config=config,
     )
+
+    if len(hr_lr_pairs) < len(hr_paths):
+        skipped = len(hr_paths) - len(hr_lr_pairs)
+        print(f"[dataset_builder] Warning: {skipped} frame(s) failed to degrade and were skipped.")
 
     # Build the temporary manifest metadata block first so the validator
     # can read the configured scale factor dynamically.
@@ -56,7 +64,7 @@ def build_from_video(
                 "hr": str(hr.relative_to(out_dir)),
                 "lr": str(lr.relative_to(out_dir)),
             }
-            for hr, lr in zip(hr_paths, lr_paths)
+            for hr, lr in hr_lr_pairs
         ],
     }
 

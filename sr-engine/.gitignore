@@ -12,3 +12,4 @@ uv.lock
 graphify-out/
 .opencode/
 AGENTS.md
+experiments/*
