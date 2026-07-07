@@ -131,7 +131,6 @@ def _process_single_frame(
     hr_img = cv2.imread(str(hr_path))
     if hr_img is None:
         logger.warning(f"[degrade] Skipping unreadable frame: {hr_path}")
-        print(f"[degrade] Skipping unreadable frame: {hr_path}")
         return hr_path, None
 
     lr_img = _degrade_image(hr_img, scale, **kwargs)

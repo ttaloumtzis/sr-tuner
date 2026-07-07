@@ -1,5 +1,6 @@
 """Checkpoint save/load, EMA state handling, and export utilities."""
 
+import pickle
 from pathlib import Path
 
 import torch
@@ -67,7 +68,17 @@ def load_checkpoint(
     if not path.is_file():
         raise FileNotFoundError(f"Checkpoint file not found: {path}")
 
-    checkpoint = torch.load(path, map_location=map_location, weights_only=False)
+    try:
+        checkpoint = torch.load(path, map_location=map_location, weights_only=True)
+    except (pickle.UnpicklingError, RuntimeError):
+        import warnings
+        warnings.warn(
+            f"Loading checkpoint with weights_only=False at '{path}'. "
+            "This is unsafe for untrusted sources. Re-save with a current "
+            "PyTorch version to silence this warning.",
+            FutureWarning, stacklevel=2,
+        )
+        checkpoint = torch.load(path, map_location=map_location, weights_only=False)
 
     if load_ema:
         ema_state = checkpoint.get("ema_state_dict")

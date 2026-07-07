@@ -52,7 +52,7 @@ def validate(dataset_dir: Path) -> ValidationReport:
             manifest_data = json.load(f)
         scale = int(manifest_data.get("config", {}).get("scale", 4))
         manifest_pairs = manifest_data.get("pairs", [])
-    except Exception as e:
+    except json.JSONDecodeError as e:
         problems.append(f"Failed to parse manifest.json: {e}")
         return ValidationReport(ok=False, problems=problems)
 

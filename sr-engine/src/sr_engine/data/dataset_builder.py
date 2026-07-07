@@ -5,6 +5,10 @@ from .video_extract import extract_frames
 import json
 from pathlib import Path
 
+from sr_engine.utils.logging import get_logger
+
+log = get_logger(__name__)
+
 def build_from_video(
         video_path: Path,
         out_dir: Path,
@@ -49,7 +53,7 @@ def build_from_video(
 
     if len(hr_lr_pairs) < len(hr_paths):
         skipped = len(hr_paths) - len(hr_lr_pairs)
-        print(f"[dataset_builder] Warning: {skipped} frame(s) failed to degrade and were skipped.")
+        log.warning("%d frame(s) failed to degrade and were skipped.", skipped)
 
     # Build the temporary manifest metadata block first so the validator
     # can read the configured scale factor dynamically.
@@ -86,7 +90,7 @@ def build_from_video(
             f"Dataset validation failed for '{out_dir}'! Found the following problems:\n- {error_msg}"
         )
 
-    print(f"Successfully verified and built a stable dataset with {report.num_pairs} pairs at: {out_dir}")
+    log.info("Successfully verified and built a stable dataset with %d pairs at: %s", report.num_pairs, out_dir)
     return out_dir
 
 
@@ -154,5 +158,5 @@ def build_from_preprocessed(
             f"Preprocessed folder validation failed for '{dataset_dir}'!\n- {error_msg}"
         )
 
-    print(f"Successfully finalized preprocessed dataset with {report.num_pairs} verified pairs at: {dataset_dir}")
+    log.info("Successfully finalized preprocessed dataset with %d verified pairs at: %s", report.num_pairs, dataset_dir)
     return dataset_dir

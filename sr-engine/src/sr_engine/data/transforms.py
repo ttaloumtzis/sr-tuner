@@ -98,6 +98,32 @@ class RandomRotate:
         return lr, hr
 
 
+class CenterCrop:
+    """Deterministically center-crop a pair of (LR, HR) images."""
+
+    def __init__(self, patch_size: int, scale: int) -> None:
+        self.patch_size = patch_size
+        self.scale = scale
+
+    def __call__(
+            self, lr: torch.Tensor, hr: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        _, lr_h, lr_w = lr.shape
+        if lr_h < self.patch_size or lr_w < self.patch_size:
+            raise ValueError(
+                f"LR image dimensions ({lr_w}x{lr_h}) are smaller than "
+                f"requested patch size ({self.patch_size}x{self.patch_size})."
+            )
+        y_lr = (lr_h - self.patch_size) // 2
+        x_lr = (lr_w - self.patch_size) // 2
+        y_hr = y_lr * self.scale
+        x_hr = x_lr * self.scale
+        hr_patch_size = self.patch_size * self.scale
+        lr_patch = lr[:, y_lr: y_lr + self.patch_size, x_lr: x_lr + self.patch_size]
+        hr_patch = hr[:, y_hr: y_hr + hr_patch_size, x_hr: x_hr + hr_patch_size]
+        return lr_patch, hr_patch
+
+
 class Compose:
     """Compose a sequence of augmentations."""
 

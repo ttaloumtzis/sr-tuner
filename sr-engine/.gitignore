@@ -13,3 +13,4 @@ graphify-out/
 .opencode/
 AGENTS.md
 experiments/*
+.serena/

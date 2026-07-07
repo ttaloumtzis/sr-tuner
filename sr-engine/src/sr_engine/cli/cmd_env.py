@@ -66,5 +66,5 @@ def bench(model: str) -> None:
         click.echo(f"Execution time:   {(end_time - start_time) * 1000:.2f} ms")
         click.echo(f"Output shape:     {list(out.shape)}")
 
-    except Exception as e:
+    except (ValueError, KeyError, RuntimeError) as e:
         click.secho(f"Benchmark failed: {e}", fg="red")

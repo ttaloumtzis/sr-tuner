@@ -2,11 +2,16 @@
 
 from pathlib import Path
 import click
+import yaml
+
 from sr_engine.data.dataset_builder import build_from_video, build_from_preprocessed
 from sr_engine.data.dataset_validator import validate
-from sr_engine.utils.config import load_config, DefaultConfigs
-from pathlib import Path
+from sr_engine.utils.config import load_config, merge_overrides, DefaultConfigs
 from sr_engine.data.dataset_health import check_dataset_health, prune_black_frames
+from sr_engine.workspace import Workspace
+
+import sys
+
 
 @click.group()
 def dataset() -> None:
@@ -20,31 +25,41 @@ def dataset() -> None:
               help="Dataset config YAML. Defaults to internal project config.")
 @click.option("--out", "-o", required=False, type=click.Path(path_type=Path),
               help="Output dataset directory. Required if input is a video file.")
-def build(input: Path, config: Path | None, out: Path | None) -> None:
+@click.option("--dump-config", is_flag=True, default=False, help="Print final merged config and exit.")
+@click.pass_context
+def build(ctx, input: Path, config: Path | None, out: Path | None, dump_config: bool) -> None:
     """Build a dataset from a video file or validate a preprocessed directory."""
-    cfg_loader = DefaultConfigs()
-    # 1. Check if user passed a custom config
-    if config is not None:
-        cfg = load_config(config)
+    ws: Workspace | None = ctx.obj.get("workspace") if ctx.obj else None
 
-    # 2. Load the default config
+    cfg_loader = DefaultConfigs()
+
+    if config is not None:
+        custom_cfg = load_config(config)
+        cfg = merge_overrides(cfg_loader.datasets, custom_cfg)
     else:
         cfg = cfg_loader.datasets
 
-    # 3. Execution logic remains the same
+    if dump_config:
+        yaml.safe_dump(cfg, sys.stdout, default_flow_style=False, sort_keys=False)
+        return
+
+    if ws and out is None and not input.is_dir():
+        if input.is_file():
+            out = ws.path / "datasets" / input.stem
+
     if input.is_dir():
         click.echo(f"Processing and validating preprocessed directory: {input}")
         result = build_from_preprocessed(input, cfg)
     else:
         if out is None:
             raise click.BadParameter("The '--out / -o' option is required for video files.")
+        out.parent.mkdir(parents=True, exist_ok=True)
         click.echo(f"Extracting and degrading video: {input} -> {out}")
         result = build_from_video(input, out, cfg)
 
     click.secho(f"Dataset ready at: {result}", fg="green", bold=True)
 
 
-# FIXED: Added name="validate" explicitly here so it isn't called "validate-cmd"
 @dataset.command(name="validate")
 @click.option(
     "--path", "-p", required=True, type=click.Path(exists=True, path_type=Path),
@@ -58,21 +73,19 @@ def validate_cmd(path: Path) -> None:
 
     if report.ok:
         click.secho(
-            f"✔ Valid dataset: {report.num_pairs} paired images, no issues.",
+            f"Valid dataset: {report.num_pairs} paired images, no issues.",
             fg="green",
             bold=True
         )
     else:
         click.secho(
-            f"❌ Validation failed: {report.num_pairs} valid pairs found, "
+            f"Validation failed: {report.num_pairs} valid pairs found, "
             f"{len(report.problems)} problems identified:",
             fg="red",
             bold=True
         )
-
         for p in report.problems:
             click.echo(f"  - {p}")
-
         raise click.Abort()
 
 
@@ -81,60 +94,54 @@ def validate_cmd(path: Path) -> None:
     "--path", "-p", required=True, type=click.Path(exists=True, path_type=Path),
     help="Dataset root directory containing HR/ folder to analyze."
 )
-# NEW FLAG: Automatically answers 'yes' to deletion prompt if flag is provided
 @click.option(
     "--yes", "-y", is_flag=True, default=False,
     help="Automatically proceed and delete identified black frame pairs without asking."
 )
 def health_cmd(path: Path, yes: bool) -> None:
-    """Profile statistical balance and attributes of an existing dataset (Data Quality check)."""
+    """Profile statistical balance and attributes of an existing dataset."""
     click.echo(f"Analyzing dataset health and distribution at: {path}...")
-
     report = check_dataset_health(path)
 
     if "error" in report:
-        click.secho(f"❌ {report['error']}", fg="red", bold=True)
+        click.secho(f"Error: {report['error']}", fg="red", bold=True)
         raise click.Abort()
 
-    # Print out standard statistics
-    click.echo("\n" + "=" * 40 + "\n📊 DATASET HEALTH PROFILE\n" + "=" * 40)
+    click.echo(f"\n{'='*40}\nDATASET HEALTH PROFILE\n{'='*40}")
     click.echo(f"Total Logged Frames: {report['total_images']}")
 
-    click.echo("\n🔹 Resolution Breakdown:")
+    click.echo("\nResolution Breakdown:")
     for res, count in report['resolutions'].items():
         click.echo(f"  - {res}: {count} frames")
 
-    click.echo("\n🔹 Aspect Ratios:")
+    click.echo("\nAspect Ratios:")
     for ratio, count in report['aspect_ratios'].items():
         click.echo(f"  - {ratio}: {count} frames")
 
-    click.echo("\n🔹 Color Spaces / Channels:")
+    click.echo("\nColor Spaces / Channels:")
     for ch, count in report['channels'].items():
         click.echo(f"  - {ch}: {count} frames")
 
-    #3. Handle Black Frame Identification and Actions
     black_count = len(report["black_frames"])
     if black_count > 0:
-        click.echo("\n" + "!" * 40)
-        click.secho(f"⚠️ Warning: Found {black_count} completely black frame pairs!", fg="yellow", bold=True)
-        click.echo("!" * 40)
+        click.echo(f"\n{'!'*40}")
+        click.secho(f"Warning: Found {black_count} completely black frame pairs!", fg="yellow", bold=True)
+        click.echo('!'*40)
 
-        # Check if we should execute deletion right away or ask via prompt
-        proceed_to_delete = False
+        proceed = False
         if yes:
-            proceed_to_delete = True
+            proceed = True
         else:
-            proceed_to_delete = click.confirm(
-                click.style("Do you want to permanently delete these black frames and update manifest.json?",
-                            fg="cyan", bold=True),
+            proceed = click.confirm(
+                "Do you want to permanently delete these black frames and update manifest.json?",
                 default=False
             )
 
-        if proceed_to_delete:
+        if proceed:
             click.echo(f"Pruning {black_count} pairs from dataset paths and updating layout manifest...")
             prune_black_frames(path, report["black_frames"])
-            click.secho("✔ Dataset successfully cleaned!", fg="green", bold=True)
+            click.secho("Dataset successfully cleaned!", fg="green", bold=True)
         else:
-            click.echo("Skipping cleanup. Black frames left untouched in dataset structure.")
+            click.echo("Skipping cleanup.")
     else:
-        click.echo("\n✔ Quality Check: No dead or black frame anomalies discovered.")
+        click.echo("\nQuality Check: No dead or black frame anomalies discovered.")

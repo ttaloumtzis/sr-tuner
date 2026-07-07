@@ -175,10 +175,18 @@ def infer_video(
 
                 if writer is None:
                     out_h, out_w = output_bgr.shape[:2]
-                    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-                    writer = cv2.VideoWriter(str(output_path), fourcc, fps, (out_w, out_h))
-                    if not writer.isOpened():
-                        raise RuntimeError(f"Could not open video writer for: {output_path}")
+                    fourcc = None
+                    for codec in ("avc1", "mp4v"):
+                        fourcc = cv2.VideoWriter_fourcc(*codec)
+                        writer = cv2.VideoWriter(str(output_path), fourcc, fps, (out_w, out_h))
+                        if writer.isOpened():
+                            break
+                        writer = None
+                    if writer is None:
+                        raise RuntimeError(
+                            f"Could not open video writer for: {output_path} "
+                            "(tried 'avc1' and 'mp4v' codecs)"
+                        )
 
                 writer.write(output_bgr)
                 pbar.update(1)

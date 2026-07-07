@@ -1,15 +1,41 @@
 """Training engine — orchestrates model training, checkpointing, logging."""
 
+import time
 from pathlib import Path
+
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset, random_split
 from tqdm import tqdm
 
 from sr_engine.data.datasets import PairedImageFolderDataset
-from sr_engine.data.transforms import Compose, RandomCrop, RandomFlip, RandomRotate
+from sr_engine.data.transforms import CenterCrop, Compose, RandomCrop, RandomFlip, RandomRotate
+from sr_engine.engine.metrics import psnr, ssim
+from sr_engine.engine.metrics_stream import MetricsStream
 from sr_engine.models.checkpoint import load_checkpoint, save_checkpoint
 from sr_engine.models.losses import L1Loss, PerceptualLoss
 from sr_engine.models.registry import build_model
+from sr_engine.utils.logging import get_logger
+
+log = get_logger(__name__)
+
+
+class _TransformSubset(Dataset):
+    """Subset that applies transforms on-the-fly after retrieval from the base dataset."""
+
+    def __init__(self, dataset: Dataset, indices: list[int], transform=None) -> None:
+        self.dataset = dataset
+        self.indices = indices
+        self.transform = transform
+
+    def __len__(self) -> int:
+        return len(self.indices)
+
+    def __getitem__(self, idx: int):
+        lr, hr = self.dataset[self.indices[idx]]
+        if self.transform:
+            lr, hr = self.transform(lr, hr)
+        return lr, hr
+
 
 class Trainer:
     """Trainer for super-resolution models using epoch-based logic."""
@@ -21,55 +47,139 @@ class Trainer:
         dataset_dir: Path,
         resume_from: Path | None = None,
         device: str = "cuda",
+        validation_enabled: bool = True,
+        validation_split: float = 0.1,
+        metrics_stream: MetricsStream | None = None,
+        metrics_frequency: int = 1,
     ) -> None:
         self.model_cfg = model_cfg
         self.device = torch.device(device)
+        self.train_cfg = train_cfg
+        self.metrics_stream = metrics_stream
+        self.metrics_frequency = metrics_frequency
 
-        # Epoch settings
         self.max_epochs = int(train_cfg.get("max_epochs", 100))
         self.save_per_epoch = int(train_cfg.get("save_per_epoch", 5))
         self.current_epoch = 0
 
-        # Optimization & Checkpointing
         self.learning_rate = float(train_cfg.get("learning_rate", 1e-4))
         self.checkpoint_dir = Path(train_cfg.get("checkpoint_dir", "checkpoints"))
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-        # Model, Optimizer, Losses
+        seed = int(train_cfg.get("seed", 42))
+        torch.manual_seed(seed)
+
         self.model = build_model(model_cfg["name"], model_cfg).to(self.device)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate)
-        self.pixel_loss = L1Loss()
 
+        self.pixel_loss = L1Loss()
         loss_cfg = train_cfg.get("losses", {})
         self.perceptual_weight = float(loss_cfg.get("perceptual_weight", 0.0))
-        self.perceptual_loss = PerceptualLoss(loss_cfg.get("perceptual_layers")).to(self.device) if self.perceptual_weight > 0 else None
+        self.perceptual_loss = (
+            PerceptualLoss(loss_cfg.get("perceptual_layers", ["relu5_4"])).to(self.device)
+            if self.perceptual_weight > 0 else None
+        )
 
-        # Data
-        transform = Compose([RandomCrop(patch_size=int(train_cfg.get("patch_size", 48)), scale=int(model_cfg.get("scale", 4))), RandomFlip(), RandomRotate()])
-        dataset = PairedImageFolderDataset(dataset_dir, transform=transform)
-        self.dataloader = DataLoader(dataset, batch_size=int(train_cfg.get("batch_size", 16)), shuffle=True,
-                                     num_workers=int(train_cfg.get("num_workers", 4)), drop_last=True, pin_memory=(self.device.type == "cuda"))
+        transform = Compose([
+            RandomCrop(
+                patch_size=int(train_cfg.get("patch_size", 48)),
+                scale=int(model_cfg.get("scale", 4)),
+            ),
+            RandomFlip(),
+            RandomRotate(),
+        ])
+
+        batch_size = int(train_cfg.get("batch_size", 16))
+        num_workers = int(train_cfg.get("num_workers", 4))
+        pin = self.device.type == "cuda"
+
+        full_dataset = PairedImageFolderDataset(dataset_dir, transform=None)
+
+        if validation_enabled and validation_split > 0 and len(full_dataset) > 1:
+            val_size = max(1, int(len(full_dataset) * validation_split))
+            train_size = len(full_dataset) - val_size
+            generator = torch.Generator().manual_seed(seed)
+            train_idx, val_idx = random_split(
+                range(len(full_dataset)), [train_size, val_size], generator=generator,
+            )
+            val_transform = CenterCrop(
+                patch_size=int(train_cfg.get("patch_size", 48)),
+                scale=int(model_cfg.get("scale", 4)),
+            )
+            self.train_dataset = _TransformSubset(full_dataset, train_idx.indices, transform)
+            self.val_dataset = _TransformSubset(full_dataset, val_idx.indices, val_transform)
+            log.info(
+                "Split dataset: %d train / %d val pairs (%.0f%% val)",
+                train_size, val_size, validation_split * 100,
+            )
+        else:
+            self.train_dataset = _TransformSubset(
+                full_dataset, list(range(len(full_dataset))), transform,
+            )
+            self.val_dataset = None
+            log.info("Validation disabled — using all %d pairs for training", len(full_dataset))
+
+        self.train_dataloader = DataLoader(
+            self.train_dataset, batch_size=batch_size, shuffle=True,
+            num_workers=num_workers, drop_last=True, pin_memory=pin,
+        )
+
+        if self.val_dataset is not None:
+            self.val_dataloader = DataLoader(
+                self.val_dataset, batch_size=batch_size, shuffle=False,
+                num_workers=num_workers, pin_memory=pin,
+            )
+        else:
+            self.val_dataloader = None
+
+        self._build_scheduler()
 
         if resume_from:
             self._resume(resume_from)
 
+    def _build_scheduler(self) -> None:
+        """Build the LR scheduler with optional warmup."""
+        min_lr = float(self.train_cfg.get("min_lr", 1e-7))
+        warmup_steps = int(self.train_cfg.get("warmup_steps", 0))
+        steps_per_epoch = len(self.train_dataloader)
+        total_steps = self.max_epochs * steps_per_epoch
+
+        if warmup_steps > 0:
+            warmup = torch.optim.lr_scheduler.LinearLR(
+                self.optimizer, start_factor=1e-6, end_factor=1.0,
+                total_iters=warmup_steps,
+            )
+            cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
+                self.optimizer, T_max=max(1, total_steps - warmup_steps),
+                eta_min=min_lr,
+            )
+            self.scheduler = torch.optim.lr_scheduler.SequentialLR(
+                self.optimizer, [warmup, cosine], milestones=[warmup_steps],
+            )
+        else:
+            self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                self.optimizer, T_max=total_steps, eta_min=min_lr,
+            )
+
     def _resume(self, checkpoint_path: Path) -> None:
         ckpt = load_checkpoint(checkpoint_path, map_location=str(self.device))
         self.model.load_state_dict(ckpt["state_dict"])
-        self.optimizer.load_state_dict(ckpt.get("optimizer_state", {}))
-        self.current_epoch = int(ckpt.get("epoch", 0))
-        print(f"[Trainer] Resumed from epoch {self.current_epoch}")
+        if "optimizer_state" in ckpt and ckpt["optimizer_state"]:
+            self.optimizer.load_state_dict(ckpt["optimizer_state"])
+        else:
+            log.warning("No optimizer state in checkpoint — starting fresh optimizer")
+        self.current_epoch = int(ckpt.get("epoch", ckpt.get("step", 0)))
+        log.info("Resumed from epoch %d", self.current_epoch)
 
     def _save(self, epoch: int) -> None:
         path = self.checkpoint_dir / f"epoch_{epoch:03d}.pt"
-        # Using explicit keywords prevents argument misalignment
         save_checkpoint(
             path=path,
             state_dict=self.model.state_dict(),
             optimizer_state=self.optimizer.state_dict(),
             step=epoch,
             config=self.model_cfg,
-            backend_info={"device": str(self.device)}
+            backend_info={"device": str(self.device)},
         )
 
     def _run_step(self, lr: torch.Tensor, hr: torch.Tensor) -> dict[str, float]:
@@ -84,18 +194,82 @@ class Trainer:
             comp["perceptual"] = ploss.item()
         loss.backward()
         self.optimizer.step()
+        self.scheduler.step()
         comp["total"] = loss.item()
+        comp["lr"] = self.optimizer.param_groups[0]["lr"]
         return comp
+
+    def _validate(self) -> dict[str, float]:
+        self.model.eval()
+        total_psnr = 0.0
+        total_ssim = 0.0
+        num = 0
+        with torch.no_grad():
+            for lr, hr in self.val_dataloader:
+                lr, hr = lr.to(self.device), hr.to(self.device)
+                pred = self.model(lr)
+                pred_clamped = pred.clamp(0.0, 1.0)
+                total_psnr += psnr(pred_clamped, hr).item()
+                total_ssim += ssim(pred_clamped, hr).item()
+                num += 1
+        self.model.train()
+        avg_psnr = total_psnr / num if num > 0 else 0.0
+        avg_ssim = total_ssim / num if num > 0 else 0.0
+        return {"psnr": avg_psnr, "ssim": avg_ssim}
 
     def train(self) -> None:
         """Run the training loop per epoch."""
         self.model.train()
-        for epoch in range(self.current_epoch, self.max_epochs):
-            pbar = tqdm(self.dataloader, desc=f"Epoch {epoch+1}/{self.max_epochs}")
-            for lr, hr in pbar:
-                losses = self._run_step(lr, hr)
-                pbar.set_postfix(losses)
+        start_time = time.time()
 
-            if (epoch + 1) % self.save_per_epoch == 0 or (epoch + 1) == self.max_epochs:
+        if self.metrics_stream:
+            self.metrics_stream.write({
+                "type": "phase", "phase": "training",
+                "max_epochs": self.max_epochs,
+            })
+
+        for epoch in range(self.current_epoch, self.max_epochs):
+            pbar = tqdm(self.train_dataloader, desc=f"Epoch {epoch+1}/{self.max_epochs}")
+            for batch_idx, (lr, hr) in enumerate(pbar):
+                losses = self._run_step(lr, hr)
+                pbar.set_postfix(losses=losses)
+
+                if self.metrics_stream and batch_idx % self.metrics_frequency == 0:
+                    self.metrics_stream.write({
+                        "type": "step",
+                        "epoch": epoch + 1,
+                        "batch": batch_idx + 1,
+                        "total_batches": len(self.train_dataloader),
+                        **losses,
+                    })
+
+            should_save = (
+                (epoch + 1) % self.save_per_epoch == 0
+                or (epoch + 1) == self.max_epochs
+            )
+            if should_save:
+                val_metrics = self._validate() if self.val_dataloader is not None else {}
+                if val_metrics:
+                    log.info(
+                        "Epoch %d/%d — PSNR: %.2f, SSIM: %.4f",
+                        epoch + 1, self.max_epochs,
+                        val_metrics["psnr"], val_metrics["ssim"],
+                    )
+                    if self.metrics_stream:
+                        self.metrics_stream.write({
+                            "type": "validate",
+                            "epoch": epoch + 1,
+                            **val_metrics,
+                        })
+                if self.metrics_stream:
+                    self.metrics_stream.write({
+                        "type": "phase", "phase": "saving", "epoch": epoch + 1,
+                    })
                 self._save(epoch + 1)
-        print(f"[Trainer] Training complete.")
+
+        elapsed = time.time() - start_time
+        log.info("Training complete in %.1fs", elapsed)
+        if self.metrics_stream:
+            self.metrics_stream.write({"type": "phase", "phase": "complete"})
+            self.metrics_stream.write({"type": "done", "elapsed_seconds": round(elapsed, 1)})
+            self.metrics_stream.close()

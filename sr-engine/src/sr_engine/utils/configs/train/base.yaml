@@ -1,14 +1,20 @@
 # Training Configuration
-batch_size: 32
+seed: 42
+batch_size: 8
 num_workers: 4
 learning_rate: 2e-4
 weight_decay: 0.0
 betas: [0.9, 0.99]
 
 # --- Epoch-based settings ---
-max_epochs: 10        # Replaces max_steps
-save_per_epoch: 5     # Saves every 5 epochs
-checkpoint_dir: "experiments/checkpoints1"
+max_epochs: 10
+save_per_epoch: 5
+checkpoint_dir: "experiments/checkpoints"
+
+# --- Validation ---
+validation:
+  enabled: true
+  split: 0.1
 
 # --- Training dynamics ---
 lr_scheduler: cosine

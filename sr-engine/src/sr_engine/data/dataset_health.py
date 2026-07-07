@@ -7,6 +7,10 @@ import cv2
 import numpy as np
 from tqdm import tqdm
 
+from sr_engine.utils.logging import get_logger
+
+log = get_logger(__name__)
+
 
 def _extract_color_data(img: np.ndarray, channels_summary: Counter) -> np.ndarray:
     """Helper to extract relevant color layers and track bit-depth channel counts."""
@@ -38,9 +42,8 @@ def _compute_adaptive_threshold(image_means: list[float]) -> float:
     dark_subset = sorted_means[:lower_bound_count]
     percentile_15_score = sorted_means[lower_bound_count - 1]
 
-    print("\n" + "-" * 40 + "\n⚙️ THRESHOLD DIAGNOSTICS\n" + "-" * 40)
-    print(f"Absolute darkest frame mean: {sorted_means[0]:.2f}")
-    print(f"Dataset 15th percentile mean: {percentile_15_score:.2f}")
+    log.info("Absolute darkest frame mean: %.2f", sorted_means[0])
+    log.info("Dataset 15th percentile mean: %.2f", percentile_15_score)
 
     if len(dark_subset) > 1:
         gaps = np.diff(dark_subset)
@@ -51,22 +54,20 @@ def _compute_adaptive_threshold(image_means: list[float]) -> float:
             computed_threshold = float(dark_subset[max_gap_idx] + (gaps[max_gap_idx] / 2.0))
             clamped_threshold = min(computed_threshold, 25.0)
 
-            print(
-                f"Detected brightness gap: {gaps[max_gap_idx]:.2f} (between {dark_subset[max_gap_idx]:.2f} and {dark_subset[max_gap_idx + 1]:.2f})")
-            print(f"Calculated optimal threshold: {clamped_threshold:.2f}")
-            print("-" * 40)
+            log.info(
+                "Detected brightness gap: %.2f (between %.2f and %.2f)",
+                gaps[max_gap_idx], dark_subset[max_gap_idx], dark_subset[max_gap_idx + 1])
+            log.info("Calculated optimal threshold: %.2f", clamped_threshold)
             return clamped_threshold
 
     # Smart Fallback logic based on dynamic ranges
-    print("No significant brightness gap detected in dark frames.")
+    log.info("No significant brightness gap detected in dark frames.")
     if percentile_15_score < 10.0:
         fallback_threshold = 3.5
-        print(f"Data leans Full Range (0-255). Applying tight fallback: {fallback_threshold:.2f}")
+        log.info("Data leans Full Range (0-255). Applying tight fallback: %.2f", fallback_threshold)
     else:
         fallback_threshold = 18.5
-        print(f"Data leans Limited Range (16-235). Applying standard fallback: {fallback_threshold:.2f}")
-
-    print("-" * 40)
+        log.info("Data leans Limited Range (16-235). Applying standard fallback: %.2f", fallback_threshold)
     return fallback_threshold
 
 
@@ -156,5 +157,5 @@ def prune_black_frames(dataset_dir: Path, black_filenames: list[str]) -> None:
             with open(manifest_path, "w", encoding="utf-8") as f:
                 json.dump(manifest_data, f, indent=4)
 
-        except Exception as e:
-            print(f"[⚠️ Warning] Could not sync manifest.json adjustments: {e}")
+        except (json.JSONDecodeError, OSError) as e:
+            log.warning("Could not sync manifest.json adjustments: %s", e)

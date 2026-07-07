@@ -49,6 +49,15 @@ def merge_overrides(base: dict, overrides: dict) -> dict:
     return merged
 
 
+def validate_config(cfg: dict, required_keys: list[str]) -> None:
+    missing = [k for k in required_keys if k not in cfg]
+    if missing:
+        raise ValueError(
+            f"Configuration missing required keys: {missing}. "
+            f"Check your config file or CLI arguments."
+        )
+
+
 def save_config(config: dict, path: Path) -> None:
     """Save a configuration dict to a YAML file."""
     path.parent.mkdir(parents=True, exist_ok=True)
