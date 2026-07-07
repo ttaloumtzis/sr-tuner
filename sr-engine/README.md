@@ -6,7 +6,7 @@ video/image data, with first-class support for both NVIDIA (CUDA) and AMD
 
 ## Requirements
 
-- Python 3.11+
+- Python 3.11 (strictly pinned)
 - [uv](https://docs.astral.sh/uv/) (package manager)
 - Linux (ROCm) or Linux/Windows (CUDA) — CPU-only mode works anywhere
 
@@ -34,11 +34,12 @@ and runs `envs/verify_env.py` to confirm everything works. Re-run any time.
 
 ```bash
 uv venv
-uv sync --extra cpu --extra-index-url https://download.pytorch.org/whl/cpu
+uv sync
+uv pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
 ```
 
-Replace `cpu` with `cuda` or `rocm` (and the matching index URL) as needed.
-Use this when you want full control over extras or need to debug dependency issues.
+Replace the index URL for CUDA or ROCm as needed.
+Use this when you want full control or need to debug dependency issues.
 
 | Approach | Speed | Control | Best for |
 |---|---|---|---|
@@ -47,15 +48,15 @@ Use this when you want full control over extras or need to debug dependency issu
 
 After install, activate the venv or use `uv run srengine ...`.
 
-> **Note on `dataset`:** The pyproject.toml also registers `dataset`, `env`,
-> `infer`, and `model` as standalone entry points. These are CLI aliases only
-> (they delegate to the same `srengine` subcommands). Use `srengine <cmd>` for
-> consistency.
+> **Note on standalone aliases:** The pyproject.toml also registers `dataset`, `env`,
+> `infer`, `model`, `workspace`, and `project` as standalone entry points. These
+> bypass the `srengine` parent group (auto-detect workspace from CWD). Use
+> `srengine <cmd>` for explicit `--workspace` control and consistency.
 
 ## CLI reference
 
 ```
-srengine [--version] <command> [options]
+srengine [--version] [--workspace PATH] <command> [options]
 ```
 
 ### Commands overview
@@ -86,7 +87,8 @@ srengine dataset build --input ./datasets/my_set
 
 | Source | `--out` required | Behaviour |
 |---|---|---|
-| Video file (`.mp4`, `.avi`, etc.) | Yes | Extract frames → apply degradation → write HR/LR pairs |
+| Video file (`.mp4`, `.avi`, etc.) | No (inside workspace) | Auto-resolves to `<ws>/datasets/<stem>/` |
+| Video file (`.mp4`, `.avi`, etc.) | Yes (outside workspace) | Extract frames → apply degradation → write HR/LR pairs |
 | Directory (existing dataset) | No | Validate structure, rebuild manifest |
 
 Behind the scenes, the pipeline reads the dataset config YAML
@@ -148,8 +150,8 @@ Defaults from `src/sr_engine/utils/configs/train/base.yaml` if no config file is
 
 | Model name | Architecture | Config |
 |---|---|---|
-| `rrdb_esrgan` | RRDBNet (Residual-in-Residual Dense Block) | `configs/models/rrdb_esrgan.yaml` |
-| `swinir` | SwinIR (Swin Transformer) | `configs/models/swinir.yaml` |
+| `rrdb_esrgan` | RRDBNet (Residual-in-Residual Dense Block) | `src/sr_engine/utils/configs/models/rrdb_esrgan.yaml` |
+| `swinir` | SwinIR (Swin Transformer) | `src/sr_engine/utils/configs/models/swinir.yaml` |
 
 RRDB is a CNN-based architecture (23 RRDB blocks, 64 feature channels).
 SwinIR is a transformer-based architecture (6-stage, 6-head, 180 embed dim).
@@ -265,6 +267,8 @@ Organize datasets, projects, and training sessions with a structured workspace:
 ```bash
 # Initialize a workspace in the current directory
 srengine workspace init
+# Or use the standalone alias (auto-detects from CWD):
+workspace init
 
 # Workspace is auto-detected from CWD for all subsequent commands
 srengine workspace check   # validate workspace health
@@ -272,6 +276,8 @@ srengine workspace info    # show summary
 
 # Create a project
 srengine project create my_experiment
+# Or standalone:
+project create my_experiment
 
 # List projects
 srengine project list
@@ -337,13 +343,13 @@ Useful for debugging or inspecting what the GUI-generated config resolves to.
 
 ## New CLI Commands
 
-| Command | Description |
-|---|---|
-| `workspace init --path .` | Initialize a workspace |
-| `workspace info` | Show workspace summary |
-| `workspace check` | Validate workspace health |
-| `project create <name>` | Create a project in the workspace |
-| `project list` | List workspace projects |
+| Command | Description | Standalone alias |
+|---|---|---|
+| `srengine workspace init --path .` | Initialize a workspace | `workspace init` |
+| `srengine workspace info` | Show workspace summary | `workspace info` |
+| `srengine workspace check` | Validate workspace health | `workspace check` |
+| `srengine project create <name>` | Create a project in the workspace | `project create <name>` |
+| `srengine project list` | List workspace projects | `project list` |
 
 ## New Flags
 
@@ -362,14 +368,6 @@ Useful for debugging or inspecting what the GUI-generated config resolves to.
 ## Project structure
 
 ```
-configs/              - YAML configuration files
-  models/
-    rrdb_esrgan.yaml  - RRDB-ESRGAN architecture config
-    swinir.yaml       - SwinIR architecture config
-  train/
-    base.yaml         - Default training hyperparameters
-  datasets/
-    video_pairs.yaml  - Dataset build pipeline config
 envs/                 - Build scripts and Dockerfiles
 src/sr_engine/        - Python package
   cli/                - Click CLI commands
@@ -377,6 +375,15 @@ src/sr_engine/        - Python package
   device/             - CUDA/ROCm backend abstraction
   engine/             - Inference, trainer, metrics, tiling
   models/             - RRDB, SwinIR, checkpointing, losses, registry
+    archs/            - Model architectures (rrdbnet.py, swinir.py)
   utils/              - Config loader, I/O, logging
+    configs/          - YAML configuration files
+      models/
+        rrdb_esrgan.yaml
+        swinir.yaml
+      train/
+        base.yaml
+      datasets/
+        video_pairs.yaml
 tests/                - Test suite
 ```

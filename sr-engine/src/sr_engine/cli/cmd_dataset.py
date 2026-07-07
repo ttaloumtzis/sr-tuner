@@ -29,7 +29,7 @@ def dataset() -> None:
 @click.pass_context
 def build(ctx, input: Path, config: Path | None, out: Path | None, dump_config: bool) -> None:
     """Build a dataset from a video file or validate a preprocessed directory."""
-    ws: Workspace | None = ctx.obj.get("workspace") if ctx.obj else None
+    ws: Workspace | None = ctx.obj.get("workspace") if ctx.obj else Workspace.discover()
 
     cfg_loader = DefaultConfigs()
 

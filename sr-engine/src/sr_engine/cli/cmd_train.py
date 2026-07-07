@@ -41,7 +41,7 @@ def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate, 
         dump_config, project):
     """Train a super-resolution model."""
 
-    ws: Workspace | None = ctx.obj.get("workspace") if ctx.obj else None
+    ws: Workspace | None = ctx.obj.get("workspace") if ctx.obj else Workspace.discover()
 
     if project and not ws:
         raise click.ClickException(
