@@ -105,15 +105,25 @@ def _degrade_image(
     img = cv2.resize(img, (lr_width, lr_height), interpolation=interpolation)
 
     # 4. Synthesize Sensor Noise at LR scale
-    if noise_kwargs and random.random() < noise_kwargs.get("prob", 1.0):
-        if random.random() < 0.5:
-            img = _add_gaussian_noise(img, noise_kwargs.get("gaussian_sigma", [1, 30]))
-        else:
-            img = _add_poisson_noise(img, noise_kwargs.get("poisson_scale", [0.05, 3.0]))
+    if noise_kwargs:
+        gauss_cfg = noise_kwargs.get("gaussian", {})
+        poiss_cfg = noise_kwargs.get("poisson", {})
+        use_gauss = random.random() < gauss_cfg.get("prob", 0.5)
+        use_poiss = random.random() < poiss_cfg.get("prob", 0.5)
+
+        if use_gauss and use_poiss:
+            if random.random() < 0.5:
+                img = _add_gaussian_noise(img, gauss_cfg.get("sigma_range", [1, 30]))
+            else:
+                img = _add_poisson_noise(img, poiss_cfg.get("scale_range", [0.05, 3.0]))
+        elif use_gauss:
+            img = _add_gaussian_noise(img, gauss_cfg.get("sigma_range", [1, 30]))
+        elif use_poiss:
+            img = _add_poisson_noise(img, poiss_cfg.get("scale_range", [0.05, 3.0]))
 
     # 5. Synthesize Transmission / Compression Artifacts at LR scale
     if jpeg_kwargs and random.random() < jpeg_kwargs.get("prob", 1.0):
-        img = _apply_jpeg_compression(img, jpeg_kwargs.get("quality", [30, 95]))
+        img = _apply_jpeg_compression(img, jpeg_kwargs.get("quality_range", [30, 95]))
 
     return img
 

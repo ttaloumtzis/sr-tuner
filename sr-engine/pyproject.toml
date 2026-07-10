@@ -12,7 +12,6 @@ dependencies = [
     "opencv-python>=4.8",
     "pillow>=10.0",
     "tqdm>=4.66",
-    # 💡 torch removed from here to allow targeted backend installations
 ]
 
 [project.scripts]
@@ -23,12 +22,43 @@ dataset = "sr_engine.cli.cmd_dataset:dataset"
 env = "sr_engine.cli.cmd_env:env"
 infer = "sr_engine.cli.cmd_infer:infer"
 model = "sr_engine.cli.cmd_model:model"
+serve = "sr_engine.cli.cmd_serve:serve"
 train = "sr_engine.cli.cmd_train:train"
 
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "pytest-mock>=3.14",
     "ruff>=0.3",
+    # torch removed from here to prevent default installation of CUDA-heavy wheels
+]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+markers = [
+    "gpu: tests that require a CUDA/ROCm GPU (skipped if not available)",
+    "integration: tests that exercise cross-module paths or external resources",
+    "slow: tests that take longer than 5 seconds",
+    "network: tests that download resources (e.g. VGG weights)",
+    "cli: tests that invoke the Click CLI runner",
+    "unit: fast isolated unit tests with no external dependencies",
+]
+
+[tool.coverage.run]
+source = ["sr_engine"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
 ]
 
 [build-system]

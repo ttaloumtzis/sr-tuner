@@ -8,7 +8,7 @@ class MetricsStream:
         path.parent.mkdir(parents=True, exist_ok=True)
         self.file = path.open("a", encoding="utf-8")
         if metadata:
-            self.file.write(f"# {json.dumps(metadata)}\n")
+            self.file.write(f"# {json.dumps(metadata, default=str)}\n")
         self.file.flush()
 
     def write(self, msg: dict) -> None:

@@ -1,5 +1,6 @@
 """Tests for evaluation metrics: PSNR, SSIM, LPIPS."""
 
+import pytest
 import torch
 
 from sr_engine.engine.metrics import psnr, ssim
@@ -55,3 +56,14 @@ class TestSSIM:
         img2 = torch.rand(3, 32, 32)
         with pytest.raises(ValueError, match="Shape mismatch"):
             ssim(img1, img2)
+
+
+class TestLPIPS:
+    def test_lpips_import_available(self):
+        pytest.importorskip("lpips", reason="lpips package not installed")
+        from sr_engine.engine.metrics import lpips
+        img1 = torch.rand(1, 3, 64, 64)
+        img2 = torch.rand(1, 3, 64, 64)
+        val = lpips(img1, img2, device="cpu")
+        assert val.isfinite()
+        assert val.item() >= 0

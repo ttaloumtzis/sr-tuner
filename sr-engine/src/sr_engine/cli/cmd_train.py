@@ -7,8 +7,9 @@ import yaml
 from sr_engine.engine.trainer import Trainer
 from sr_engine.engine.metrics_stream import MetricsStream
 from sr_engine.utils.config import load_config, merge_overrides, validate_config
-from sr_engine.utils.progress import TqdmReporter
-from .helpers import make_workspace_config_loader, resolve_model_config, no_workspace_config_option
+from .helpers import (make_workspace_config_loader, resolve_model_config,
+                      no_workspace_config_option, resolve_reporter,
+                      resolve_callbacks, resolve_cancel_check)
 
 
 @click.group()
@@ -107,7 +108,7 @@ def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate, 
             "dataset": str(dataset),
         })
 
-    progress_reporter = TqdmReporter(unit="batch")
+    progress_reporter = resolve_reporter(unit="batch")
 
     trainer = Trainer(
         model_cfg=model_cfg,
@@ -120,5 +121,7 @@ def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate, 
         metrics_stream=metrics_stream,
         metrics_frequency=metrics_frequency,
         progress_reporter=progress_reporter,
+        callbacks=resolve_callbacks(),
+        cancel_check=resolve_cancel_check(),
     )
     trainer.train()

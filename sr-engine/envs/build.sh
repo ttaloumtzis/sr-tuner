@@ -165,12 +165,12 @@ create_environment() {
 ################################################################################
 
 install_base() {
-
-    info "Installing project dependencies..."
-
+    info "Installing project dependencies (excluding dev group)..."
     cd "$PROJECT_DIR"
 
-    uv sync
+    # Use --no-dev to avoid installing the dev-only dependencies
+    # (which previously included the default torch)
+    uv sync --no-dev
 }
 
 ################################################################################

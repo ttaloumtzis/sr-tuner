@@ -5,7 +5,7 @@ from pathlib import Path
 import click
 
 from sr_engine.engine.inference import infer_image, infer_video
-from sr_engine.utils.progress import TqdmReporter
+from .helpers import resolve_reporter
 
 
 @click.group()
@@ -46,7 +46,7 @@ def run(
 
     if suffix in video_extensions:
         result = infer_video(model, input_path, output, tile, overlap, device,
-                             reporter=TqdmReporter(unit="fr"))
+                             reporter=resolve_reporter(unit="fr"))
     else:
         result = infer_image(model, input_path, output, tile, overlap, device)
 

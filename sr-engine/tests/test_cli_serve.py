@@ -1,0 +1,18 @@
+"""Tests for CLI serve command."""
+
+
+def test_serve_help(cli_invoker):
+    r = cli_invoker(["serve", "--help"])
+    assert r.exit_code == 0
+
+
+def test_serve_start_help(cli_invoker):
+    r = cli_invoker(["serve", "start", "--help"])
+    assert r.exit_code == 0
+    assert "--port" in r.output
+    assert "--host" in r.output
+
+
+def test_serve_start_no_workspace_fails(cli_invoker):
+    r = cli_invoker(["serve", "start"])
+    assert r.exit_code != 0

@@ -8,8 +8,7 @@ from sr_engine.data.dataset_builder import build_from_video, build_from_preproce
 from sr_engine.data.dataset_validator import validate
 from sr_engine.utils.config import load_config, merge_overrides
 from sr_engine.data.dataset_health import check_dataset_health, prune_black_frames
-from sr_engine.utils.progress import TqdmReporter
-from .helpers import make_workspace_config_loader, no_workspace_config_option
+from .helpers import make_workspace_config_loader, no_workspace_config_option, resolve_reporter
 
 import sys
 
@@ -70,7 +69,7 @@ def validate_cmd(path: Path) -> None:
     """Validate that an existing dataset directory is well-formed."""
     click.echo(f"Running deep validation scan on: {path}...")
 
-    report = validate(path, reporter=TqdmReporter(unit="pair"))
+    report = validate(path, reporter=resolve_reporter(unit="pair"))
 
     if report.ok:
         click.secho(
@@ -102,7 +101,7 @@ def validate_cmd(path: Path) -> None:
 def health_cmd(path: Path, yes: bool) -> None:
     """Profile statistical balance and attributes of an existing dataset."""
     click.echo(f"Analyzing dataset health and distribution at: {path}...")
-    report = check_dataset_health(path, reporter=TqdmReporter(unit="img"))
+    report = check_dataset_health(path, reporter=resolve_reporter(unit="img"))
 
     if "error" in report:
         click.secho(f"Error: {report['error']}", fg="red", bold=True)

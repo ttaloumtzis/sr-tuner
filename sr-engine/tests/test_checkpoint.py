@@ -1,4 +1,4 @@
-"""Tests for checkpoint save/load."""
+"""Tests for checkpoint save/load and export."""
 
 from pathlib import Path
 
@@ -6,7 +6,12 @@ import pytest
 import torch
 import torch.nn as nn
 
-from sr_engine.models.checkpoint import save_checkpoint, load_checkpoint
+from sr_engine.models.checkpoint import (
+    save_checkpoint,
+    load_checkpoint,
+    _build_model_from_checkpoint,
+    export_to_torchscript,
+)
 
 
 class _SimpleModel(nn.Module):
@@ -84,3 +89,52 @@ class TestCheckpoint:
         # The .tmp file should not remain after successful save
         tmp_path = path.with_suffix(path.suffix + ".tmp")
         assert not tmp_path.exists()
+
+
+class TestBuildModelFromCheckpoint:
+    def _make_rrdb_checkpoint(self):
+        from sr_engine.models.archs.rrdbnet import RRDBNet
+        model = RRDBNet(num_in_ch=3, num_out_ch=3, scale=4)
+        return {
+            "state_dict": model.state_dict(),
+            "config": {"name": "rrdb_esrgan", "scale": 4, "num_in_ch": 3, "num_out_ch": 3},
+        }
+
+    def test_rebuilds_model(self):
+        checkpoint = self._make_rrdb_checkpoint()
+        rebuilt = _build_model_from_checkpoint(checkpoint)
+        assert isinstance(rebuilt, nn.Module)
+        for k, v in checkpoint["state_dict"].items():
+            assert torch.allclose(v, rebuilt.state_dict()[k])
+
+    def test_raises_on_missing_config(self):
+        with pytest.raises(ValueError, match="no usable 'config'"):
+            _build_model_from_checkpoint({"state_dict": {}})
+
+    def test_raises_on_missing_name(self):
+        with pytest.raises(ValueError, match="no usable 'config'"):
+            _build_model_from_checkpoint({"state_dict": {}, "config": {"scale": 4}})
+
+
+class TestExportToTorchscript:
+    def test_export_and_load(self, tmp_path):
+        from sr_engine.models.archs.rrdbnet import RRDBNet
+        model = RRDBNet(num_in_ch=3, num_out_ch=3, scale=4)
+        state_dict = model.state_dict()
+        checkpoint = {
+            "state_dict": state_dict,
+            "config": {"name": "rrdb_esrgan", "scale": 4, "num_in_ch": 3, "num_out_ch": 3},
+        }
+        tmp_ckpt = tmp_path / "model.pt"
+        torch.save(checkpoint, tmp_ckpt)
+
+        out_path = tmp_path / "model.ts"
+        export_to_torchscript(tmp_ckpt, out_path)
+        assert out_path.exists()
+
+        loaded = torch.jit.load(str(out_path))
+        dummy = torch.randn(1, 3, 16, 16)
+        result = loaded(dummy)
+        assert result.shape[0] == 1
+        assert result.shape[1] == 3
+        assert result.shape[2] >= 16

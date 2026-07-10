@@ -1,5 +1,6 @@
 """Inference engine — run a model on images or videos."""
 
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -158,6 +159,7 @@ def infer_video(
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = output_path.with_suffix(".tmp.mp4")
 
     reporter = reporter or ProgressReporter()
     reporter.start(total=frame_count if frame_count > 0 else None,
@@ -178,10 +180,10 @@ def infer_video(
 
             if writer is None:
                 out_h, out_w = output_bgr.shape[:2]
-                fourcc = None
+                writer = None
                 for codec in ("avc1", "mp4v"):
                     fourcc = cv2.VideoWriter_fourcc(*codec)
-                    writer = cv2.VideoWriter(str(output_path), fourcc, fps, (out_w, out_h))
+                    writer = cv2.VideoWriter(str(tmp_path), fourcc, fps, (out_w, out_h))
                     if writer.isOpened():
                         break
                     writer = None
@@ -198,5 +200,7 @@ def infer_video(
         cap.release()
         if writer is not None:
             writer.release()
+        if tmp_path.exists():
+            os.replace(str(tmp_path), str(output_path))
 
     return output_path

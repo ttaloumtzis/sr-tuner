@@ -2,7 +2,7 @@
 
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import torch
 from torch.utils.data import DataLoader, Dataset, random_split
@@ -98,6 +98,7 @@ class Trainer:
         metrics_frequency: int = 1,
         progress_reporter: ProgressReporter | None = None,
         callbacks: list[TrainerCallback] | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> None:
         self.model_cfg = model_cfg
         self.device = torch.device(device)
@@ -106,6 +107,7 @@ class Trainer:
         self.metrics_frequency = metrics_frequency
         self._progress = progress_reporter or ProgressReporter()
         self._callbacks: list[TrainerCallback] = callbacks or []
+        self._cancel_check = cancel_check or (lambda: False)
         if metrics_stream is not None:
             self._callbacks.append(_MetricsStreamCallback(metrics_stream))
 
@@ -281,6 +283,13 @@ class Trainer:
         self._emit("phase", phase="training", max_epochs=self.max_epochs)
 
         for epoch in range(self.current_epoch, self.max_epochs):
+            if self._cancel_check():
+                log.warning("Cancellation requested — saving checkpoint at epoch %d", epoch + 1)
+                self._save(epoch + 1)
+                self._emit("phase", phase="cancelled", epoch=epoch + 1)
+                import sys
+                sys.exit(130)
+
             self._progress.start(total=len(self.train_dataloader),
                                  desc=f"Epoch {epoch+1}/{self.max_epochs}")
 

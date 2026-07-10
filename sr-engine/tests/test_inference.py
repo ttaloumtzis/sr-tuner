@@ -82,3 +82,58 @@ class TestTiling:
         assert len(tiles) > 1  # Should produce multiple tiles
         stitched = stitch_tiles(tiles, output_size=(64, 64), overlap=8)
         assert stitched.shape == (3, 64, 64)
+
+
+class TestLoadModel:
+    def _make_rrdb_checkpoint(self, tmp_path):
+        from sr_engine.models.archs.rrdbnet import RRDBNet
+        model = RRDBNet(num_in_ch=3, num_out_ch=3, scale=4)
+        ckpt = tmp_path / "model.pt"
+        config = {"name": "rrdb_esrgan", "scale": 4, "num_in_ch": 3, "num_out_ch": 3}
+        torch.save({
+            "state_dict": model.state_dict(),
+            "config": config,
+        }, ckpt)
+        return ckpt
+
+    def test_raises_on_missing_config(self, tmp_path):
+        from sr_engine.engine.inference import _load_model
+        ckpt = tmp_path / "model.pt"
+        torch.save({"state_dict": {"w": torch.tensor([1.0])}}, ckpt)
+        with pytest.raises(ValueError, match="no usable 'config'"):
+            _load_model(ckpt, device="cpu")
+
+    def test_loads_model_from_checkpoint(self, tmp_path):
+        from sr_engine.engine.inference import _load_model
+        import torch.nn as nn
+        ckpt = self._make_rrdb_checkpoint(tmp_path)
+        loaded_model, scale = _load_model(ckpt, device="cpu")
+        assert scale == 4
+        assert isinstance(loaded_model, nn.Module)
+        loaded_model.eval()
+
+
+class TestInferImage:
+    def _make_rrdb_checkpoint(self, tmp_path):
+        from sr_engine.models.archs.rrdbnet import RRDBNet
+        model = RRDBNet(num_in_ch=3, num_out_ch=3, scale=4)
+        ckpt = tmp_path / "model.pt"
+        config = {"name": "rrdb_esrgan", "scale": 4, "num_in_ch": 3, "num_out_ch": 3}
+        torch.save({
+            "state_dict": model.state_dict(),
+            "config": config,
+        }, ckpt)
+        return ckpt
+
+    def test_saves_output(self, tmp_path, sample_image):
+        from sr_engine.engine.inference import infer_image
+        ckpt = self._make_rrdb_checkpoint(tmp_path)
+        out_path = tmp_path / "output.png"
+        result = infer_image(
+            model_checkpoint=ckpt,
+            input_path=sample_image,
+            output_path=out_path,
+            device="cpu",
+        )
+        assert result == out_path
+        assert out_path.exists()

@@ -14,3 +14,5 @@ graphify-out/
 AGENTS.md
 experiments/
 .serena/
+.tokensave/
+.claude/
