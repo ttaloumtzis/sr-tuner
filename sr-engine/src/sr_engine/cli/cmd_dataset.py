@@ -13,6 +13,16 @@ from .helpers import make_workspace_config_loader, no_workspace_config_option, r
 import sys
 
 
+_DEGRADATION_SECTIONS = {
+    "blur": "blur",
+    "noise": "noise",
+    "jpeg": "jpeg",
+    "jpeg2000": "jpeg2000",
+    "color-jitter": "color_jitter",
+}
+"""Mapping from CLI hyphen names to config section names for ``--degradations``."""
+
+
 @click.group()
 def dataset() -> None:
     """Dataset creation and validation commands."""
@@ -25,10 +35,17 @@ def dataset() -> None:
               help="Dataset config YAML. Defaults to internal project config.")
 @click.option("--out", "-o", required=False, type=click.Path(path_type=Path),
               help="Output dataset directory. Required if input is a video file.")
+@click.option("--degradations", "-d", default=None,
+              help="Comma-separated enabled degradations: blur,noise,jpeg,jpeg2000,color-jitter. "
+                   "Omit to use per-section 'enabled' fields from config.")
+@click.option("--resize-method", default=None,
+              type=click.Choice(["area", "bicubic", "bilinear", "lanczos", "nearest"]),
+              help="Downsampling interpolation method (default: area). Overrides config.")
 @no_workspace_config_option
 @click.option("--dump-config", is_flag=True, default=False, help="Print final merged config and exit.")
 @click.pass_context
 def build(ctx, input: Path, config: Path | None, out: Path | None,
+          degradations: str | None, resize_method: str | None,
           no_workspace_config: bool, dump_config: bool) -> None:
     """Build a dataset from a video file or validate a preprocessed directory."""
     ws, cfg_loader = make_workspace_config_loader(ctx, no_workspace_config)
@@ -38,6 +55,18 @@ def build(ctx, input: Path, config: Path | None, out: Path | None,
         cfg = merge_overrides(cfg_loader.get_dataset_config(), custom_cfg)
     else:
         cfg = cfg_loader.get_dataset_config()
+
+    if degradations is not None:
+        enabled = set(d.strip() for d in degradations.split(","))
+        deg_cfg = cfg.setdefault("degradation", {})
+        for cli_name, cfg_key in _DEGRADATION_SECTIONS.items():
+            if cfg_key in deg_cfg:
+                deg_cfg[cfg_key]["enabled"] = cli_name in enabled
+
+    if resize_method is not None:
+        deg_cfg = cfg.setdefault("degradation", {})
+        resize_cfg = deg_cfg.setdefault("resize", {})
+        resize_cfg["method"] = resize_method
 
     if dump_config:
         yaml.safe_dump(cfg, sys.stdout, default_flow_style=False, sort_keys=False)

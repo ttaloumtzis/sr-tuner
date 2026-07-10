@@ -138,6 +138,10 @@ def cli_args_for_dataset_build(params: dict) -> list[str]:
         args.extend(["--out", params["out"]])
     if "config" in params:
         args.extend(["--config", params["config"]])
+    if "degradations" in params:
+        args.extend(["--degradations", params["degradations"]])
+    if "resize_method" in params:
+        args.extend(["--resize-method", params["resize_method"]])
     return args
 
 

@@ -416,6 +416,8 @@ Build a dataset from a video file or validate a preprocessed directory.
 | `input` | string | yes | Input video file or preprocessed dataset directory |
 | `out` | string | no | Output dataset directory (required if input is a video) |
 | `config` | string | no | Dataset config YAML path |
+| `degradations` | string | no | Comma-separated enabled degradations: `blur,noise,jpeg,jpeg2000,color-jitter`. Overrides per-section `enabled` fields |
+| `resize_method` | string | no | Downsampling method: `area`, `bicubic`, `bilinear`, `lanczos`, `nearest` |
 
 **Response data:**
 ```json
