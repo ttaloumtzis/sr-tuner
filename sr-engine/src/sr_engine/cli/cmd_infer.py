@@ -5,7 +5,7 @@ from pathlib import Path
 import click
 
 from sr_engine.engine.inference import infer_image, infer_video
-from .helpers import resolve_reporter
+from .helpers import resolve_reporter, require_workspace
 
 
 @click.group()
@@ -14,8 +14,8 @@ def infer() -> None:
 
 
 @infer.command()
-@click.option("--model", "-m", required=True, type=click.Path(exists=True, path_type=Path),
-              help="Model checkpoint path.")
+@click.option("--model", "-m", type=click.Path(exists=True, path_type=Path),
+              help="Model checkpoint path. Required without --project/--instance.")
 @click.option("--input", "-i", "input_path", required=True,
               type=click.Path(exists=True, path_type=Path),
               help="Input image or video file.")
@@ -28,15 +28,38 @@ def infer() -> None:
 @click.option("--device", default="cuda", show_default=True,
               type=click.Choice(["cuda", "cpu", "auto"]),
               help="Device to run inference on.")
+@click.option("--project", type=str, default=None, help="Project name (requires workspace).")
+@click.option("--instance", "inst", type=str, default=None,
+              help="Model instance name (requires --project). Auto-resolves latest checkpoint.")
+@click.pass_context
 def run(
-    model: Path,
+    ctx,
+    model: Path | None,
     input_path: Path,
     output: Path,
     tile: int,
     overlap: int,
     device: str,
+    project: str | None,
+    inst: str | None,
 ) -> None:
-    """Run super-resolution inference on an image or video."""
+    """Run super-resolution inference on an image or video.
+
+    Provide --model <path> to use a specific checkpoint, or
+    --project --instance to auto-resolve the latest checkpoint.
+    """
+    if project and inst:
+        ws = require_workspace(ctx)
+        model_inst = ws.get_model_instance(project, inst)
+        ckpts = sorted(model_inst.path.glob("checkpoints/*.pt"))
+        if not ckpts:
+            raise click.ClickException(f"No checkpoints in instance '{inst}'")
+        model = ckpts[-1]
+    elif not model:
+        raise click.ClickException(
+            "Provide --model <path> or --project --instance"
+        )
+
     if tile > 0 and overlap >= tile:
         raise click.BadParameter(
             f"overlap ({overlap}) must be less than tile ({tile})"

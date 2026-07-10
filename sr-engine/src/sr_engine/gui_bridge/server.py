@@ -294,9 +294,52 @@ def _handle_dataset_health(server: Server, params: dict) -> dict:
     return report
 
 
+def _read_yaml(path: Path) -> dict:
+    """Read a YAML file (lazy import)."""
+    import yaml
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
 def _handle_model_info(server: Server, params: dict) -> dict:
-    """Return model information (stub)."""
-    return {"model": params.get("model", "")}
+    """Return available model architectures."""
+    from sr_engine.utils.config import DefaultConfigs
+    cfg = DefaultConfigs()
+    return {"models": list(cfg.models.keys())}
+
+
+def _handle_model_instance_list(server: Server, params: dict) -> dict:
+    """List model instances in a project."""
+    from sr_engine.workspace import Workspace
+    ws = Workspace(server._workspace)
+    project = params.get("project", "")
+    instances = ws.list_model_instances(project)
+    return {
+        "instances": [
+            {
+                "name": inst.name,
+                "checkpoints": len(list(inst.path.glob("checkpoints/*.pt"))),
+                "runs": len(list(inst.path.glob("runs/run_*"))),
+            }
+            for inst in instances
+        ]
+    }
+
+
+def _handle_model_instance_info(server: Server, params: dict) -> dict:
+    """Return details for one model instance."""
+    from sr_engine.workspace import Workspace
+    ws = Workspace(server._workspace)
+    inst = ws.get_model_instance(params["project"], params["instance"])
+    return {
+        "name": inst.name,
+        "config": _read_yaml(inst.path / "config.yaml"),
+        "checkpoints": sorted(p.name for p in inst.path.glob("checkpoints/*.pt")),
+        "runs": sorted(
+            ({"run_id": d.name, "has_metrics": (d / "metrics.jsonl").exists()}
+             for d in inst.path.glob("runs/run_*")),
+            key=lambda r: r["run_id"], reverse=True,
+        ),
+    }
 
 
 def _handle_job_cancel(server: Server, params: dict) -> dict:
@@ -340,6 +383,8 @@ _SYNC_HANDLERS = {
     "dataset.validate": _handle_dataset_validate,
     "dataset.health": _handle_dataset_health,
     "model.info": _handle_model_info,
+    "model.instance_list": _handle_model_instance_list,
+    "model.instance_info": _handle_model_instance_info,
     "job.cancel": _handle_job_cancel,
     "job.list": _handle_job_list,
     "job.status": _handle_job_status,

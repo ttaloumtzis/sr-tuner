@@ -32,6 +32,7 @@ class JobManifest:
     finished_at: str | None
     exit_code: int | None
     project: str | None
+    instance: str | None
     log_path: str | None
     error_message: str | None
 
@@ -83,6 +84,8 @@ def cli_args_for_train(params: dict) -> list[str]:
         args.extend(["--max-epochs", str(params["max_epochs"])])
     if "project" in params:
         args.extend(["--project", params["project"]])
+    if "instance" in params:
+        args.extend(["--instance", params["instance"]])
     if params.get("machine"):
         args.append("--machine")
     if params.get("experiment_id"):
@@ -112,6 +115,10 @@ def cli_args_for_infer(params: dict) -> list[str]:
         args.extend(["--overlap", str(params["overlap"])])
     if "device" in params:
         args.extend(["--device", params["device"]])
+    if "project" in params:
+        args.extend(["--project", params["project"]])
+    if "instance" in params:
+        args.extend(["--instance", params["instance"]])
     return args
 
 
@@ -219,6 +226,7 @@ class JobManager:
             "finished_at": None,
             "exit_code": None,
             "project": params.get("project"),
+            "instance": params.get("instance"),
             "log_path": None,
             "error_message": None,
         }

@@ -29,6 +29,8 @@ class TestHandlerRegistry:
         assert "dataset.validate" in _SYNC_HANDLERS
         assert "dataset.health" in _SYNC_HANDLERS
         assert "model.info" in _SYNC_HANDLERS
+        assert "model.instance_list" in _SYNC_HANDLERS
+        assert "model.instance_info" in _SYNC_HANDLERS
         assert "job.cancel" in _SYNC_HANDLERS
         assert "job.list" in _SYNC_HANDLERS
         assert "job.status" in _SYNC_HANDLERS
@@ -135,6 +137,46 @@ class TestClientHandlerDispatch:
         result = self._send_and_recv(handler, "job.status", {"job_id": "j1"})
         assert result["type"] == "result"
         assert result["data"]["status"] == "running"
+
+    def test_model_instance_list(self, handler, server_mock):
+        """model.instance_list should return instances."""
+        with patch("sr_engine.workspace.Workspace") as mock_ws_cls:
+            mock_ws = MagicMock()
+            mock_ws.list_model_instances.return_value = []
+            mock_ws_cls.return_value = mock_ws
+            result = self._send_and_recv(handler, "model.instance_list",
+                                         {"project": "proj1"})
+        assert result["type"] == "result"
+        assert "instances" in result["data"]
+
+    def test_model_instance_info(self, handler, server_mock, tmp_path):
+        """model.instance_info should return instance details."""
+        inst_path = tmp_path / "models" / "v1"
+        (inst_path / "checkpoints").mkdir(parents=True)
+        (inst_path / "runs").mkdir(parents=True)
+        (inst_path / "config.yaml").write_text("name: swinir\nscale: 4\n")
+
+        with patch("sr_engine.workspace.Workspace") as mock_ws_cls:
+            mock_ws = MagicMock()
+            mock_inst = MagicMock()
+            mock_inst.name = "v1"
+            mock_inst.path = inst_path
+            mock_ws.get_model_instance.return_value = mock_inst
+            mock_ws_cls.return_value = mock_ws
+            result = self._send_and_recv(handler, "model.instance_info",
+                                         {"project": "proj1", "instance": "v1"})
+        assert result["type"] == "result"
+
+    def test_train_start_passes_instance(self, handler, server_mock):
+        """train.start should pass instance param through."""
+        handler._server._job_manager.start_job.return_value = ("job_1", {"status": "accepted"})
+        result = self._send_and_recv(handler, "train.start",
+                                     {"model_name": "rrdb", "instance": "v1"})
+        assert result["type"] == "accepted"
+        handler._server._job_manager.start_job.assert_called_with(
+            "train", {"model_name": "rrdb", "instance": "v1"},
+            workspace_path=server_mock._workspace,
+        )
 
     def test_async_train_start(self, handler, server_mock):
         """train.start should return an accepted response."""

@@ -18,6 +18,15 @@ class Project:
     path: Path
 
 
+@dataclass
+class ModelInstance:
+    """A named model instance within a project."""
+
+    name: str
+    path: Path
+    project: str
+
+
 class Workspace:
     """Manages the workspace directory tree — projects, datasets, configs."""
 
@@ -232,3 +241,136 @@ class Workspace:
             f"Dataset '{name_or_path}' not found "
             f"(checked CWD: {resolved_cwd}, workspace: {resolved_ws})"
         )
+
+    # ── Model instance API ──────────────────────────────────────────
+
+    def create_model_instance(self, project: str, name: str, arch_config: dict) -> ModelInstance:
+        """Create a named model instance inside a project.
+
+        Creates ``projects/<project>/models/<name>/`` with ``config.yaml``,
+        ``checkpoints/``, and ``runs/`` subdirectories.
+
+        Args:
+            project: Project name.
+            name: Instance name.
+            arch_config: Frozen model-architecture config dict.
+
+        Returns:
+            The new ModelInstance.
+
+        Raises:
+            FileNotFoundError: If the project does not exist.
+            FileExistsError: If the instance already exists.
+        """
+        project_path = self.path / "projects" / project
+        if not project_path.is_dir():
+            raise FileNotFoundError(f"Project '{project}' not found in workspace")
+        inst_path = project_path / "models" / name
+        if inst_path.exists():
+            raise FileExistsError(
+                f"Model instance '{name}' already exists in project '{project}'"
+            )
+        (inst_path / "checkpoints").mkdir(parents=True, exist_ok=True)
+        (inst_path / "runs").mkdir(parents=True, exist_ok=True)
+
+        import yaml
+        (inst_path / "config.yaml").write_text(
+            yaml.safe_dump(arch_config, default_flow_style=False, sort_keys=False),
+            encoding="utf-8",
+        )
+        return ModelInstance(name=name, path=inst_path, project=project)
+
+    def get_model_instance(self, project: str, name: str) -> ModelInstance:
+        """Look up a model instance by project and name.
+
+        Args:
+            project: Project name.
+            name: Instance name.
+
+        Returns:
+            The matching ModelInstance.
+
+        Raises:
+            FileNotFoundError: If the project or instance does not exist.
+        """
+        inst_path = self.path / "projects" / project / "models" / name
+        if not inst_path.is_dir():
+            raise FileNotFoundError(
+                f"Model instance '{name}' not found in project '{project}'. "
+                f"Create it with: sre model create-instance {project} {name} --model <arch>"
+            )
+        return ModelInstance(name=name, path=inst_path, project=project)
+
+    def list_model_instances(self, project: str) -> list[ModelInstance]:
+        """Return all model instances in a project, sorted by name.
+
+        Args:
+            project: Project name.
+
+        Returns:
+            List of ModelInstance dataclass instances.
+        """
+        models_dir = self.path / "projects" / project / "models"
+        if not models_dir.is_dir():
+            return []
+        return sorted(
+            (
+                ModelInstance(name=d.name, path=d, project=project)
+                for d in models_dir.iterdir()
+                if d.is_dir()
+            ),
+            key=lambda x: x.name,
+        )
+
+    def get_instance_checkpoints(self, project: str, instance: str) -> list[Path]:
+        """List ``.pt`` checkpoint files for an instance, sorted by mtime descending.
+
+        Args:
+            project: Project name.
+            instance: Instance name.
+
+        Returns:
+            List of checkpoint Paths (latest first).
+        """
+        ckpt_dir = self.path / "projects" / project / "models" / instance / "checkpoints"
+        if not ckpt_dir.is_dir():
+            return []
+        return sorted(ckpt_dir.glob("*.pt"), key=lambda p: p.stat().st_mtime, reverse=True)
+
+    def list_runs(self, project: str, instance: str) -> list[Path]:
+        """List ``run_*`` directories for an instance, sorted by mtime descending.
+
+        Args:
+            project: Project name.
+            instance: Instance name.
+
+        Returns:
+            List of run directory Paths (latest first).
+        """
+        runs_dir = self.path / "projects" / project / "models" / instance / "runs"
+        if not runs_dir.is_dir():
+            return []
+        return sorted(
+            (d for d in runs_dir.iterdir() if d.is_dir() and d.name.startswith("run_")),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+
+    def get_run_path(self, project: str, instance: str) -> Path:
+        """Return a new timestamp-based run directory (creates it).
+
+        The directory is named ``run_<YYYYMMDD_HHMMSS>``.
+
+        Args:
+            project: Project name.
+            instance: Instance name.
+
+        Returns:
+            Path to the newly created run directory.
+        """
+        from datetime import datetime
+        runs_dir = self.path / "projects" / project / "models" / instance / "runs"
+        run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_dir = runs_dir / f"run_{run_ts}"
+        run_dir.mkdir(parents=True, exist_ok=False)
+        return run_dir

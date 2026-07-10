@@ -23,8 +23,8 @@ def train() -> None:
 @click.option("--config", "-c", type=click.Path(exists=True, path_type=Path), help="Training config YAML.")
 @click.option("--model", "-m", default="rrdb_esrgan", help="Model name (e.g., 'swinir', 'rrdb_esrgan').")
 @click.option("--dataset", "-d", required=True, type=click.Path(path_type=Path), help="Dataset directory path.")
-@click.option("--resume", "-r", type=click.Path(exists=True, path_type=Path), default=None,
-              help="Resume from a checkpoint file.")
+@click.option("--resume", "-r", type=str, default=None,
+              help="Resume from a checkpoint. A path, a filename (with --project --instance), or 'latest'.")
 @click.option("--device", default="cuda", type=click.Choice(["cuda", "cpu", "auto"]),
               help="Training device.")
 @click.option("--batch-size", type=int, default=None, help="Batch size for training.")
@@ -41,14 +41,20 @@ def train() -> None:
 @click.option("--dump-config", is_flag=True, default=False, help="Print final merged config and exit.")
 @no_workspace_config_option
 @click.option("--project", type=str, default=None, help="Project name (requires workspace).")
+@click.option("--instance", "-i", type=str, default=None,
+              help="Model instance name (requires --project). "
+                   "Overrides checkpoint_dir and creates a run directory.")
 @click.pass_context
 def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate, max_epochs,
         num_workers, patch_size, save_per_epoch,
         validation_enabled, validation_split, machine, experiment_id, metrics_frequency,
-        dump_config, project, no_workspace_config):
+        dump_config, project, instance, no_workspace_config):
     """Train a super-resolution model."""
 
     ws, cfg_loader = make_workspace_config_loader(ctx, no_workspace_config)
+
+    if instance and not project:
+        raise click.ClickException("--instance requires --project")
 
     if project and not ws:
         raise click.ClickException(
@@ -58,6 +64,34 @@ def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate, 
 
     if project:
         ws.get_project(project)
+
+    if instance:
+        try:
+            model_inst = ws.get_model_instance(project, instance)
+        except FileNotFoundError:
+            raise click.ClickException(
+                f"Model instance '{instance}' not found in project '{project}'. "
+                f"Create it with: sre model create-instance {project} {instance} --model <arch>"
+            )
+
+        inst_ckpt_dir = model_inst.path / "checkpoints"
+        run_dir = ws.get_run_path(project, instance)
+
+        if resume:
+            resume_path = Path(resume)
+            if not resume_path.is_absolute() and '/' not in str(resume_path):
+                if resume == "latest":
+                    ckpts = sorted(inst_ckpt_dir.glob("*.pt"))
+                    if ckpts:
+                        resume = str(ckpts[-1])
+                    else:
+                        resume = None
+                else:
+                    candidate = inst_ckpt_dir / resume
+                    if candidate.suffix != ".pt":
+                        candidate = inst_ckpt_dir / f"{resume}.pt"
+                    if candidate.exists():
+                        resume = str(candidate)
 
     if ws and project:
         dataset = ws.resolve_dataset(dataset)
@@ -82,6 +116,10 @@ def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate, 
     if validation_split is not None:
         overrides.setdefault("validation", {})["split"] = validation_split
 
+    if instance:
+        overrides["checkpoint_dir"] = str(inst_ckpt_dir)
+        overrides["model"] = model
+
     if overrides:
         train_cfg = merge_overrides(train_cfg, overrides)
 
@@ -95,11 +133,19 @@ def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate, 
     val_enabled = bool(val_cfg.get("enabled", True))
     val_split = float(val_cfg.get("split", 0.1))
 
+    if instance:
+        (run_dir / "train_config.yaml").write_text(
+            yaml.safe_dump(train_cfg, default_flow_style=False, sort_keys=False),
+            encoding="utf-8",
+        )
+
     metrics_stream = None
     if machine:
         if experiment_id is None:
             experiment_id = f"exp_{int(time.time())}"
-        if ws and project:
+        if ws and project and instance:
+            metrics_dir = run_dir
+        elif ws and project:
             metrics_dir = ws.path / "projects" / project / "metrics"
         else:
             metrics_dir = Path(train_cfg.get("checkpoint_dir", "checkpoints")) / "metrics"
