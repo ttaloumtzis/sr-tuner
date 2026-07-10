@@ -19,16 +19,22 @@ from sr_engine.gui_bridge.protocol import (
 
 
 class TestSchemaConstants:
+    """Tests for schema version and exit code constants."""
+
     def test_schema_version(self):
+        """SchemaVersion.CURRENT should be 1."""
         assert SchemaVersion.CURRENT == 1
 
     def test_exit_codes_are_ints(self):
+        """Exit code constants should be integers."""
         assert isinstance(EXIT_SUCCESS, int)
         assert isinstance(EXIT_ERROR, int)
         assert isinstance(EXIT_CANCELLED, int)
 
 
 class TestSocketReporter:
+    """Tests for SocketReporter — progress event serialisation."""
+
     @pytest.fixture
     def send_fn(self):
         return MagicMock()
@@ -38,6 +44,7 @@ class TestSocketReporter:
         return SocketReporter(send_fn=send_fn, job_id="test_job_1")
 
     def test_start_sends_message(self, reporter, send_fn):
+        """start() should send a progress_start event."""
         reporter.start(total=100, desc="testing")
         send_fn.assert_called_once_with({
             "job_id": "test_job_1",
@@ -47,6 +54,7 @@ class TestSocketReporter:
         })
 
     def test_start_without_total(self, reporter, send_fn):
+        """start() without total should send None."""
         reporter.start(desc="no total")
         send_fn.assert_called_once_with({
             "job_id": "test_job_1",
@@ -56,6 +64,7 @@ class TestSocketReporter:
         })
 
     def test_update_sends_message(self, reporter, send_fn):
+        """update() should send a progress_update event."""
         send_fn.reset_mock()
         reporter.update(n=5)
         send_fn.assert_called_once_with({
@@ -65,6 +74,7 @@ class TestSocketReporter:
         })
 
     def test_finish_sends_message(self, reporter, send_fn):
+        """finish() should send a progress_end event."""
         send_fn.reset_mock()
         reporter.finish()
         send_fn.assert_called_once_with({
@@ -73,6 +83,7 @@ class TestSocketReporter:
         })
 
     def test_set_description(self, reporter, send_fn):
+        """set_description() should send a postfix with desc."""
         send_fn.reset_mock()
         reporter.set_description("processing frame 42")
         send_fn.assert_called_once_with({
@@ -82,6 +93,7 @@ class TestSocketReporter:
         })
 
     def test_set_postfix(self, reporter, send_fn):
+        """set_postfix() should forward kwargs in the postfix event."""
         send_fn.reset_mock()
         reporter.set_postfix(loss=0.01, psnr=32.5)
         send_fn.assert_called_once_with({
@@ -93,6 +105,8 @@ class TestSocketReporter:
 
 
 class TestSocketCallback:
+    """Tests for SocketCallback — trainer event serialisation."""
+
     @pytest.fixture
     def send_fn(self):
         return MagicMock()
@@ -102,6 +116,7 @@ class TestSocketCallback:
         return SocketCallback(send_fn=send_fn, job_id="test_job_2")
 
     def test_on_phase(self, callback, send_fn):
+        """on_phase() should send a phase event."""
         callback.on_phase("train", epoch=1)
         send_fn.assert_called_once_with({
             "job_id": "test_job_2",
@@ -111,6 +126,7 @@ class TestSocketCallback:
         })
 
     def test_on_step(self, callback, send_fn):
+        """on_step() should send a step event."""
         callback.on_step(epoch=2, batch=10, total_batches=100, loss=0.05)
         send_fn.assert_called_once_with({
             "job_id": "test_job_2",
@@ -122,6 +138,7 @@ class TestSocketCallback:
         })
 
     def test_on_validate(self, callback, send_fn):
+        """on_validate() should send a validate event."""
         callback.on_validate(epoch=3, psnr=30.0, ssim=0.9)
         send_fn.assert_called_once_with({
             "job_id": "test_job_2",
@@ -132,6 +149,7 @@ class TestSocketCallback:
         })
 
     def test_on_done(self, callback, send_fn):
+        """on_done() should send a done event."""
         callback.on_done(elapsed_seconds=42.5)
         send_fn.assert_called_once_with({
             "job_id": "test_job_2",
@@ -141,13 +159,17 @@ class TestSocketCallback:
 
 
 class TestMakeJsonSender:
+    """Tests for ``make_json_sender``."""
+
     def test_writes_json_line(self):
+        """A dict should be serialised as a single JSON line followed by newline."""
         writer = MagicMock()
         sender = make_json_sender(writer)
         sender({"key": "value", "num": 42})
         writer.assert_called_once_with('{"key": "value", "num": 42}\n')
 
     def test_default_str_for_non_serializable(self):
+        """Non-serialisable values should use ``default=str``."""
         writer = MagicMock()
         sender = make_json_sender(writer)
         sender({"path": "foo/bar"})
@@ -158,26 +180,35 @@ class TestMakeJsonSender:
 
 
 class TestParseMessage:
+    """Tests for ``parse_message``."""
+
     def test_valid_json(self):
+        """A valid JSON line should be parsed into a dict."""
         result = parse_message('{"type": "hello", "status": "ok"}')
         assert result == {"type": "hello", "status": "ok"}
 
     def test_empty_line(self):
+        """Empty or whitespace-only lines should return None."""
         assert parse_message("") is None
         assert parse_message("   ") is None
 
     def test_malformed_json(self):
+        """Malformed JSON should return None."""
         assert parse_message("{bad json}") is None
 
     def test_trailing_whitespace(self):
+        """Trailing whitespace should be stripped before parsing."""
         result = parse_message('{"a": 1}\n')
         assert result == {"a": 1}
 
     def test_strips_whitespace(self):
+        """Leading/trailing whitespace should be stripped."""
         assert parse_message("  {\"a\": 1}  ") == {"a": 1}
 
 
 class TestConnectControlSocket:
+    """Tests for ``connect_control_socket`` — full handshake cycle."""
+
     def _server_socket(self):
         import socket
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -187,6 +218,7 @@ class TestConnectControlSocket:
         return srv
 
     def test_handshake_success(self):
+        """A successful handshake should return job_id, send_fn, and close_fn."""
         import socket
         import threading
 
@@ -224,6 +256,7 @@ class TestConnectControlSocket:
         srv.close()
 
     def test_handshake_rejected(self):
+        """A rejected handshake should raise ConnectionRefusedError."""
         import socket
         import threading
 

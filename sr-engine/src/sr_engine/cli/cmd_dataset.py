@@ -49,13 +49,13 @@ def build(ctx, input: Path, config: Path | None, out: Path | None,
 
     if input.is_dir():
         click.echo(f"Processing and validating preprocessed directory: {input}")
-        result = build_from_preprocessed(input, cfg)
+        result = build_from_preprocessed(input, cfg, reporter=resolve_reporter(unit="pair"))
     else:
         if out is None:
             raise click.BadParameter("The '--out / -o' option is required for video files.")
         out.parent.mkdir(parents=True, exist_ok=True)
         click.echo(f"Extracting and degrading video: {input} -> {out}")
-        result = build_from_video(input, out, cfg)
+        result = build_from_video(input, out, cfg, reporter=resolve_reporter(unit="pair"))
 
     click.secho(f"Dataset ready at: {result}", fg="green", bold=True)
 
@@ -139,7 +139,7 @@ def health_cmd(path: Path, yes: bool) -> None:
 
         if proceed:
             click.echo(f"Pruning {black_count} pairs from dataset paths and updating layout manifest...")
-            prune_black_frames(path, report["black_frames"])
+            prune_black_frames(path, report["black_frames"], reporter=resolve_reporter(unit="pair"))
             click.secho("Dataset successfully cleaned!", fg="green", bold=True)
         else:
             click.echo("Skipping cleanup.")

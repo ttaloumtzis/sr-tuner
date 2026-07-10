@@ -1,3 +1,5 @@
+"""Tests for workspace.py — Workspace discovery, init, projects, check, dataset resolution."""
+
 import os
 from pathlib import Path
 
@@ -7,7 +9,10 @@ from sr_engine.workspace import Workspace, MARKER
 
 
 class TestWorkspaceInit:
+    """Tests for ``Workspace.init``."""
+
     def test_init_creates_directories(self, tmp_path):
+        """init() should create datasets, projects, configs dirs and the marker."""
         ws = Workspace(tmp_path / "my_ws")
         ws.init()
         assert (tmp_path / "my_ws" / "datasets").is_dir()
@@ -16,6 +21,7 @@ class TestWorkspaceInit:
         assert (tmp_path / "my_ws" / MARKER).is_file()
 
     def test_init_is_idempotent(self, tmp_path):
+        """Calling init() twice should not raise."""
         ws = Workspace(tmp_path / "my_ws")
         ws.init()
         ws.init()
@@ -23,13 +29,12 @@ class TestWorkspaceInit:
 
 
 class TestWorkspaceDiscover:
+    """Tests for ``Workspace.discover``."""
+
     def test_discover_from_root(self, tmp_path):
+        """Discover should find a workspace when CWD is the workspace root."""
         ws = Workspace(tmp_path)
         ws.init()
-        found = Workspace.discover()
-        # May or may not match depending on test CWD
-        # Instead: explicitly test that discover finds a marker in a given path
-        # by temporarily changing CWD
         old_cwd = Path.cwd()
         try:
             os.chdir(str(tmp_path))
@@ -40,6 +45,7 @@ class TestWorkspaceDiscover:
             os.chdir(str(old_cwd))
 
     def test_discover_from_subdirectory(self, tmp_path):
+        """Discover should walk up from a subdirectory to find the workspace."""
         ws = Workspace(tmp_path)
         ws.init()
         sub = tmp_path / "sub" / "dir"
@@ -54,6 +60,7 @@ class TestWorkspaceDiscover:
             os.chdir(str(old_cwd))
 
     def test_discover_returns_none_when_no_workspace(self, tmp_path):
+        """Discover should return None when no workspace marker exists."""
         old_cwd = Path.cwd()
         try:
             os.chdir(str(tmp_path))
@@ -64,7 +71,10 @@ class TestWorkspaceDiscover:
 
 
 class TestWorkspaceProjects:
+    """Tests for project CRUD operations."""
+
     def test_create_project(self, tmp_path):
+        """create_project() should create the project directory structure."""
         ws = Workspace(tmp_path)
         ws.init()
         proj = ws.create_project("my_proj")
@@ -75,6 +85,7 @@ class TestWorkspaceProjects:
         assert (proj.path / "metrics").is_dir()
 
     def test_create_duplicate_project_raises(self, tmp_path):
+        """Creating a project with an existing name should raise FileExistsError."""
         ws = Workspace(tmp_path)
         ws.init()
         ws.create_project("my_proj")
@@ -82,6 +93,7 @@ class TestWorkspaceProjects:
             ws.create_project("my_proj")
 
     def test_list_projects(self, tmp_path):
+        """list_projects() should return projects sorted by name."""
         ws = Workspace(tmp_path)
         ws.init()
         ws.create_project("proj_b")
@@ -90,11 +102,13 @@ class TestWorkspaceProjects:
         assert [p.name for p in projects] == ["proj_a", "proj_b"]
 
     def test_list_projects_empty(self, tmp_path):
+        """list_projects() should return an empty list when no projects exist."""
         ws = Workspace(tmp_path)
         ws.init()
         assert ws.list_projects() == []
 
     def test_get_project_found(self, tmp_path):
+        """get_project() should return the matching project."""
         ws = Workspace(tmp_path)
         ws.init()
         ws.create_project("my_proj")
@@ -102,6 +116,7 @@ class TestWorkspaceProjects:
         assert proj.name == "my_proj"
 
     def test_get_project_not_found(self, tmp_path):
+        """get_project() should raise FileNotFoundError for unknown projects."""
         ws = Workspace(tmp_path)
         ws.init()
         with pytest.raises(FileNotFoundError):
@@ -109,7 +124,10 @@ class TestWorkspaceProjects:
 
 
 class TestWorkspaceCheck:
+    """Tests for ``Workspace.check``."""
+
     def test_check_healthy(self, tmp_path):
+        """A healthy workspace should return status 'ok'."""
         ws = Workspace(tmp_path)
         ws.init()
         ws.create_project("proj1")
@@ -119,6 +137,7 @@ class TestWorkspaceCheck:
         assert "proj1" in report["projects"]
 
     def test_check_missing_project_dir(self, tmp_path):
+        """A workspace with a missing projects dir should report an error."""
         ws = Workspace(tmp_path)
         ws.init()
         (tmp_path / "projects").rmdir()
@@ -128,7 +147,10 @@ class TestWorkspaceCheck:
 
 
 class TestWorkspaceResolveDataset:
+    """Tests for ``Workspace.resolve_dataset``."""
+
     def test_resolves_absolute_path(self, tmp_path):
+        """An absolute path should be returned as-is."""
         ws = Workspace(tmp_path)
         ws.init()
         d = tmp_path / "some" / "dataset"
@@ -137,6 +159,7 @@ class TestWorkspaceResolveDataset:
         assert result == d
 
     def test_resolves_existing_relative(self, tmp_path):
+        """A CWD-relative path should be resolved."""
         ws = Workspace(tmp_path)
         ws.init()
         old_cwd = Path.cwd()
@@ -150,6 +173,7 @@ class TestWorkspaceResolveDataset:
             os.chdir(str(old_cwd))
 
     def test_resolves_workspace_dataset(self, tmp_path):
+        """A dataset name should be resolved inside the workspace datasets dir."""
         ws = Workspace(tmp_path)
         ws.init()
         d = tmp_path / "datasets" / "my_set"
@@ -158,6 +182,7 @@ class TestWorkspaceResolveDataset:
         assert result == d
 
     def test_resolve_not_found(self, tmp_path):
+        """An unresolvable dataset should raise FileNotFoundError."""
         ws = Workspace(tmp_path)
         ws.init()
         with pytest.raises(FileNotFoundError):

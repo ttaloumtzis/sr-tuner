@@ -1,0 +1,1 @@
+"""GUI bridge — socket server, job management, and protocol for GUI clients."""

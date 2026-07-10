@@ -4,8 +4,10 @@ from .degrade import batch_degrade
 from .video_extract import extract_frames
 import json
 from pathlib import Path
+from typing import Optional
 
 from sr_engine.utils.logging import get_logger
+from sr_engine.utils.progress import ProgressReporter
 
 log = get_logger(__name__)
 
@@ -13,6 +15,7 @@ def build_from_video(
         video_path: Path,
         out_dir: Path,
         config: dict,
+        reporter: Optional[ProgressReporter] = None,
 ) -> Path:
     """Build a dataset from a video file.
 
@@ -33,6 +36,7 @@ def build_from_video(
         frame_rate=config.get("frame_rate"),
         start_time=config.get("start_time", 0.0),
         duration=config.get("duration"),
+        reporter=reporter,
     )
 
     # Fast fallback if no frames were extracted
@@ -49,6 +53,7 @@ def build_from_video(
         lr_dir=out_dir_lr,
         scale=config.get("scale", 4),
         config=config,
+        reporter=reporter,
     )
 
     if len(hr_lr_pairs) < len(hr_paths):
@@ -78,7 +83,7 @@ def build_from_video(
         json.dump(manifest_data, f, indent=4, ensure_ascii=False)
 
     # 3. Comprehensive Deep Integrity Verification
-    report = validate(out_dir)
+    report = validate(out_dir, reporter=reporter)
     if not report.ok:
         # If verification fails, clean up the bad manifest to keep things unstable/invalidated
         if manifest_path.exists():
@@ -98,6 +103,7 @@ def build_from_video(
 def build_from_preprocessed(
         dataset_dir: Path,
         config: dict,
+        reporter: Optional[ProgressReporter] = None,
 ) -> Path:
     """Validate and finalize a dataset that is already in HR/LR folder format.
 
@@ -147,7 +153,7 @@ def build_from_preprocessed(
         json.dump(manifest_data, f, indent=4, ensure_ascii=False)
 
     # 4. Trigger Deep Validation Scan
-    report = validate(dataset_dir)
+    report = validate(dataset_dir, reporter=reporter)
     if not report.ok:
         # Self-cleaning: purge the generated manifest if structural rules are broken
         if manifest_path.exists():

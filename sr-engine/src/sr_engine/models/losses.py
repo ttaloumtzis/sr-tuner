@@ -17,10 +17,24 @@ class L1Loss(nn.Module):
     """
 
     def __init__(self, eps: float = 1e-6) -> None:
+        """Configure the epsilon smoothing parameter.
+
+        Args:
+            eps: Small constant for numerical stability near zero.
+        """
         super().__init__()
         self.eps = eps
 
     def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """Compute the Charbonnier loss.
+
+        Args:
+            pred: Predicted tensor.
+            target: Target tensor.
+
+        Returns:
+            Scalar loss value.
+        """
         diff = pred - target
         loss = torch.sqrt(diff * diff + self.eps * self.eps)
         return loss.mean()
@@ -69,6 +83,15 @@ class PerceptualLoss(nn.Module):
     """
 
     def __init__(self, layer_ids: list[str] | None = None) -> None:
+        """Load a truncated VGG19 feature extractor.
+
+        Args:
+            layer_ids: List of VGG19 layer names for feature extraction.
+                       Defaults to ``["relu5_4"]``.
+
+        Raises:
+            ValueError: If any layer name is unknown.
+        """
         super().__init__()
 
         self.layer_ids = layer_ids or ["relu5_4"]
@@ -84,8 +107,6 @@ class PerceptualLoss(nn.Module):
         vgg = vgg19(weights=VGG19_Weights.IMAGENET1K_V1).features
         max_index = max(_VGG19_LAYER_INDEX[name] for name in self.layer_ids)
 
-        # Only keep layers up to the deepest one we need — no point running
-        # the rest of the network forward.
         self.vgg = nn.Sequential(*list(vgg.children())[: max_index + 1]).eval()
         for param in self.vgg.parameters():
             param.requires_grad = False
@@ -94,6 +115,14 @@ class PerceptualLoss(nn.Module):
         self.register_buffer("std", torch.tensor(_IMAGENET_STD).view(1, 3, 1, 1))
 
     def _extract_features(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+        """Run the truncated VGG forward and collect named feature maps.
+
+        Args:
+            x: Input tensor ``(B, 3, H, W)`` normalised to ``[0, 1]``.
+
+        Returns:
+            Dict mapping layer names to their feature tensors.
+        """
         x = (x - self.mean) / self.std
 
         features = {}
@@ -107,8 +136,15 @@ class PerceptualLoss(nn.Module):
         return features
 
     def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        # Target features never need gradients — the VGG backbone is frozen
-        # anyway, but detaching here also saves memory during the forward pass.
+        """Compute perceptual loss between prediction and target.
+
+        Args:
+            pred: Predicted tensor ``(B, 3, H, W)`` in ``[0, 1]``.
+            target: Target tensor ``(B, 3, H, W)`` in ``[0, 1]``.
+
+        Returns:
+            Scalar loss value.
+        """
         with torch.no_grad():
             target_features = self._extract_features(target)
 
@@ -131,6 +167,14 @@ class GANLoss(nn.Module):
     """
 
     def __init__(self, gan_type: str = "vanilla") -> None:
+        """Configure the GAN loss type.
+
+        Args:
+            gan_type: ``"vanilla"`` or ``"lsgan"``.
+
+        Raises:
+            ValueError: If ``gan_type`` is not recognised.
+        """
         super().__init__()
 
         if gan_type not in ("vanilla", "lsgan"):
@@ -142,5 +186,14 @@ class GANLoss(nn.Module):
         self.loss_fn = nn.BCEWithLogitsLoss() if gan_type == "vanilla" else nn.MSELoss()
 
     def forward(self, pred: torch.Tensor, target_is_real: bool) -> torch.Tensor:
+        """Compute the GAN loss.
+
+        Args:
+            pred: Discriminator output tensor.
+            target_is_real: ``True`` for real samples, ``False`` for fake.
+
+        Returns:
+            Scalar loss value.
+        """
         target = torch.full_like(pred, fill_value=1.0 if target_is_real else 0.0)
         return self.loss_fn(pred, target)

@@ -164,13 +164,17 @@ def check_dataset_health(dataset_dir: Path,
     }
 
 
-def prune_black_frames(dataset_dir: Path, black_filenames: list[str]) -> None:
+def prune_black_frames(dataset_dir: Path, black_filenames: list[str],
+                       reporter: Optional[ProgressReporter] = None) -> None:
     """Physically remove black frame pairs from disk and filter out their manifest records."""
     hr_dir = dataset_dir / "HR"
     lr_dir = dataset_dir / "LR"
     manifest_path = dataset_dir / "manifest.json"
 
     black_set = set(black_filenames)
+
+    reporter = reporter or ProgressReporter()
+    reporter.start(total=len(black_filenames), desc="Pruning Black Frames")
 
     # Delete physical disk assets
     failed = []
@@ -189,6 +193,10 @@ def prune_black_frames(dataset_dir: Path, black_filenames: list[str]) -> None:
                 lr_path.unlink()
         except OSError as e:
             failed.append((str(lr_path), e))
+
+        reporter.update(1)
+
+    reporter.finish()
 
     if failed:
         msg = "; ".join(f"{p}: {e}" for p, e in failed)

@@ -19,11 +19,15 @@ from sr_engine.gui_bridge.jobs import (
 
 
 class TestCliArgsForTrain:
+    """Tests for the ``cli_args_for_train`` builder."""
+
     def test_minimal(self):
+        """An empty params dict should produce just the base command."""
         args = cli_args_for_train({})
         assert args == ["train", "run"]
 
     def test_all_fields(self):
+        """All recognised training parameters should produce corresponding CLI flags."""
         params = {
             "model_name": "rrdb_esrgan",
             "dataset": "/data/hr",
@@ -54,16 +58,21 @@ class TestCliArgsForTrain:
         assert "--experiment-id" in args
 
     def test_partial_fields(self):
+        """Partial params should produce only those CLI flags."""
         args = cli_args_for_train({"model_name": "swinir", "batch_size": 2})
         assert args == ["train", "run", "--model", "swinir", "--batch-size", "2"]
 
 
 class TestCliArgsForInfer:
+    """Tests for the ``cli_args_for_infer`` builder."""
+
     def test_minimal(self):
+        """An empty params dict should produce just the base command."""
         args = cli_args_for_infer({})
         assert args == ["infer", "run"]
 
     def test_all_fields(self):
+        """All recognised inference parameters should produce corresponding CLI flags."""
         params = {
             "model": "/ckpt.pt",
             "input_path": "/input.png",
@@ -83,11 +92,15 @@ class TestCliArgsForInfer:
 
 
 class TestCliArgsForDatasetBuild:
+    """Tests for the ``cli_args_for_dataset_build`` builder."""
+
     def test_minimal(self):
+        """An empty params dict should produce just the base command."""
         args = cli_args_for_dataset_build({})
         assert args == ["dataset", "build"]
 
     def test_all_fields(self):
+        """All recognised dataset-build parameters should produce corresponding CLI flags."""
         params = {"input": "/video.mp4", "out": "/dataset", "config": "/cfg.yaml"}
         args = cli_args_for_dataset_build(params)
         assert "--input" in args
@@ -96,7 +109,10 @@ class TestCliArgsForDatasetBuild:
 
 
 class TestInstallCancelHandler:
+    """Tests for signal handler installation and cancellation flag."""
+
     def test_installs_sigterm_handler(self):
+        """``install_cancel_handler`` should set a SIGTERM handler without firing it."""
         original = signal.getsignal(signal.SIGTERM)
         try:
             install_cancel_handler()
@@ -105,6 +121,7 @@ class TestInstallCancelHandler:
             signal.signal(signal.SIGTERM, original)
 
     def test_was_cancelled_after_sigterm(self):
+        """``was_cancelled()`` should return True after a SIGTERM."""
         original = signal.getsignal(signal.SIGTERM)
         try:
             install_cancel_handler()
@@ -117,6 +134,8 @@ class TestInstallCancelHandler:
 
 
 class TestJobManager:
+    """Tests for the JobManager class — subprocess lifecycle."""
+
     @pytest.fixture
     def broadcast(self):
         return MagicMock()
@@ -128,21 +147,26 @@ class TestJobManager:
         return m
 
     def test_jobs_dir_created(self, manager):
+        """The jobs directory should be created on first access."""
         assert manager.jobs_dir.is_dir()
 
     def test_list_jobs_empty(self, manager):
+        """An empty jobs directory should return an empty list."""
         assert manager.list_jobs() == []
 
     def test_get_job_not_found(self, manager):
+        """Getting a nonexistent job should return None."""
         assert manager.get_job("nonexistent") is None
 
     def _setup_mock_proc(self, mock_subprocess_popen, returncode=0):
+        """Create a mock subprocess Popen with a given return code."""
         mock_proc = mock_subprocess_popen(returncode=returncode)
         mock_proc.returncode = returncode
         mock_proc.wait.return_value = None
         return mock_proc
 
     def test_start_job_creates_manifest_on_completion(self, manager, broadcast, mock_subprocess_popen):
+        """A completed job should produce a manifest file."""
         mock_proc = self._setup_mock_proc(mock_subprocess_popen, returncode=0)
         manager._job_listener_port = 9999
 
@@ -161,6 +185,7 @@ class TestJobManager:
         assert manifest["exit_code"] == 0
 
     def test_list_jobs_returns_completed(self, manager, broadcast, mock_subprocess_popen):
+        """Completed jobs should appear in the jobs list."""
         mock_proc = self._setup_mock_proc(mock_subprocess_popen, returncode=0)
         manager._job_listener_port = 9999
 
@@ -175,10 +200,12 @@ class TestJobManager:
         assert job_id in ids
 
     def test_cancel_job_not_found(self, manager):
+        """Cancelling an unknown job should return 'not_found'."""
         result = manager.cancel_job("nonexistent")
         assert result["status"] == "not_found"
 
     def test_job_cli_args_for_infer(self, manager, broadcast, mock_subprocess_popen):
+        """An infer job should pass the correct CLI args to subprocess."""
         mock_proc = self._setup_mock_proc(mock_subprocess_popen, returncode=0)
         manager._job_listener_port = 9999
 
@@ -193,6 +220,7 @@ class TestJobManager:
             assert "/in.png" in call_args
 
     def test_job_failed_status(self, manager, broadcast, mock_subprocess_popen):
+        """A job that exits with code 1 should have 'failed' status."""
         mock_proc = self._setup_mock_proc(mock_subprocess_popen, returncode=1)
         manager._job_listener_port = 9999
 
@@ -208,14 +236,17 @@ class TestJobManager:
         assert manifest["exit_code"] == 1
 
     def test_hello_accepts_valid_token(self, manager):
+        """A hello with a matching token should be accepted."""
         manager._pending_hello["job_1"] = {"token": "abc", "spawned_at": 0.0}
         assert manager._on_hello("job_1", "abc") is True
         assert "job_1" in manager._active_jobs
         assert "job_1" not in manager._pending_hello
 
     def test_hello_rejects_wrong_token(self, manager):
+        """A hello with a wrong token should be rejected."""
         manager._pending_hello["job_1"] = {"token": "abc", "spawned_at": 0.0}
         assert manager._on_hello("job_1", "wrong") is False
 
     def test_hello_rejects_unknown_job(self, manager):
+        """A hello for an unknown job should be rejected."""
         assert manager._on_hello("unknown", "abc") is False

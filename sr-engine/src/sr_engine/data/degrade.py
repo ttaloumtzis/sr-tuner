@@ -13,16 +13,13 @@ import cv2
 import numpy as np
 from numpy import dtype, ndarray
 
-# Setup basic logging to handle silent frame drops cleanly
 logger = logging.getLogger(__name__)
 
 
 def _init_worker() -> None:
     """Initializer to ensure isolated RNG seeds and prevent CPU core oversubscription."""
-    # 1. Prevent OpenCV from creating internal thread pools on top of multiprocessing
     cv2.setNumThreads(1)
 
-    # 2. Ensure unique RNG states across distinct system processes
     seed = os.getpid() + int.from_bytes(os.urandom(4), "little")
     random.seed(seed)
     np.random.seed(seed % (2**32 - 1))
@@ -32,6 +29,15 @@ def _add_gaussian_noise(
         image: np.ndarray,
         sigma_range: list[float]
 ) -> np.ndarray:
+    """Add Gaussian noise to the image.
+
+    Args:
+        image: Input image as uint8 numpy array.
+        sigma_range: ``[min_sigma, max_sigma]`` for uniform sampling.
+
+    Returns:
+        Noisy image as uint8.
+    """
     sigma = random.uniform(sigma_range[0], sigma_range[1])
     noise = np.random.normal(0, sigma, image.shape).astype(np.float32)
     return np.clip(image.astype(np.float32) + noise, 0, 255).astype(np.uint8)
@@ -41,10 +47,18 @@ def _add_poisson_noise(
         image: np.ndarray,
         scale_range: list[float]
 ) -> np.ndarray:
+    """Add Poisson noise to the image.
+
+    Args:
+        image: Input image as uint8 numpy array.
+        scale_range: ``[min_scale, max_scale]`` for uniform sampling.
+
+    Returns:
+        Noisy image as uint8.
+    """
     scale = random.uniform(scale_range[0], scale_range[1])
     img_float = image.astype(np.float32) / 255.0
 
-    # Using a fixed dynamic range approximation to decouple noise strength from image content
     vals = 255.0
     noisy = np.random.poisson(img_float * vals * scale) / (vals * scale)
     return np.clip(noisy * 255.0, 0, 255).astype(np.uint8)
@@ -54,11 +68,20 @@ def _apply_jpeg_compression(
         image: np.ndarray,
         quality_range: list[int]
 ) -> ndarray[tuple[Any, ...], dtype[Any]] | None | Any:
+    """Apply JPEG compression artifacts to the image.
+
+    Args:
+        image: Input image as uint8 numpy array.
+        quality_range: ``[min_quality, max_quality]`` for random selection.
+
+    Returns:
+        Compressed image (may be a different type depending on OpenCV decode).
+    """
     quality = random.randint(int(quality_range[0]), int(quality_range[1]))
     encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
     success, fencing = cv2.imencode('.jpg', image, encode_param)
     if not success:
-        return image  # Fallback gracefully if encoding fails
+        return image
     return cv2.imdecode(fencing, 1)
 
 
@@ -77,13 +100,11 @@ def _degrade_image(
     """
     img = hr_image.copy()
 
-    # 1. Enforce HR dimensions to be perfectly divisible by scale factor
     height, width = img.shape[:2]
     height -= height % scale
     width -= width % scale
     img = img[:height, :width]
 
-    # 2. Blur (Applied to HR to simulate lens blur/anti-aliasing filters)
     if blur_kwargs and random.random() < blur_kwargs.get("prob", 1.0):
         k_size = blur_kwargs.get("kernel_size", 21)
         if k_size % 2 == 0:
@@ -92,7 +113,6 @@ def _degrade_image(
         sigma = random.uniform(sigma_range[0], sigma_range[1])
         img = cv2.GaussianBlur(img, (k_size, k_size), sigmaX=sigma, sigmaY=sigma)
 
-    # 3. Downsampling (Happens BEFORE noise/JPEG so artifacts remain intact at LR resolution)
     interp_map = {
         "bilinear": cv2.INTER_LINEAR,
         "lanczos": cv2.INTER_LANCZOS4,
@@ -104,7 +124,6 @@ def _degrade_image(
     lr_height = height // scale
     img = cv2.resize(img, (lr_width, lr_height), interpolation=interpolation)
 
-    # 4. Synthesize Sensor Noise at LR scale
     if noise_kwargs:
         gauss_cfg = noise_kwargs.get("gaussian", {})
         poiss_cfg = noise_kwargs.get("poisson", {})
@@ -121,11 +140,11 @@ def _degrade_image(
         elif use_poiss:
             img = _add_poisson_noise(img, poiss_cfg.get("scale_range", [0.05, 3.0]))
 
-    # 5. Synthesize Transmission / Compression Artifacts at LR scale
     if jpeg_kwargs and random.random() < jpeg_kwargs.get("prob", 1.0):
         img = _apply_jpeg_compression(img, jpeg_kwargs.get("quality_range", [30, 95]))
 
     return img
+
 
 def _process_single_frame(
         hr_path: Path,
@@ -172,7 +191,6 @@ def batch_degrade(
     if not hr_paths:
         return pairs
 
-    # Extract kwargs mapping exactly to the degrade_image signature
     deg_cfg = config.get("degradation", {})
     degrade_kwargs = {
         "blur_kwargs": deg_cfg.get("blur"),
@@ -181,7 +199,6 @@ def batch_degrade(
         "resize_method": deg_cfg.get("resize", {}).get("method", "bicubic")
     }
 
-    # Parallel processing via ProcessPoolExecutor using initialized workers
     worker = partial(_process_single_frame, lr_dir=lr_dir, scale=scale, kwargs=degrade_kwargs)
 
     reporter = reporter or ProgressReporter()

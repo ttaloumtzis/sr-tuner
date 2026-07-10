@@ -1,3 +1,5 @@
+"""CLI command for model training."""
+
 import sys
 import time
 from pathlib import Path

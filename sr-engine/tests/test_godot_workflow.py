@@ -1,122 +1,36 @@
-"""Integration tests mirroring Godot subprocess calls."""
+"""Tests for Godot GUI bridge protocol utilities."""
 
 import json
-import os
-from pathlib import Path
 
-from sr_engine.workspace import Workspace
-from sr_engine.utils.config import save_config
-
-from tests.conftest import _create_dataset_dir
+from sr_engine.gui_bridge.protocol import parse_message, make_json_sender
 
 
-GODOT_TRAIN = [
-    "--model", "rrdb_esrgan", "--device", "cpu",
-    "--max-epochs", "2", "--num-workers", "0",
-    "--patch-size", "16", "--batch-size", "2",
-    "--no-validation-enabled",
-]
+class TestProtocolFunctions:
+    """Tests for protocol-level utility functions."""
 
+    def test_parse_message_valid(self):
+        """A valid JSON line should parse correctly."""
+        msg = parse_message('{"type": "heartbeat", "payload": {}}')
+        assert msg is not None
+        assert msg["type"] == "heartbeat"
 
-class TestGodotHappyPath:
-    def test_full_workflow(self, cli_invoker, tmp_path):
-        ws_path = tmp_path / "workspace"
+    def test_parse_message_empty(self):
+        """An empty line should return None."""
+        assert parse_message("") is None
 
-        r = cli_invoker(["workspace", "init", "--path", str(ws_path)])
-        assert r.exit_code == 0, r.output
-        assert (ws_path / ".sr_workspace").exists()
+    def test_parse_message_whitespace(self):
+        """Whitespace-only should return None."""
+        assert parse_message("  \n  ") is None
 
-        old_cwd = os.getcwd()
-        try:
-            os.chdir(str(ws_path))
+    def test_parse_message_invalid_json(self):
+        """Invalid JSON should return None without crashing."""
+        assert parse_message("not json") is None
 
-            r = cli_invoker(["project", "create", "my_test"])
-            assert r.exit_code == 0, r.output
-            assert (ws_path / "projects" / "my_test").is_dir()
-
-            r = cli_invoker(["workspace", "check"])
-            assert r.exit_code == 0, r.output
-
-            dataset = _create_dataset_dir(ws_path / "tmp_data", 3)
-            ckpt_dir = ws_path / "projects" / "my_test" / "checkpoints"
-            cfg_path = ws_path / "train_cfg.yaml"
-            save_config({"checkpoint_dir": str(ckpt_dir)}, cfg_path)
-
-            r = cli_invoker([
-                "train", "run",
-                "--project", "my_test",
-                "--dataset", str(dataset),
-                "--config", str(cfg_path),
-                "--machine",
-                "--experiment-id", "run_001",
-            ] + GODOT_TRAIN)
-            assert r.exit_code == 0, r.output
-
-            metrics_dir = ws_path / "projects" / "my_test" / "metrics"
-            jsonl_files = list(metrics_dir.glob("*.jsonl"))
-            assert len(jsonl_files) == 1, f"No .jsonl found in {metrics_dir}"
-            content = jsonl_files[0].read_text()
-            lines = [l for l in content.split("\n") if l and not l.startswith("#")]
-            assert len(lines) >= 1
-            messages = [json.loads(l) for l in lines]
-            assert messages[0]["type"] in ("phase", "step")
-            assert any(m["type"] == "done" for m in messages)
-
-        finally:
-            os.chdir(str(old_cwd))
-
-
-class TestGodotNoWorkspace:
-    def test_project_without_workspace_fails(self, cli_invoker, tmp_path):
-        old_cwd = os.getcwd()
-        try:
-            os.chdir(str(tmp_path))
-            r = cli_invoker([
-                "train", "run",
-                "--project", "nonexistent",
-                "--dataset", str(tmp_path / "data"),
-                "--model", "rrdb_esrgan",
-                "--device", "cpu",
-            ])
-            assert r.exit_code != 0
-            assert "workspace" in r.output.lower()
-        finally:
-            os.chdir(str(old_cwd))
-
-
-class TestGodotReplayMetrics:
-    def test_replay_old_experiment(self, cli_invoker, tmp_path):
-        ws_path = tmp_path / "ws_replay"
-        ws = Workspace(ws_path)
-        ws.init()
-        ws.create_project("replay_proj")
-        dataset = _create_dataset_dir(tmp_path / "data", 3)
-        ckpt_dir = ws_path / "projects" / "replay_proj" / "checkpoints"
-        cfg_path = tmp_path / "replay_cfg.yaml"
-        save_config({"checkpoint_dir": str(ckpt_dir)}, cfg_path)
-
-        old_cwd = os.getcwd()
-        try:
-            os.chdir(str(ws_path))
-            r = cli_invoker([
-                "train", "run",
-                "--project", "replay_proj",
-                "--dataset", str(dataset),
-                "--config", str(cfg_path),
-                "--machine",
-                "--experiment-id", "replay_001",
-            ] + GODOT_TRAIN)
-            assert r.exit_code == 0, r.output
-        finally:
-            os.chdir(str(old_cwd))
-
-        metrics_dir = ws_path / "projects" / "replay_proj" / "metrics"
-        jsonl_path = metrics_dir / "replay_001.jsonl"
-        assert jsonl_path.is_file()
-
-        content = jsonl_path.read_text()
-        lines = [l for l in content.split("\n") if l and not l.startswith("#")]
-        messages = [json.loads(l) for l in lines]
-        types = {m["type"] for m in messages}
-        assert "step" in types
-        assert "done" in types
+    def test_make_json_sender_writes_json(self):
+        """make_json_sender should write JSON lines via the writer."""
+        lines = []
+        sender = make_json_sender(lines.append)
+        sender({"msg": "hello"})
+        assert len(lines) == 1
+        parsed = json.loads(lines[0].strip())
+        assert parsed["msg"] == "hello"

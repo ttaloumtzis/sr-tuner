@@ -10,7 +10,17 @@ from torch.utils.data import Dataset
 
 
 def _load_image_tensor(path: Path) -> torch.Tensor:
-    """Load an image from disk as a float32 CHW tensor in [0, 1], RGB order."""
+    """Load an image from disk as a float32 CHW tensor in [0, 1], RGB order.
+
+    Args:
+        path: Path to the image file.
+
+    Returns:
+        Tensor of shape ``(3, H, W)``.
+
+    Raises:
+        ValueError: If the image cannot be read.
+    """
     img = cv2.imread(str(path), cv2.IMREAD_COLOR)
     if img is None:
         raise ValueError(f"Failed to read image (missing or corrupt): {path}")
@@ -38,6 +48,16 @@ class PairedImageFolderDataset(Dataset):
     """
 
     def __init__(self, dataset_dir: Path, transform=None) -> None:
+        """Scan the dataset directory and build the list of HR/LR pairs.
+
+        Args:
+            dataset_dir: Path to the dataset directory.
+            transform: Optional callable ``(lr_tensor, hr_tensor) -> (lr, hr)``.
+
+        Raises:
+            FileNotFoundError: If the dataset directory does not exist.
+            ValueError: If no pairs are found.
+        """
         self.dataset_dir = Path(dataset_dir)
         self.transform = transform
 
@@ -56,6 +76,14 @@ class PairedImageFolderDataset(Dataset):
             )
 
     def _pairs_from_manifest(self, manifest_path: Path) -> list[tuple[Path, Path]]:
+        """Read HR/LR pairs from a ``manifest.json`` file.
+
+        Args:
+            manifest_path: Path to the manifest file.
+
+        Returns:
+            List of ``(hr_path, lr_path)`` tuples.
+        """
         with open(manifest_path, "r", encoding="utf-8") as f:
             manifest_data = json.load(f)
 
@@ -74,6 +102,11 @@ class PairedImageFolderDataset(Dataset):
         return pairs
 
     def _pairs_from_directory_scan(self) -> list[tuple[Path, Path]]:
+        """Match HR and LR files by filename within ``HR/`` and ``LR/`` subdirectories.
+
+        Returns:
+            List of ``(hr_path, lr_path)`` tuples.
+        """
         hr_dir = self.dataset_dir / "HR"
         lr_dir = self.dataset_dir / "LR"
 
@@ -92,10 +125,18 @@ class PairedImageFolderDataset(Dataset):
         return pairs
 
     def __len__(self) -> int:
+        """Return the total number of HR/LR pairs."""
         return len(self.pairs)
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
-        """Return a tuple ``(lr_tensor, hr_tensor)``."""
+        """Return a tuple ``(lr_tensor, hr_tensor)``.
+
+        Args:
+            index: Pair index.
+
+        Returns:
+            ``(lr, hr)`` tensors of shape ``(C, H, W)``.
+        """
         hr_path, lr_path = self.pairs[index]
 
         hr_tensor = _load_image_tensor(hr_path)

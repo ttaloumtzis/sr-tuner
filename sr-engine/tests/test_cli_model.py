@@ -2,17 +2,20 @@
 
 
 def test_model_export_help(cli_invoker):
+    """``model export --help`` should succeed and mention model-name."""
     r = cli_invoker(["model", "export", "--help"])
     assert r.exit_code == 0
     assert "model-name" in r.output
 
 
 def test_model_info_help(cli_invoker):
+    """``model info --help`` should succeed."""
     r = cli_invoker(["model", "info", "--help"])
     assert r.exit_code == 0
 
 
 def test_model_info_missing_ckpt_fails(cli_invoker, tmp_path):
+    """``model info`` with a nonexistent checkpoint should fail."""
     r = cli_invoker([
         "model", "info",
         "--model", str(tmp_path / "nonexistent.pt"),

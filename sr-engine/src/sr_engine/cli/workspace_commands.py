@@ -1,3 +1,5 @@
+"""CLI commands for workspace and project management."""
+
 from pathlib import Path
 import click
 

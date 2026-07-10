@@ -1,6 +1,6 @@
 """Smoke tests for infer CLI command."""
 
-from tests.conftest import _make_image
+
 
 
 def test_infer_image_exists(cli_invoker, tmp_path):
@@ -13,6 +13,7 @@ def test_infer_image_exists(cli_invoker, tmp_path):
 
 
 def test_infer_missing_model_fails(cli_invoker, tmp_path):
+    """Infer with a nonexistent model checkpoint should fail."""
     r = cli_invoker([
         "infer", "run",
         "--model", str(tmp_path / "nonexistent.pt"),
@@ -23,6 +24,7 @@ def test_infer_missing_model_fails(cli_invoker, tmp_path):
 
 
 def test_infer_missing_input_fails(cli_invoker, tmp_path):
+    """Infer with a nonexistent input image should fail."""
     r = cli_invoker([
         "infer", "run",
         "--model", str(tmp_path / "model.pt"),

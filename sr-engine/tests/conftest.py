@@ -1,3 +1,5 @@
+"""Shared fixtures, helpers, and mocks for the sr-engine test suite."""
+
 from pathlib import Path
 import struct
 import json
@@ -11,10 +13,9 @@ from sr_engine.cli.main import cli
 from sr_engine.workspace import Workspace
 from sr_engine.utils.config import save_config
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
-
 
 def _make_image(path: Path, w: int = 64, h: int = 64, seed: int | None = None) -> None:
+    """Write a random RGB image to *path*."""
     path.parent.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(seed)
     img = rng.integers(0, 256, (h, w, 3), dtype=np.uint8)
@@ -22,17 +23,20 @@ def _make_image(path: Path, w: int = 64, h: int = 64, seed: int | None = None) -
 
 
 def _make_grayscale_image(path: Path, w: int = 64, h: int = 64) -> None:
+    """Write a random grayscale image to *path*."""
     path.parent.mkdir(parents=True, exist_ok=True)
     img = np.random.randint(0, 256, (h, w), dtype=np.uint8)
     cv2.imwrite(str(path), img)
 
 
 def _make_corrupt_image(path: Path) -> None:
+    """Write invalid bytes to *path* (not a valid image)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"\x00\x01\x02\x03not-a-png-or-jpg")
 
 
 def _make_video(path: Path, num_frames: int = 10, fps: int = 30, w: int = 64, h: int = 64) -> None:
+    """Write a random MP4 video to *path*."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out = cv2.VideoWriter(str(path), fourcc, fps, (w, h))
@@ -43,6 +47,7 @@ def _make_video(path: Path, num_frames: int = 10, fps: int = 30, w: int = 64, h:
 
 
 def _create_dataset_dir(tmp_path: Path, num_pairs: int = 5) -> Path:
+    """Create a temporary HR/LR dataset directory with *num_pairs* random images."""
     d = tmp_path / "dataset"
     for i in range(num_pairs):
         _make_image(d / "HR" / f"frame_{i:04d}.png", w=256, h=256)
@@ -51,6 +56,7 @@ def _create_dataset_dir(tmp_path: Path, num_pairs: int = 5) -> Path:
 
 
 def _create_manifest(dataset_dir: Path, scale: int = 4) -> None:
+    """Write a ``manifest.json`` for the given dataset directory."""
     hr_dir = dataset_dir / "HR"
     lr_dir = dataset_dir / "LR"
     pairs = []
@@ -69,21 +75,21 @@ def _create_manifest(dataset_dir: Path, scale: int = 4) -> None:
 
 
 def _create_dataset_with_manifest(tmp_path: Path, num_pairs: int = 5, scale: int = 4) -> Path:
+    """Create a dataset directory with both images and a manifest."""
     d = _create_dataset_dir(tmp_path, num_pairs)
     _create_manifest(d, scale)
     return d
 
 
-# ── Basic fixtures ───────────────────────────────────────────────────────────
-
-
 @pytest.fixture
 def cli_runner():
+    """Yield a Click ``CliRunner`` instance."""
     yield CliRunner()
 
 
 @pytest.fixture
 def cli_invoker(cli_runner):
+    """Return a callable that invokes the CLI with given args."""
     def invoke(args: list[str], **kwargs):
         return cli_runner.invoke(cli, args, **kwargs)
     return invoke
@@ -91,6 +97,7 @@ def cli_invoker(cli_runner):
 
 @pytest.fixture
 def tmp_workspace(tmp_path):
+    """Create an initialised workspace with a ``test_proj`` project."""
     ws = Workspace(tmp_path / "workspace")
     ws.init()
     ws.create_project("test_proj")
@@ -99,6 +106,7 @@ def tmp_workspace(tmp_path):
 
 @pytest.fixture
 def empty_workspace(tmp_path):
+    """Create an initialised workspace with no projects."""
     ws = Workspace(tmp_path / "workspace")
     ws.init()
     return ws
@@ -106,6 +114,7 @@ def empty_workspace(tmp_path):
 
 @pytest.fixture
 def custom_train_config(tmp_path):
+    """Save and return a path to a minimal custom training config YAML."""
     cfg = {"max_epochs": 3, "batch_size": 2}
     path = tmp_path / "custom_train.yaml"
     save_config(cfg, path)
@@ -114,15 +123,14 @@ def custom_train_config(tmp_path):
 
 @pytest.fixture
 def minimal_dataset(tmp_path):
+    """Return a dataset directory with 3 HR/LR pairs (no manifest)."""
     return _create_dataset_dir(tmp_path, num_pairs=3)
 
 
 @pytest.fixture
 def minimal_dataset_with_manifest(tmp_path):
+    """Return a dataset directory with 3 HR/LR pairs and a manifest."""
     return _create_dataset_with_manifest(tmp_path, num_pairs=3)
-
-
-# ── Mock fixtures for device tests ───────────────────────────────────────────
 
 
 @pytest.fixture
@@ -148,6 +156,7 @@ def mock_torch_cuda():
         return _patch_context(patches)
 
     class _patch_context:
+        """Context manager that starts/stops a list of patches."""
         def __init__(self, patches):
             self._patches = patches
         def __enter__(self):
@@ -205,9 +214,6 @@ def mock_subprocess_popen():
     return _mock
 
 
-# ── Mock fixture for progress reporters ─────────────────────────────────────
-
-
 @pytest.fixture
 def tqdm_mock():
     """Fixture that prevents tqdm output during tests and returns the mock."""
@@ -221,9 +227,6 @@ def tqdm_mock():
 def mock_progress_reporter():
     """Return a MagicMock conforming to ProgressReporter interface."""
     return MagicMock()
-
-
-# ── Sample config fixtures ───────────────────────────────────────────────────
 
 
 @pytest.fixture
@@ -259,11 +262,9 @@ def sample_config_dict():
     }
 
 
-# ── Image file fixtures ──────────────────────────────────────────────────────
-
-
 @pytest.fixture
 def sample_image(tmp_path):
+    """Return a path to a generated sample PNG."""
     path = tmp_path / "sample.png"
     _make_image(path)
     return path
@@ -271,6 +272,7 @@ def sample_image(tmp_path):
 
 @pytest.fixture
 def corrupt_image(tmp_path):
+    """Return a path to a corrupt image file."""
     path = tmp_path / "corrupt.png"
     _make_corrupt_image(path)
     return path
@@ -278,6 +280,7 @@ def corrupt_image(tmp_path):
 
 @pytest.fixture
 def sample_video(tmp_path):
+    """Return a path to a generated sample MP4."""
     path = tmp_path / "sample.mp4"
     _make_video(path)
     return path

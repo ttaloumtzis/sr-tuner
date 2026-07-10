@@ -5,9 +5,6 @@ from pathlib import Path
 import yaml
 
 
-
-
-
 def load_config(path: Path | None) -> dict:
     """Load a YAML configuration file and return it as a nested dict.
 
@@ -31,11 +28,9 @@ def merge_overrides(base: dict, overrides: dict) -> dict:
     Keys in *overrides* overwrite corresponding keys in *base*.
     Nested dicts are merged recursively (shallow merge at each level).
     """
-    # Create a deep copy of base to completely avoid modifying your defaults in-place
     merged = copy.deepcopy(base)
 
     for key, value in overrides.items():
-        # If both are nested dictionaries, merge them recursively
         if (
             key in merged
             and isinstance(merged[key], dict)
@@ -43,13 +38,21 @@ def merge_overrides(base: dict, overrides: dict) -> dict:
         ):
             merged[key] = merge_overrides(merged[key], value)
         else:
-            # Otherwise, overwrite the value completely (handles primitives, lists, etc.)
             merged[key] = copy.deepcopy(value)
 
     return merged
 
 
 def validate_config(cfg: dict, required_keys: list[str]) -> None:
+    """Validate that *cfg* contains all keys in *required_keys*.
+
+    Args:
+        cfg: Configuration dict to validate.
+        required_keys: List of keys that must be present.
+
+    Raises:
+        ValueError: If any required keys are missing.
+    """
     missing = [k for k in required_keys if k not in cfg]
     if missing:
         raise ValueError(
@@ -59,17 +62,27 @@ def validate_config(cfg: dict, required_keys: list[str]) -> None:
 
 
 def save_config(config: dict, path: Path) -> None:
-    """Save a configuration dict to a YAML file."""
+    """Save a configuration dict to a YAML file.
+
+    Args:
+        config: Configuration dict to persist.
+        path: Destination file path.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
 
     with open(path, "w", encoding="utf-8") as f:
-        # default_flow_style=False keeps everything formatted as clean, indented blocks
-        # sort_keys=False preserves your logical dictionary structure layout
         yaml.safe_dump(config, f, default_flow_style=False, sort_keys=False)
 
 
 class DefaultConfigs:
+    """Accessor for built-in and workspace-overridden YAML configs."""
+
     def __init__(self, workspace=None):
+        """Load all built-in configs from the package's ``configs/`` directory.
+
+        Args:
+            workspace: Optional ``Workspace`` instance for workspace-level overrides.
+        """
         self._workspace = workspace
         self._builtin_path = Path(__file__).resolve().parents[1] / "utils" / "configs"
 
@@ -83,9 +96,20 @@ class DefaultConfigs:
 
     @classmethod
     def builtin_config_path(cls) -> Path:
+        """Return the filesystem path to the built-in configs directory."""
         return Path(__file__).resolve().parents[1] / "utils" / "configs"
 
     def _ws_or_builtin(self, category: str, filename: str, fallback: dict) -> dict:
+        """Return workspace config if available, otherwise the built-in fallback.
+
+        Args:
+            category: Subdirectory name (``train``, ``datasets``, ``models``).
+            filename: YAML filename within the category.
+            fallback: Built-in config dict to fall back on.
+
+        Returns:
+            Merged config dict (workspace overrides built-in).
+        """
         if self._workspace is None:
             return copy.deepcopy(fallback)
         ws_path = self._workspace.path / "configs" / category / filename
@@ -101,17 +125,35 @@ class DefaultConfigs:
         return merge_overrides(fallback, ws_cfg)
 
     def get_train_config(self) -> dict:
+        """Return the training config, preferring workspace overrides."""
         return self._ws_or_builtin("train", "base.yaml", self.train)
 
     def get_dataset_config(self) -> dict:
+        """Return the dataset config, preferring workspace overrides."""
         return self._ws_or_builtin("datasets", "video_pairs.yaml", self.datasets)
 
     def get_model_config(self, name: str) -> dict | None:
+        """Return the model config for *name*, preferring workspace overrides.
+
+        Args:
+            name: Model name (e.g. ``swinir``, ``rrdb_esrgan``).
+
+        Returns:
+            Config dict or None if the model is unknown.
+        """
         builtin = self.models.get(name)
         if builtin is None:
             return None
         return self._ws_or_builtin("models", f"{name}.yaml", builtin)
 
     def get_full_config(self, model_name: str) -> dict:
+        """Merge train, dataset, and model configs into a single dict.
+
+        Args:
+            model_name: Model name for the model-specific config.
+
+        Returns:
+            Merged configuration dict.
+        """
         base = merge_overrides(self.get_train_config(), self.get_dataset_config())
         return merge_overrides(base, self.get_model_config(model_name))

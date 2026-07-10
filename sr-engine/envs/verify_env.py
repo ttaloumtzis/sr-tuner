@@ -7,6 +7,7 @@ from sr_engine.device.backend import get_device, is_rocm, autocast_dtype, suppor
 
 
 def main() -> None:
+    """Print environment diagnostics and run a micro forward/backward pass."""
     print("=" * 60)
     print("sr-engine environment verification")
     print("=" * 60)

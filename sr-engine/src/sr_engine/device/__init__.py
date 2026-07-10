@@ -1,0 +1,1 @@
+"""Device module — backend detection and kernel selection (CUDA, ROCm)."""

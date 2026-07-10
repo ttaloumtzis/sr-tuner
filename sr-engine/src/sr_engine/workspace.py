@@ -1,3 +1,5 @@
+"""Workspace discovery, initialisation, project CRUD, and dataset resolution."""
+
 import json
 import shutil
 from dataclasses import dataclass
@@ -5,20 +7,35 @@ from pathlib import Path
 
 
 MARKER = ".sr_workspace"
+"""Filename used to mark a workspace root directory."""
 
 
 @dataclass
 class Project:
+    """A named project directory within a workspace."""
+
     name: str
     path: Path
 
 
 class Workspace:
+    """Manages the workspace directory tree — projects, datasets, configs."""
+
     def __init__(self, path: Path):
+        """Initialise with the resolved workspace root path.
+
+        Args:
+            path: Workspace root directory (will be resolved to absolute).
+        """
         self.path = path.resolve()
 
     @classmethod
     def discover(cls) -> "Workspace | None":
+        """Walk up from CWD to find a workspace marker.
+
+        Returns:
+            Workspace if a marker file is found, else None.
+        """
         cwd = Path.cwd().resolve()
         for parent in [cwd] + list(cwd.parents):
             marker = parent / MARKER
@@ -27,6 +44,13 @@ class Workspace:
         return None
 
     def init(self, reset_configs: bool = False) -> None:
+        """Create the workspace directory structure and copy built-in configs.
+
+        Creates ``datasets/``, ``projects/``, ``configs/`` and the marker file.
+
+        Args:
+            reset_configs: If True, overwrite existing config files.
+        """
         dirs = [
             self.path / "datasets",
             self.path / "projects",
@@ -44,6 +68,11 @@ class Workspace:
         self._copy_builtin_configs(reset_configs)
 
     def _copy_builtin_configs(self, reset: bool = False) -> None:
+        """Copy default YAML configs from the package into the workspace configs dir.
+
+        Args:
+            reset: If True, overwrite any existing config files.
+        """
         from sr_engine.utils.config import DefaultConfigs
 
         src = DefaultConfigs.builtin_config_path()
@@ -62,6 +91,11 @@ class Workspace:
                     shutil.copy2(fpath, dst)
 
     def check(self) -> dict:
+        """Validate workspace structure and return a health report.
+
+        Returns:
+            Dict with keys ``status``, ``issues``, ``path``, ``projects``, ``datasets``.
+        """
         issues = []
         structure_ok = True
 
@@ -98,6 +132,11 @@ class Workspace:
         }
 
     def info(self) -> dict:
+        """Return a summary of the workspace contents.
+
+        Returns:
+            Dict with keys ``path``, ``projects``, ``datasets``.
+        """
         projects = self.list_projects()
         datasets_dir = self.path / "datasets"
         dataset_names = sorted(
@@ -111,6 +150,17 @@ class Workspace:
         }
 
     def create_project(self, name: str) -> Project:
+        """Create a new project directory under the workspace.
+
+        Args:
+            name: Project name (used as directory name).
+
+        Returns:
+            The newly created Project.
+
+        Raises:
+            FileExistsError: If the project directory already exists.
+        """
         project_path = self.path / "projects" / name
         if project_path.exists():
             raise FileExistsError(f"Project '{name}' already exists at {project_path}")
@@ -119,6 +169,11 @@ class Workspace:
         return Project(name=name, path=project_path)
 
     def list_projects(self) -> list[Project]:
+        """Return all projects sorted by name.
+
+        Returns:
+            List of Project dataclass instances.
+        """
         projects_dir = self.path / "projects"
         if not projects_dir.is_dir():
             return []
@@ -132,6 +187,17 @@ class Workspace:
         )
 
     def get_project(self, name: str) -> Project:
+        """Look up a project by name.
+
+        Args:
+            name: Project name.
+
+        Returns:
+            The matching Project.
+
+        Raises:
+            FileNotFoundError: If the project does not exist.
+        """
         project_path = self.path / "projects" / name
         if not project_path.is_dir():
             raise FileNotFoundError(
@@ -141,6 +207,19 @@ class Workspace:
         return Project(name=name, path=project_path)
 
     def resolve_dataset(self, name_or_path: Path) -> Path:
+        """Resolve a dataset reference to an absolute path.
+
+        Checks, in order: absolute path, CWD-relative path, workspace datasets dir.
+
+        Args:
+            name_or_path: Dataset name or path.
+
+        Returns:
+            Resolved absolute Path.
+
+        Raises:
+            FileNotFoundError: If the dataset cannot be found.
+        """
         if name_or_path.is_absolute():
             return name_or_path
         resolved_cwd = name_or_path.resolve()

@@ -10,8 +10,17 @@ from ..registry import register
 
 
 class MLP(nn.Module):
+    """Multi-layer perceptron with GELU activation."""
+
     def __init__(self, in_features: int, hidden_features: Optional[int] = None,
                  out_features: Optional[int] = None) -> None:
+        """Initialise two linear layers with GELU.
+
+        Args:
+            in_features: Input dimension.
+            hidden_features: Hidden dimension (defaults to ``in_features``).
+            out_features: Output dimension (defaults to ``in_features``).
+        """
         super().__init__()
         hidden_features = hidden_features or in_features
         out_features = out_features or in_features
@@ -20,23 +29,53 @@ class MLP(nn.Module):
         self.fc2 = nn.Linear(hidden_features, out_features)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply ``fc1 -> GELU -> fc2``."""
         return self.fc2(self.act(self.fc1(x)))
 
 
 def window_partition(x: torch.Tensor, window_size: int) -> torch.Tensor:
+    """Partition a spatial feature map into non-overlapping windows.
+
+    Args:
+        x: Tensor of shape ``(B, H, W, C)``.
+        window_size: Size of each square window.
+
+    Returns:
+        Windows of shape ``(num_windows * B, window_size ** 2, C)``.
+    """
     B, H, W, C = x.shape
     x = x.view(B, H // window_size, window_size, W // window_size, window_size, C)
     return x.permute(0, 1, 3, 2, 4, 5).contiguous().view(-1, window_size ** 2, C)
 
 
 def window_reverse(windows: torch.Tensor, window_size: int, H: int, W: int) -> torch.Tensor:
+    """Reverse ``window_partition`` back to a spatial feature map.
+
+    Args:
+        windows: Tensor of shape ``(num_windows * B, window_size ** 2, C)``.
+        window_size: Size of each square window.
+        H: Original spatial height.
+        W: Original spatial width.
+
+    Returns:
+        Tensor of shape ``(B, H, W, C)``.
+    """
     B = windows.shape[0] // (H // window_size * W // window_size)
     x = windows.view(B, H // window_size, W // window_size, window_size, window_size, -1)
     return x.permute(0, 1, 3, 2, 4, 5).contiguous().view(B, H, W, -1)
 
 
 class WindowAttention(nn.Module):
+    """Window-based multi-head self-attention with relative position bias."""
+
     def __init__(self, dim: int, num_heads: int, window_size: int) -> None:
+        """Initialise QKV projection, output projection, and relative position bias table.
+
+        Args:
+            dim: Feature dimension.
+            num_heads: Number of attention heads.
+            window_size: Size of the attention window.
+        """
         super().__init__()
         self.num_heads = num_heads
         self.window_size = window_size
@@ -63,6 +102,15 @@ class WindowAttention(nn.Module):
         nn.init.trunc_normal_(self.relative_position_bias_table, std=0.02)
 
     def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """Compute window attention with optional masking for cyclic shift.
+
+        Args:
+            x: Input tensor ``(B_, N, C)``.
+            mask: Optional attention mask for shifted windows.
+
+        Returns:
+            Output tensor ``(B_, N, C)``.
+        """
         B_, N, C = x.shape
         qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads)
         qkv = qkv.permute(2, 0, 3, 1, 4)
@@ -86,8 +134,19 @@ class WindowAttention(nn.Module):
 
 
 class SwinTransformerLayer(nn.Module):
+    """Single Swin Transformer layer with window attention and MLP."""
+
     def __init__(self, dim: int, num_heads: int, window_size: int = 8,
                  shift_size: int = 0, mlp_ratio: float = 2.0) -> None:
+        """Initialise attention, MLP, and normalisation layers.
+
+        Args:
+            dim: Feature dimension.
+            num_heads: Number of attention heads.
+            window_size: Size of the attention window.
+            shift_size: Cyclic shift amount for SW-MSA (0 for W-MSA).
+            mlp_ratio: Ratio of MLP hidden dim to feature dim.
+        """
         super().__init__()
         self.window_size = window_size
         self.shift_size = shift_size
@@ -99,6 +158,16 @@ class SwinTransformerLayer(nn.Module):
         self.mlp = MLP(dim, int(dim * mlp_ratio))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply window attention, residual, MLP, and residual.
+
+        Handles cyclic shift, padding, and attention masking for shifted windows.
+
+        Args:
+            x: Input tensor ``(B, C, H, W)``.
+
+        Returns:
+            Output tensor ``(B, C, H, W)``.
+        """
         B, C, H, W = x.shape
         shortcut = x
 
@@ -136,6 +205,19 @@ class SwinTransformerLayer(nn.Module):
         return x
 
     def _compute_attention_mask(self, B: int, Hp: int, Wp: int, device: torch.device) -> torch.Tensor:
+        """Compute the attention mask for shifted window multi-head self-attention.
+
+        Masks out cross-window connections introduced by the cyclic shift.
+
+        Args:
+            B: Batch size.
+            Hp: Padded height.
+            Wp: Padded width.
+            device: Target device.
+
+        Returns:
+            Attention mask tensor.
+        """
         ws = self.window_size
         shift = self.shift_size
         img_mask = torch.zeros((1, Hp, Wp, 1), device=device)
@@ -153,8 +235,21 @@ class SwinTransformerLayer(nn.Module):
 
 
 class RSTB(nn.Module):
+    """Residual Swin Transformer Block — a stack of SwinTransformerLayers with a conv residual."""
+
     def __init__(self, dim: int, num_heads: int, depth: int, window_size: int = 8,
                  mlp_ratio: float = 2.0) -> None:
+        """Initialise a stack of SwinTransformerLayers and a final conv layer.
+
+        Layers alternate between W-MSA (shift_size=0) and SW-MSA (shift_size=window_size//2).
+
+        Args:
+            dim: Feature dimension.
+            num_heads: Number of attention heads per layer.
+            depth: Number of SwinTransformerLayer blocks.
+            window_size: Size of the attention window.
+            mlp_ratio: Ratio of MLP hidden dim to feature dim.
+        """
         super().__init__()
         self.layers = nn.ModuleList()
         for i in range(depth):
@@ -164,6 +259,14 @@ class RSTB(nn.Module):
         self.conv = nn.Conv2d(dim, dim, 3, 1, 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply stacked layers with a convolutional residual connection.
+
+        Args:
+            x: Input tensor ``(B, C, H, W)``.
+
+        Returns:
+            Output tensor ``(B, C, H, W)``.
+        """
         shortcut = x
         for layer in self.layers:
             x = layer(x)
@@ -172,6 +275,8 @@ class RSTB(nn.Module):
 
 @register("swinir")
 class SwinIR(nn.Module):
+    """SwinIR model — shallow feature extraction, RSTB body, upsampler."""
+
     def __init__(
         self,
         num_in_ch: int = 3,
@@ -186,6 +291,20 @@ class SwinIR(nn.Module):
         scale: int = 4,
         **kwargs,
     ) -> None:
+        """Initialise SwinIR from architecture parameters.
+
+        Args:
+            num_in_ch: Number of input channels.
+            num_out_ch: Number of output channels.
+            embed_dim: Embedding dimension after first convolution.
+            depths: Number of RSTB layers per stage (list of 6 ints).
+            num_heads: Number of attention heads per stage (list of 6 ints).
+            window_size: Size of the attention window.
+            mlp_ratio: Ratio of MLP hidden dim to feature dim.
+            img_range: Image value range (multiplied on input, divided on output).
+            upsampler: ``"pixelshuffle"`` or ``"nearest+conv"``.
+            scale: Super-resolution scale factor.
+        """
         super().__init__()
         self.scale = scale
         self.img_range = img_range
@@ -218,6 +337,14 @@ class SwinIR(nn.Module):
             )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply shallow conv, RSTB body, and upsampler.
+
+        Args:
+            x: Input tensor ``(B, C, H, W)`` in ``[0, img_range]``.
+
+        Returns:
+            Output tensor ``(B, C_out, H*scale, W*scale)``.
+        """
         x = x * self.img_range
 
         shallow = self.conv_first(x)

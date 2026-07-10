@@ -25,14 +25,30 @@ class _TransformSubset(Dataset):
     """Subset that applies transforms on-the-fly after retrieval from the base dataset."""
 
     def __init__(self, dataset: Dataset, indices: list[int], transform=None) -> None:
+        """Wrap a dataset with index subsetting and optional transforms.
+
+        Args:
+            dataset: Base dataset to sample from.
+            indices: List of valid indices into the base dataset.
+            transform: Optional callable ``(lr, hr) -> (lr, hr)``.
+        """
         self.dataset = dataset
         self.indices = indices
         self.transform = transform
 
     def __len__(self) -> int:
+        """Return the number of samples in the subset."""
         return len(self.indices)
 
     def __getitem__(self, idx: int):
+        """Retrieve a sample by subset index, applying transforms.
+
+        Args:
+            idx: Index into the subset.
+
+        Returns:
+            ``(lr, hr)`` tensor pair.
+        """
         lr, hr = self.dataset[self.indices[idx]]
         if self.transform:
             lr, hr = self.transform(lr, hr)
@@ -63,21 +79,30 @@ class _MetricsStreamCallback(TrainerCallback):
     """Adapter that bridges a ``MetricsStream`` into the callback system."""
 
     def __init__(self, stream: MetricsStream) -> None:
+        """Wrap a MetricsStream for callback-driven writes.
+
+        Args:
+            stream: MetricsStream instance to write to.
+        """
         self._stream = stream
 
     def on_phase(self, phase: str, **data: Any) -> None:
+        """Write a phase event to the metrics stream."""
         self._stream.write({"type": "phase", "phase": phase, **data})
 
     def on_step(self, epoch: int, batch: int, total_batches: int, **losses: float) -> None:
+        """Write a step event to the metrics stream."""
         self._stream.write({
             "type": "step", "epoch": epoch, "batch": batch,
             "total_batches": total_batches, **losses,
         })
 
     def on_validate(self, epoch: int, **metrics: float) -> None:
+        """Write a validation event to the metrics stream."""
         self._stream.write({"type": "validate", "epoch": epoch, **metrics})
 
     def on_done(self, elapsed_seconds: float) -> None:
+        """Write a done event and close the metrics stream."""
         self._stream.write({"type": "done", "elapsed_seconds": elapsed_seconds})
         self._stream.close()
 
@@ -100,6 +125,22 @@ class Trainer:
         callbacks: list[TrainerCallback] | None = None,
         cancel_check: Callable[[], bool] | None = None,
     ) -> None:
+        """Configure model, optimizer, dataloaders, and schedule.
+
+        Args:
+            model_cfg: Model architecture configuration dict.
+            train_cfg: Training hyperparameter dict.
+            dataset_dir: Path to the paired HR/LR dataset directory.
+            resume_from: Optional checkpoint path to resume from.
+            device: Torch device string.
+            validation_enabled: Whether to hold out a validation split.
+            validation_split: Fraction of data used for validation.
+            metrics_stream: Optional stream for writing metrics JSONL.
+            metrics_frequency: Log metrics every N batches.
+            progress_reporter: Progress reporter instance.
+            callbacks: Additional lifecycle callbacks.
+            cancel_check: Callable returning True when cancellation is requested.
+        """
         self.model_cfg = model_cfg
         self.device = torch.device(device)
         self.train_cfg = train_cfg
@@ -215,6 +256,11 @@ class Trainer:
             )
 
     def _resume(self, checkpoint_path: Path) -> None:
+        """Load model and optimizer state from a checkpoint.
+
+        Args:
+            checkpoint_path: Path to a ``.pt`` checkpoint file.
+        """
         ckpt = load_checkpoint(checkpoint_path, map_location=str(self.device))
         self.model.load_state_dict(ckpt["state_dict"])
         if "optimizer_state" in ckpt and ckpt["optimizer_state"]:
@@ -225,11 +271,21 @@ class Trainer:
         log.info("Resumed from epoch %d", self.current_epoch)
 
     def _emit(self, event: str, **payload: Any) -> None:
-        """Dispatch an event to all registered callbacks."""
+        """Dispatch an event to all registered callbacks.
+
+        Args:
+            event: Event name (e.g. ``"step"``, ``"phase"``).
+            payload: Keyword arguments forwarded to the callback method.
+        """
         for cb in self._callbacks:
             getattr(cb, f"on_{event}")(**payload)
 
     def _save(self, epoch: int) -> None:
+        """Save a model checkpoint to disk.
+
+        Args:
+            epoch: Current epoch number (used in the filename).
+        """
         path = self.checkpoint_dir / f"epoch_{epoch:03d}.pt"
         save_checkpoint(
             path=path,
@@ -241,6 +297,15 @@ class Trainer:
         )
 
     def _run_step(self, lr: torch.Tensor, hr: torch.Tensor) -> dict[str, float]:
+        """Execute one training step: forward, loss, backward, optimiser step.
+
+        Args:
+            lr: Low-resolution input batch ``(B, C, H, W)``.
+            hr: High-resolution target batch ``(B, C, H*scale, W*scale)``.
+
+        Returns:
+            Dict of loss components and current learning rate.
+        """
         lr, hr = lr.to(self.device, non_blocking=True), hr.to(self.device, non_blocking=True)
         self.optimizer.zero_grad(set_to_none=True)
         pred = self.model(lr)
@@ -258,6 +323,11 @@ class Trainer:
         return comp
 
     def _validate(self) -> dict[str, float]:
+        """Run validation: compute average PSNR and SSIM over the validation set.
+
+        Returns:
+            Dict with ``"psnr"`` and ``"ssim"`` keys.
+        """
         self.model.eval()
         total_psnr = 0.0
         total_ssim = 0.0

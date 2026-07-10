@@ -15,8 +15,10 @@ from sr_engine.engine.inference import (
 
 
 class TestImageTensorConversion:
+    """Tests for image-to-tensor and tensor-to-image conversion functions."""
+
     def test_read_image_tensor_shape(self):
-        # Use a simple generated image via numpy/cv2
+        """``_read_image_tensor`` should return a (3, H, W) tensor in [0, 1]."""
         import cv2
         import numpy as np
         import tempfile
@@ -29,20 +31,19 @@ class TestImageTensorConversion:
         assert tensor.max() <= 1.0
 
     def test_frame_to_tensor_converts_bgr_to_rgb(self):
+        """``_frame_to_tensor`` should convert BGR to RGB channel order."""
         import numpy as np
-        # BGR frame from cv2
         bgr = np.random.randint(0, 256, (64, 64, 3), dtype=np.uint8)
-        # Make it asymmetric in B,G,R so we can detect channel swap
-        bgr[:, :, 0] = 255  # Blue channel full
-        bgr[:, :, 1] = 0    # Green channel zero
-        bgr[:, :, 2] = 128  # Red channel mid
+        bgr[:, :, 0] = 255
+        bgr[:, :, 1] = 0
+        bgr[:, :, 2] = 128
         tensor = _frame_to_tensor(bgr)
-        # Channel order should be RGB now
-        assert tensor[0, 0, 0].item() == pytest.approx(128.0 / 255.0, abs=1e-6)  # Red
-        assert tensor[1, 0, 0].item() == pytest.approx(0.0, abs=1e-6)            # Green
-        assert tensor[2, 0, 0].item() == pytest.approx(1.0, abs=1e-6)            # Blue
+        assert tensor[0, 0, 0].item() == pytest.approx(128.0 / 255.0, abs=1e-6)
+        assert tensor[1, 0, 0].item() == pytest.approx(0.0, abs=1e-6)
+        assert tensor[2, 0, 0].item() == pytest.approx(1.0, abs=1e-6)
 
     def test_tensor_to_bgr_roundtrip(self):
+        """``_tensor_to_bgr_image`` should produce a uint8 BGR image."""
         import numpy as np
         tensor = torch.rand(3, 64, 64)
         bgr = _tensor_to_bgr_image(tensor)
@@ -51,7 +52,10 @@ class TestImageTensorConversion:
 
 
 class TestSuperResolveTensor:
+    """Tests for ``_super_resolve_tensor`` — tiled and non-tiled inference."""
+
     def test_no_tiling_small_image(self):
+        """A small image should be processed without tiling."""
         model = MagicMock()
         model.return_value = torch.randn(1, 3, 64, 64)
         lr = torch.randn(3, 16, 16)
@@ -59,6 +63,7 @@ class TestSuperResolveTensor:
         assert result.shape == (3, 64, 64)
 
     def test_tiling_large_image(self):
+        """A large image should be processed with tiling."""
         model = MagicMock()
         model.return_value = torch.randn(1, 3, 32, 32)
         lr = torch.randn(3, 32, 32)
@@ -66,6 +71,7 @@ class TestSuperResolveTensor:
         assert result.shape == (3, 64, 64)
 
     def test_model_called_once_without_tiling(self):
+        """The model should be called exactly once without tiling."""
         model = MagicMock()
         model.return_value = torch.randn(1, 3, 64, 64)
         lr = torch.randn(3, 16, 16)
@@ -74,17 +80,22 @@ class TestSuperResolveTensor:
 
 
 class TestTiling:
+    """Tests for tile/stitch roundtrip."""
+
     def test_tile_and_stitch_roundtrip(self):
+        """Tiling then stitching should produce the original shape."""
         from sr_engine.engine.tiling import tile_image, stitch_tiles
         import numpy as np
         lr = torch.randn(3, 64, 64)
         tiles = tile_image(lr, tile_size=32, overlap=8)
-        assert len(tiles) > 1  # Should produce multiple tiles
+        assert len(tiles) > 1
         stitched = stitch_tiles(tiles, output_size=(64, 64), overlap=8)
         assert stitched.shape == (3, 64, 64)
 
 
 class TestLoadModel:
+    """Tests for ``_load_model``."""
+
     def _make_rrdb_checkpoint(self, tmp_path):
         from sr_engine.models.archs.rrdbnet import RRDBNet
         model = RRDBNet(num_in_ch=3, num_out_ch=3, scale=4)
@@ -97,6 +108,7 @@ class TestLoadModel:
         return ckpt
 
     def test_raises_on_missing_config(self, tmp_path):
+        """A checkpoint without a config should raise ValueError."""
         from sr_engine.engine.inference import _load_model
         ckpt = tmp_path / "model.pt"
         torch.save({"state_dict": {"w": torch.tensor([1.0])}}, ckpt)
@@ -104,6 +116,7 @@ class TestLoadModel:
             _load_model(ckpt, device="cpu")
 
     def test_loads_model_from_checkpoint(self, tmp_path):
+        """A valid checkpoint should produce an nn.Module and scale."""
         from sr_engine.engine.inference import _load_model
         import torch.nn as nn
         ckpt = self._make_rrdb_checkpoint(tmp_path)
@@ -114,6 +127,8 @@ class TestLoadModel:
 
 
 class TestInferImage:
+    """Tests for the ``infer_image`` entry point."""
+
     def _make_rrdb_checkpoint(self, tmp_path):
         from sr_engine.models.archs.rrdbnet import RRDBNet
         model = RRDBNet(num_in_ch=3, num_out_ch=3, scale=4)
@@ -126,6 +141,7 @@ class TestInferImage:
         return ckpt
 
     def test_saves_output(self, tmp_path, sample_image):
+        """infer_image should produce an output image at the specified path."""
         from sr_engine.engine.inference import infer_image
         ckpt = self._make_rrdb_checkpoint(tmp_path)
         out_path = tmp_path / "output.png"

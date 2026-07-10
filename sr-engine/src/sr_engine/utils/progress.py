@@ -38,10 +38,21 @@ class TqdmReporter(ProgressReporter):
     """Progress reporter that renders a ``tqdm`` progress bar."""
 
     def __init__(self, **tqdm_kwargs: Any) -> None:
+        """Store tqdm keyword arguments for later bar construction.
+
+        Args:
+            tqdm_kwargs: Forwarded to ``tqdm(...)`` on ``start()``.
+        """
         self._tqdm_kwargs = tqdm_kwargs
         self._bar = None
 
     def start(self, total: Optional[int] = None, desc: str = "") -> None:
+        """Create and display a tqdm progress bar.
+
+        Args:
+            total: Total number of iterations.
+            desc: Description prefix for the bar.
+        """
         from tqdm import tqdm
 
         self._bar = tqdm(
@@ -51,18 +62,22 @@ class TqdmReporter(ProgressReporter):
         )
 
     def update(self, n: int = 1) -> None:
+        """Advance the progress bar by *n* units."""
         if self._bar is not None:
             self._bar.update(n)
 
     def finish(self) -> None:
+        """Close and clean up the progress bar."""
         if self._bar is not None:
             self._bar.close()
             self._bar = None
 
     def set_description(self, desc: str) -> None:
+        """Update the description text on the active bar."""
         if self._bar is not None:
             self._bar.set_description(desc)
 
     def set_postfix(self, **kwargs: Any) -> None:
+        """Display supplementary key-value data on the active bar."""
         if self._bar is not None:
             self._bar.set_postfix(**kwargs)
