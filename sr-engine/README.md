@@ -48,10 +48,12 @@ Use this when you want full control or need to debug dependency issues.
 
 After install, activate the venv or use `uv run srengine ...`.
 
-> **Note on standalone aliases:** The pyproject.toml also registers `dataset`, `env`,
-> `infer`, `model`, `workspace`, and `project` as standalone entry points. These
-> bypass the `srengine` parent group (auto-detect workspace from CWD). Use
-> `srengine <cmd>` for explicit `--workspace` control and consistency.
+> **Standalone aliases vs `srengine` umbrella:** The pyproject.toml also registers
+> `dataset`, `env`, `infer`, `model`, `train`, `workspace`, and `project` as
+> standalone entry points. These bypass the `srengine` parent group entirely —
+> they auto-detect the workspace from CWD and ignore the `--workspace` global flag.
+> Use `srengine <cmd>` when you need explicit `--workspace PATH` control. Use the
+> standalone aliases for convenience when already inside a workspace directory.
 
 ## CLI reference
 
@@ -178,7 +180,7 @@ srengine infer run \
 | Input type | Detected by | Behaviour |
 |---|---|---|
 | Image (`.png`, `.jpg`, etc.) | File suffix | Single-frame super-resolution |
-| Video (`.mp4`, `.avi`, `.mov`, `.mkv`, `.webm`) | File suffix | Frame-by-frame upscaling, audio passthrough |
+| Video (`.mp4`, `.avi`, `.mov`, `.mkv`, `.webm`) | File suffix | Frame-by-frame upscaling |
 
 Tiling (`--tile`, `--overlap`) trades VRAM for speed. Tiling off (`--tile 0`)
 is fastest on high-VRAM GPUs. Tiling on (`--tile 512 --overlap 64`) avoids
@@ -195,6 +197,9 @@ srengine model export --model-name rrdb_esrgan --ckpt model.pth --format safeten
 
 # TorchScript
 srengine model export --model-name swinir --ckpt model.pth --format torchscript --out model.pt
+
+# Short form
+srengine model export -m swinir -c model.pth -f onnx -o model.onnx
 ```
 
 | Format | Use case |
@@ -241,6 +246,8 @@ srengine env bench --model swinir
 
 Runs a forward+backward pass on a 128×128 dummy batch. Use to compare
 RRDB vs SwinIR throughput, or CUDA vs ROCm performance.
+
+Exits with code 0 on success, code 1 on failure (e.g. model not found).
 
 ### Configuration layering
 

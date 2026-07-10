@@ -10,6 +10,11 @@ from sr_engine.utils.config import save_config
 from tests.conftest import _create_dataset_dir
 
 
+def test_train_run_help(cli_invoker):
+    r = cli_invoker(["train", "run", "--help"])
+    assert r.exit_code == 0
+
+
 TRAIN_BASE = [
     "--model", "rrdb_esrgan", "--device", "cpu",
     "--max-epochs", "2", "--num-workers", "0",

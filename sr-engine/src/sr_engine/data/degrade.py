@@ -6,8 +6,9 @@ import logging
 import os
 import random
 from pathlib import Path
-from typing import Any
-from tqdm import tqdm
+from typing import Any, Optional
+
+from sr_engine.utils.progress import ProgressReporter
 import cv2
 import numpy as np
 from numpy import dtype, ndarray
@@ -145,6 +146,7 @@ def batch_degrade(
     lr_dir: Path,
     scale: int,
     config: dict,
+    reporter: Optional[ProgressReporter] = None,
 ) -> list[tuple[Path, Path]]:
     """Generate LR images for all HR images in *hr_paths* and write to *lr_dir*.
 
@@ -172,18 +174,18 @@ def batch_degrade(
     # Parallel processing via ProcessPoolExecutor using initialized workers
     worker = partial(_process_single_frame, lr_dir=lr_dir, scale=scale, kwargs=degrade_kwargs)
 
+    reporter = reporter or ProgressReporter()
+    reporter.start(total=len(hr_paths), desc="Degrading Dataset Frames")
+
     with concurrent.futures.ProcessPoolExecutor(initializer=_init_worker) as executor:
-        # Wrap executor.map with tqdm and supply the total item count
-        results = tqdm(
-            executor.map(worker, hr_paths),
-            total=len(hr_paths),
-            desc="📉 Degrading Dataset Frames",
-            unit="img"
-        )
+        results = executor.map(worker, hr_paths)
 
         for hr_path, lr_path in results:
             if lr_path is not None:
                 pairs.append((hr_path, lr_path))
+            reporter.update(1)
+
+    reporter.finish()
 
     pairs.sort(key=lambda pair: pair[0])
     return pairs

@@ -3,8 +3,10 @@
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Optional
 import cv2
-from tqdm import tqdm
+
+from sr_engine.utils.progress import ProgressReporter
 
 
 @dataclass
@@ -15,7 +17,9 @@ class ValidationReport:
     problems: list[str] = field(default_factory=list)
 
 
-def validate(dataset_dir: Path) -> ValidationReport:
+def validate(dataset_dir: Path,
+             reporter: Optional[ProgressReporter] = None,
+             ) -> ValidationReport:
     """Validate that *dataset_dir* contains a well-formed HR/LR dataset tracking the manifest.
 
     Checks:
@@ -50,7 +54,7 @@ def validate(dataset_dir: Path) -> ValidationReport:
     try:
         with open(manifest_path, "r", encoding="utf-8") as f:
             manifest_data = json.load(f)
-        scale = int(manifest_data.get("config", {}).get("scale", 4))
+        scale = int(float(manifest_data.get("config", {}).get("scale", 4)))
         manifest_pairs = manifest_data.get("pairs", [])
     except json.JSONDecodeError as e:
         problems.append(f"Failed to parse manifest.json: {e}")
@@ -69,11 +73,10 @@ def validate(dataset_dir: Path) -> ValidationReport:
     # 3. Integrity and Dimensional Scale Checks via Manifest Records
     num_pairs = 0
 
-    for pair in tqdm(
-        manifest_pairs,
-        desc="🔍 Checking Manifest Alignment & Integrity",
-        unit="pair"
-    ):
+    reporter = reporter or ProgressReporter()
+    reporter.start(total=len(manifest_pairs), desc="Checking Manifest Alignment & Integrity")
+
+    for pair in manifest_pairs:
         hr_rel = pair.get("hr")
         lr_rel = pair.get("lr")
 
@@ -115,6 +118,9 @@ def validate(dataset_dir: Path) -> ValidationReport:
             continue
 
         num_pairs += 1
+        reporter.update(1)
+
+    reporter.finish()
 
     # 4. Check for Orphaned Files (Files on disk that aren't in the manifest)
     disk_hr_files = {p.name for p in hr_dir.glob("*.png")}

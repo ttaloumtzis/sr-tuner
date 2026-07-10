@@ -1,4 +1,5 @@
 import json
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,7 +26,7 @@ class Workspace:
                 return cls(path=parent)
         return None
 
-    def init(self) -> None:
+    def init(self, reset_configs: bool = False) -> None:
         dirs = [
             self.path / "datasets",
             self.path / "projects",
@@ -39,6 +40,26 @@ class Workspace:
             marker.write_text(
                 json.dumps({"version": 1, "created": str(Path.cwd())}, indent=2) + "\n"
             )
+
+        self._copy_builtin_configs(reset_configs)
+
+    def _copy_builtin_configs(self, reset: bool = False) -> None:
+        from sr_engine.utils.config import DefaultConfigs
+
+        src = DefaultConfigs.builtin_config_path()
+        dst_root = self.path / "configs"
+
+        for sub_dir in ("train", "datasets", "models"):
+            src_sub = src / sub_dir
+            if not src_sub.is_dir():
+                continue
+            (dst_root / sub_dir).mkdir(parents=True, exist_ok=True)
+            for fpath in src_sub.iterdir():
+                if fpath.suffix not in (".yaml", ".yml"):
+                    continue
+                dst = dst_root / sub_dir / fpath.name
+                if reset or not dst.exists():
+                    shutil.copy2(fpath, dst)
 
     def check(self) -> dict:
         issues = []

@@ -2,10 +2,12 @@
 
 import time
 from pathlib import Path
+from typing import Any
 
 import torch
 from torch.utils.data import DataLoader, Dataset, random_split
-from tqdm import tqdm
+
+from sr_engine.utils.progress import ProgressReporter
 
 from sr_engine.data.datasets import PairedImageFolderDataset
 from sr_engine.data.transforms import CenterCrop, Compose, RandomCrop, RandomFlip, RandomRotate
@@ -37,6 +39,49 @@ class _TransformSubset(Dataset):
         return lr, hr
 
 
+class TrainerCallback:
+    """Base class for training lifecycle callbacks.
+
+    Subclass and override the events you care about. Every method has a
+    no-op default so you only implement what you need.
+    """
+
+    def on_phase(self, phase: str, **data: Any) -> None:
+        """Called at phase transitions (training, saving, complete)."""
+
+    def on_step(self, epoch: int, batch: int, total_batches: int, **losses: float) -> None:
+        """Called every ``metrics_frequency`` batches with current loss values."""
+
+    def on_validate(self, epoch: int, **metrics: float) -> None:
+        """Called after each validation pass with PSNR, SSIM, etc."""
+
+    def on_done(self, elapsed_seconds: float) -> None:
+        """Called once when training finishes."""
+
+
+class _MetricsStreamCallback(TrainerCallback):
+    """Adapter that bridges a ``MetricsStream`` into the callback system."""
+
+    def __init__(self, stream: MetricsStream) -> None:
+        self._stream = stream
+
+    def on_phase(self, phase: str, **data: Any) -> None:
+        self._stream.write({"type": "phase", "phase": phase, **data})
+
+    def on_step(self, epoch: int, batch: int, total_batches: int, **losses: float) -> None:
+        self._stream.write({
+            "type": "step", "epoch": epoch, "batch": batch,
+            "total_batches": total_batches, **losses,
+        })
+
+    def on_validate(self, epoch: int, **metrics: float) -> None:
+        self._stream.write({"type": "validate", "epoch": epoch, **metrics})
+
+    def on_done(self, elapsed_seconds: float) -> None:
+        self._stream.write({"type": "done", "elapsed_seconds": elapsed_seconds})
+        self._stream.close()
+
+
 class Trainer:
     """Trainer for super-resolution models using epoch-based logic."""
 
@@ -51,12 +96,18 @@ class Trainer:
         validation_split: float = 0.1,
         metrics_stream: MetricsStream | None = None,
         metrics_frequency: int = 1,
+        progress_reporter: ProgressReporter | None = None,
+        callbacks: list[TrainerCallback] | None = None,
     ) -> None:
         self.model_cfg = model_cfg
         self.device = torch.device(device)
         self.train_cfg = train_cfg
         self.metrics_stream = metrics_stream
         self.metrics_frequency = metrics_frequency
+        self._progress = progress_reporter or ProgressReporter()
+        self._callbacks: list[TrainerCallback] = callbacks or []
+        if metrics_stream is not None:
+            self._callbacks.append(_MetricsStreamCallback(metrics_stream))
 
         self.max_epochs = int(train_cfg.get("max_epochs", 100))
         self.save_per_epoch = int(train_cfg.get("save_per_epoch", 5))
@@ -171,6 +222,11 @@ class Trainer:
         self.current_epoch = int(ckpt.get("epoch", ckpt.get("step", 0)))
         log.info("Resumed from epoch %d", self.current_epoch)
 
+    def _emit(self, event: str, **payload: Any) -> None:
+        """Dispatch an event to all registered callbacks."""
+        for cb in self._callbacks:
+            getattr(cb, f"on_{event}")(**payload)
+
     def _save(self, epoch: int) -> None:
         path = self.checkpoint_dir / f"epoch_{epoch:03d}.pt"
         save_checkpoint(
@@ -222,26 +278,22 @@ class Trainer:
         self.model.train()
         start_time = time.time()
 
-        if self.metrics_stream:
-            self.metrics_stream.write({
-                "type": "phase", "phase": "training",
-                "max_epochs": self.max_epochs,
-            })
+        self._emit("phase", phase="training", max_epochs=self.max_epochs)
 
         for epoch in range(self.current_epoch, self.max_epochs):
-            pbar = tqdm(self.train_dataloader, desc=f"Epoch {epoch+1}/{self.max_epochs}")
-            for batch_idx, (lr, hr) in enumerate(pbar):
-                losses = self._run_step(lr, hr)
-                pbar.set_postfix(losses=losses)
+            self._progress.start(total=len(self.train_dataloader),
+                                 desc=f"Epoch {epoch+1}/{self.max_epochs}")
 
-                if self.metrics_stream and batch_idx % self.metrics_frequency == 0:
-                    self.metrics_stream.write({
-                        "type": "step",
-                        "epoch": epoch + 1,
-                        "batch": batch_idx + 1,
-                        "total_batches": len(self.train_dataloader),
-                        **losses,
-                    })
+            for batch_idx, (lr, hr) in enumerate(self.train_dataloader):
+                losses = self._run_step(lr, hr)
+                self._progress.update(1)
+                self._progress.set_postfix(**losses)
+
+                if batch_idx % self.metrics_frequency == 0:
+                    self._emit("step", epoch=epoch + 1, batch=batch_idx + 1,
+                               total_batches=len(self.train_dataloader), **losses)
+
+            self._progress.finish()
 
             should_save = (
                 (epoch + 1) % self.save_per_epoch == 0
@@ -255,21 +307,11 @@ class Trainer:
                         epoch + 1, self.max_epochs,
                         val_metrics["psnr"], val_metrics["ssim"],
                     )
-                    if self.metrics_stream:
-                        self.metrics_stream.write({
-                            "type": "validate",
-                            "epoch": epoch + 1,
-                            **val_metrics,
-                        })
-                if self.metrics_stream:
-                    self.metrics_stream.write({
-                        "type": "phase", "phase": "saving", "epoch": epoch + 1,
-                    })
+                    self._emit("validate", epoch=epoch + 1, **val_metrics)
+                self._emit("phase", phase="saving", epoch=epoch + 1)
                 self._save(epoch + 1)
 
         elapsed = time.time() - start_time
         log.info("Training complete in %.1fs", elapsed)
-        if self.metrics_stream:
-            self.metrics_stream.write({"type": "phase", "phase": "complete"})
-            self.metrics_stream.write({"type": "done", "elapsed_seconds": round(elapsed, 1)})
-            self.metrics_stream.close()
+        self._emit("phase", phase="complete")
+        self._emit("done", elapsed_seconds=round(elapsed, 1))

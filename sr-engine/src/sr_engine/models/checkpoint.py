@@ -1,6 +1,5 @@
 """Checkpoint save/load, EMA state handling, and export utilities."""
 
-import pickle
 from pathlib import Path
 
 import torch
@@ -70,7 +69,13 @@ def load_checkpoint(
 
     try:
         checkpoint = torch.load(path, map_location=map_location, weights_only=True)
-    except (pickle.UnpicklingError, RuntimeError):
+    except Exception:
+        # Broad except — intentional across PyTorch versions.
+        # Some PyTorch builds raise RuntimeError for weights-only
+        # incompatibility, while others raise UnpicklingError or TypeError
+        # (especially on Windows or with older torch versions). Catching
+        # Exception here lets us retry with weights_only=False without a
+        # version-gated dispatch.
         import warnings
         warnings.warn(
             f"Loading checkpoint with weights_only=False at '{path}'. "

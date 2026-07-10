@@ -1,11 +1,13 @@
 """Inference engine — run a model on images or videos."""
 
 from pathlib import Path
+from typing import Optional
 
 import cv2
 import numpy as np
 import torch
-from tqdm import tqdm
+
+from sr_engine.utils.progress import ProgressReporter
 
 from sr_engine.engine.tiling import tile_image, stitch_tiles
 from sr_engine.models.checkpoint import load_checkpoint
@@ -129,6 +131,7 @@ def infer_video(
     tile_size: int = 512,
     tile_overlap: int = 64,
     device: str = "cuda",
+    reporter: Optional[ProgressReporter] = None,
 ) -> Path:
     """Run super-resolution inference on a video file frame-by-frame.
 
@@ -139,6 +142,7 @@ def infer_video(
         tile_size: Tile size for VRAM-safe tiled inference.
         tile_overlap: Overlap between tiles in pixels.
         device: Torch device string.
+        reporter: Optional progress reporter.
 
     Returns:
         Path to the output video.
@@ -155,42 +159,42 @@ def infer_video(
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    reporter = reporter or ProgressReporter()
+    reporter.start(total=frame_count if frame_count > 0 else None,
+                   desc="Super-resolving frames")
+
     writer = None
     try:
-        with tqdm(
-            total=frame_count if frame_count > 0 else None,
-            desc="🎞️ Super-resolving frames",
-            unit="fr",
-        ) as pbar:
-            while True:
-                success, frame_bgr = cap.read()
-                if not success:
-                    break
+        while True:
+            success, frame_bgr = cap.read()
+            if not success:
+                break
 
-                lr_tensor = _frame_to_tensor(frame_bgr)
-                hr_tensor = _super_resolve_tensor(
-                    model, lr_tensor, scale, tile_size, tile_overlap, device
-                )
-                output_bgr = _tensor_to_bgr_image(hr_tensor)
+            lr_tensor = _frame_to_tensor(frame_bgr)
+            hr_tensor = _super_resolve_tensor(
+                model, lr_tensor, scale, tile_size, tile_overlap, device
+            )
+            output_bgr = _tensor_to_bgr_image(hr_tensor)
 
+            if writer is None:
+                out_h, out_w = output_bgr.shape[:2]
+                fourcc = None
+                for codec in ("avc1", "mp4v"):
+                    fourcc = cv2.VideoWriter_fourcc(*codec)
+                    writer = cv2.VideoWriter(str(output_path), fourcc, fps, (out_w, out_h))
+                    if writer.isOpened():
+                        break
+                    writer = None
                 if writer is None:
-                    out_h, out_w = output_bgr.shape[:2]
-                    fourcc = None
-                    for codec in ("avc1", "mp4v"):
-                        fourcc = cv2.VideoWriter_fourcc(*codec)
-                        writer = cv2.VideoWriter(str(output_path), fourcc, fps, (out_w, out_h))
-                        if writer.isOpened():
-                            break
-                        writer = None
-                    if writer is None:
-                        raise RuntimeError(
-                            f"Could not open video writer for: {output_path} "
-                            "(tried 'avc1' and 'mp4v' codecs)"
-                        )
+                    raise RuntimeError(
+                        f"Could not open video writer for: {output_path} "
+                        "(tried 'avc1' and 'mp4v' codecs)"
+                    )
 
-                writer.write(output_bgr)
-                pbar.update(1)
+            writer.write(output_bgr)
+            reporter.update(1)
     finally:
+        reporter.finish()
         cap.release()
         if writer is not None:
             writer.release()

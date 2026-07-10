@@ -5,7 +5,7 @@ import click
 import torch
 
 from sr_engine.device.backend import get_device, is_rocm, autocast_dtype, supports_flash_attn
-from sr_engine.utils.config import load_config, DefaultConfigs
+from .helpers import make_workspace_config_loader, resolve_model_config, no_workspace_config_option
 
 @click.group()
 def env() -> None:
@@ -34,37 +34,62 @@ def check() -> None:
 
 @env.command()
 @click.option("--model", "-m", default="rrdb_esrgan", help="Model name (e.g., 'swinir').")
-def bench(model: str) -> None:
-    """Run a micro-benchmark (forward+backward pass) and report throughput."""
+@click.option("--iterations", "-n", type=int, default=10, show_default=True,
+              help="Number of timed iterations for the benchmark.")
+@no_workspace_config_option
+@click.pass_context
+def bench(ctx, model: str, iterations: int, no_workspace_config: bool) -> None:
+    """Run a micro-benchmark (forward+backward) and report throughput statistics."""
     from sr_engine.models.registry import build_model
+    import statistics
     import time
 
     try:
-        # 1. Initialize loader and get the full model configuration
-        cfg_loader = DefaultConfigs()
-        model_cfg = cfg_loader.models.get(model)
+        _, cfg_loader = make_workspace_config_loader(ctx, no_workspace_config)
+        model_cfg = resolve_model_config(cfg_loader, model)
 
-        if not model_cfg:
-            raise click.ClickException(f"Model '{model}' not found.")
-
-        # 2. Build model using the name and config dict
         net = build_model(model, model_cfg)
         device = get_device()
         net = net.to(device).train()
 
-        # Warm-up and Benchmark (as before)
         dummy = torch.randn(1, 3, 128, 128, device=device)
-        _ = net(dummy)
 
-        start_time = time.perf_counter()
-        out = net(dummy)
-        loss = out.sum()
-        loss.backward()
-        end_time = time.perf_counter()
+        # Warm-up iterations (forward only)
+        WARMUP = 3
+        for _ in range(WARMUP):
+            _ = net(dummy)
+
+        # Timed iterations (forward + backward)
+        times = []
+        for _ in range(iterations):
+            net.zero_grad(set_to_none=True)
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+            start = time.perf_counter()
+            out = net(dummy)
+            loss = out.sum()
+            loss.backward()
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+            elapsed = time.perf_counter() - start
+            times.append(elapsed)
+
+        times_ms = [t * 1000 for t in times]
+        mean = statistics.mean(times_ms)
+        median = statistics.median(times_ms)
+        stddev = statistics.stdev(times_ms) if len(times_ms) > 1 else 0.0
+        min_t = min(times_ms)
+        max_t = max(times_ms)
 
         click.echo(f"Benchmark complete on {device}")
-        click.echo(f"Execution time:   {(end_time - start_time) * 1000:.2f} ms")
-        click.echo(f"Output shape:     {list(out.shape)}")
+        click.echo(f"Model:                     {model}")
+        click.echo(f"Iterations:                {iterations} (+ {WARMUP} warm-up)")
+        click.echo(f"Mean execution time:       {mean:.2f} ms")
+        click.echo(f"Median execution time:     {median:.2f} ms")
+        click.echo(f"Std deviation:             {stddev:.2f} ms")
+        click.echo(f"Min / Max:                 {min_t:.2f} / {max_t:.2f} ms")
+        click.echo(f"Output shape:              {list(out.shape)}")
 
     except (ValueError, KeyError, RuntimeError) as e:
         click.secho(f"Benchmark failed: {e}", fg="red")
+        raise click.Abort()

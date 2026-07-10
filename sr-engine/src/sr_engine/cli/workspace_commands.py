@@ -2,6 +2,7 @@ from pathlib import Path
 import click
 
 from sr_engine.workspace import Workspace
+from .helpers import require_workspace
 
 
 @click.group()
@@ -12,10 +13,12 @@ def workspace() -> None:
 @workspace.command()
 @click.option("--path", "-p", default=".", type=click.Path(path_type=Path),
               help="Path to initialize workspace in (default: CWD).")
-def init(path: Path) -> None:
+@click.option("--reset-configs", is_flag=True, default=False,
+              help="Overwrite workspace configs with fresh copies from package defaults.")
+def init(path: Path, reset_configs: bool) -> None:
     """Initialize a workspace directory tree."""
     ws = Workspace(path)
-    ws.init()
+    ws.init(reset_configs=reset_configs)
     click.secho(f"Workspace initialized at {ws.path}", fg="green", bold=True)
 
 
@@ -23,9 +26,7 @@ def init(path: Path) -> None:
 @click.pass_context
 def info(ctx) -> None:
     """Show workspace summary."""
-    ws: Workspace | None = ctx.obj.get("workspace") if ctx.obj else Workspace.discover()
-    if not ws:
-        raise click.ClickException("No workspace found. Use 'workspace init' to create one.")
+    ws = require_workspace(ctx)
     d = ws.info()
     click.echo(f"Workspace: {d['path']}")
     click.echo(f"Projects:  {len(d['projects'])}")
@@ -40,9 +41,7 @@ def info(ctx) -> None:
 @click.pass_context
 def check(ctx) -> None:
     """Validate workspace health."""
-    ws: Workspace | None = ctx.obj.get("workspace") if ctx.obj else Workspace.discover()
-    if not ws:
-        raise click.ClickException("No workspace found. Use 'workspace init' to create one.")
+    ws = require_workspace(ctx)
     report = ws.check()
     click.echo(f"Workspace: {report['path']}")
     click.echo(f"Structure:  {'OK' if report['status'] == 'ok' else report['status'].upper()}")
@@ -67,9 +66,7 @@ def project() -> None:
 @click.pass_context
 def create(ctx, name: str) -> None:
     """Create a new project in the workspace."""
-    ws: Workspace | None = ctx.obj.get("workspace") if ctx.obj else Workspace.discover()
-    if not ws:
-        raise click.ClickException("No workspace found. Use 'workspace init' to create one.")
+    ws = require_workspace(ctx)
     try:
         proj = ws.create_project(name)
         click.secho(f"Project '{proj.name}' created at {proj.path}", fg="green", bold=True)
@@ -81,10 +78,7 @@ def create(ctx, name: str) -> None:
 @click.pass_context
 def list_projects(ctx) -> None:
     """List projects in the workspace."""
-    ws: Workspace | None = ctx.obj.get("workspace") if ctx.obj else Workspace.discover()
-    if not ws:
-        click.echo("No workspace found.")
-        return
+    ws: Workspace | None = require_workspace(ctx)
     projects = ws.list_projects()
     if not projects:
         click.echo("No projects yet.")

@@ -5,6 +5,21 @@ from pathlib import Path
 from tests.conftest import _make_image, _create_manifest
 
 
+def test_dataset_build_help(cli_invoker):
+    r = cli_invoker(["dataset", "build", "--help"])
+    assert r.exit_code == 0
+
+
+def test_dataset_validate_help(cli_invoker):
+    r = cli_invoker(["dataset", "validate", "--help"])
+    assert r.exit_code == 0
+
+
+def test_dataset_health_help(cli_invoker):
+    r = cli_invoker(["dataset", "health", "--help"])
+    assert r.exit_code == 0
+
+
 class TestDatasetBuildDefault:
     def test_build_from_preprocessed(self, cli_invoker, tmp_path):
         """Build from an existing HR/LR directory (no video needed)."""

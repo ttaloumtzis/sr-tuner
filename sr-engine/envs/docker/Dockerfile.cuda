@@ -14,4 +14,4 @@ RUN uv sync --extra cuda --index-url https://download.pytorch.org/whl/cu121 --no
 COPY src/ src/
 RUN uv sync --extra cuda --index-url https://download.pytorch.org/whl/cu121 --no-dev
 
-ENTRYPOINT ["uv", "run", "srtool"]
+ENTRYPOINT ["uv", "run", "srengine"]

@@ -128,9 +128,10 @@ class SwinTransformerLayer(nn.Module):
         x = x[:, :H, :W, :].permute(0, 3, 1, 2).contiguous()
         x = shortcut + x
 
+        residual = x
         x = x.permute(0, 2, 3, 1).contiguous()
         x = self.norm2(x).permute(0, 3, 1, 2).contiguous()
-        x = shortcut + self.mlp(x.permute(0, 2, 3, 1).contiguous()).permute(0, 3, 1, 2).contiguous()
+        x = residual + self.mlp(x.permute(0, 2, 3, 1).contiguous()).permute(0, 3, 1, 2).contiguous()
 
         return x
 

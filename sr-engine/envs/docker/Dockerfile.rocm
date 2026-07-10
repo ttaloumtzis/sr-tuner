@@ -14,4 +14,4 @@ RUN uv sync --extra rocm --index-url https://download.pytorch.org/whl/rocm6.2 --
 COPY src/ src/
 RUN uv sync --extra rocm --index-url https://download.pytorch.org/whl/rocm6.2 --no-dev
 
-ENTRYPOINT ["uv", "run", "srtool"]
+ENTRYPOINT ["uv", "run", "srengine"]

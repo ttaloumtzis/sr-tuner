@@ -69,22 +69,49 @@ def save_config(config: dict, path: Path) -> None:
 
 
 class DefaultConfigs:
-    def __init__(self):
-        # Base path pointing to src/sr_engine/utils/configs/
-        self.base_path = Path(__file__).resolve().parents[1] / "utils" / "configs"
+    def __init__(self, workspace=None):
+        self._workspace = workspace
+        self._builtin_path = Path(__file__).resolve().parents[1] / "utils" / "configs"
 
-        # 1. Load your training and dataset configs
-        self.train = load_config(self.base_path / "train" / "base.yaml")
-        self.datasets = load_config(self.base_path / "datasets" / "video_pairs.yaml")
+        self.train = load_config(self._builtin_path / "train" / "base.yaml")
+        self.datasets = load_config(self._builtin_path / "datasets" / "video_pairs.yaml")
 
-        # 2. Load ALL models into a dictionary
-        # This gives you a clean way to access model_configs['swinir']
         self.models = {
-            "swinir": load_config(self.base_path / "models" / "swinir.yaml"),
-            "rrdb_esrgan": load_config(self.base_path / "models" / "rrdb_esrgan.yaml")
+            "swinir": load_config(self._builtin_path / "models" / "swinir.yaml"),
+            "rrdb_esrgan": load_config(self._builtin_path / "models" / "rrdb_esrgan.yaml")
         }
 
+    @classmethod
+    def builtin_config_path(cls) -> Path:
+        return Path(__file__).resolve().parents[1] / "utils" / "configs"
+
+    def _ws_or_builtin(self, category: str, filename: str, fallback: dict) -> dict:
+        if self._workspace is None:
+            return copy.deepcopy(fallback)
+        ws_path = self._workspace.path / "configs" / category / filename
+        if not ws_path.is_file():
+            return copy.deepcopy(fallback)
+        try:
+            ws_cfg = load_config(ws_path)
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to load workspace config at {ws_path}. "
+                f"Use --no-workspace-config to skip workspace configs.\n  {e}"
+            )
+        return merge_overrides(fallback, ws_cfg)
+
+    def get_train_config(self) -> dict:
+        return self._ws_or_builtin("train", "base.yaml", self.train)
+
+    def get_dataset_config(self) -> dict:
+        return self._ws_or_builtin("datasets", "video_pairs.yaml", self.datasets)
+
+    def get_model_config(self, name: str) -> dict | None:
+        builtin = self.models.get(name)
+        if builtin is None:
+            return None
+        return self._ws_or_builtin("models", f"{name}.yaml", builtin)
+
     def get_full_config(self, model_name: str) -> dict:
-        """Merges train + dataset + specific model into one config dict."""
-        base = merge_overrides(self.train, self.datasets)
-        return merge_overrides(base, self.models[model_name])
+        base = merge_overrides(self.get_train_config(), self.get_dataset_config())
+        return merge_overrides(base, self.get_model_config(model_name))

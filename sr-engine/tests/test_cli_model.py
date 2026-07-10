@@ -7,6 +7,11 @@ def test_model_export_help(cli_invoker):
     assert "model-name" in r.output
 
 
+def test_model_info_help(cli_invoker):
+    r = cli_invoker(["model", "info", "--help"])
+    assert r.exit_code == 0
+
+
 def test_model_info_missing_ckpt_fails(cli_invoker, tmp_path):
     r = cli_invoker([
         "model", "info",

@@ -10,7 +10,7 @@ from sr_engine.models.checkpoint import (
     export_to_onnx,
     export_to_torchscript,
 )
-from sr_engine.utils.config import DefaultConfigs, load_config
+from .helpers import make_workspace_config_loader, resolve_model_config, no_workspace_config_option
 
 
 @click.group()
@@ -19,7 +19,7 @@ def model() -> None:
 
 
 @model.command()
-@click.option("--model-name", "-n", required=True, help="Model name (e.g., 'swinir').")
+@click.option("--model-name", "-m", required=True, help="Model name (e.g., 'swinir').")
 @click.option("--ckpt", "-c", required=True, type=click.Path(exists=True, path_type=Path),
               help="Path to the model checkpoint.")
 @click.option("--format", "-f", "fmt", required=True,
@@ -27,19 +27,14 @@ def model() -> None:
               help="Export format.")
 @click.option("--out", "-o", required=True, type=click.Path(path_type=Path),
               help="Output path.")
-def export_cmd(model_name: str, ckpt: Path, fmt: str, out: Path) -> None:
+@no_workspace_config_option
+@click.pass_context
+def export_cmd(ctx, model_name: str, ckpt: Path, fmt: str, out: Path,
+               no_workspace_config: bool) -> None:
     """Export a model checkpoint using its architecture configuration."""
+    _, cfg_loader = make_workspace_config_loader(ctx, no_workspace_config)
+    model_arch_cfg = resolve_model_config(cfg_loader, model_name)
 
-    # 1. Access your architecture config via the loader
-    cfg_loader = DefaultConfigs()
-    model_arch_cfg = cfg_loader.models.get(model_name)
-
-    if not model_arch_cfg:
-        raise click.ClickException(f"Unknown model: {model_name}")
-
-    # 2. Logic to handle export
-    # You could potentially pass model_arch_cfg to these functions if they need
-    # to know about input shapes/types for ONNX/TorchScript exports
     export_map = {
         "safetensors": export_to_safetensors,
         "onnx": export_to_onnx,

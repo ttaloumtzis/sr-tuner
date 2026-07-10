@@ -6,8 +6,9 @@ import yaml
 
 from sr_engine.engine.trainer import Trainer
 from sr_engine.engine.metrics_stream import MetricsStream
-from sr_engine.utils.config import load_config, merge_overrides, DefaultConfigs, validate_config
-from sr_engine.workspace import Workspace
+from sr_engine.utils.config import load_config, merge_overrides, validate_config
+from sr_engine.utils.progress import TqdmReporter
+from .helpers import make_workspace_config_loader, resolve_model_config, no_workspace_config_option
 
 
 @click.group()
@@ -17,14 +18,16 @@ def train() -> None:
 
 @train.command()
 @click.option("--config", "-c", type=click.Path(exists=True, path_type=Path), help="Training config YAML.")
-@click.option("--model", "-m", default="rrdb_esrgan", help="Model name.")
-@click.option("--dataset", "-d", required=True, type=click.Path(path_type=Path))
-@click.option("--resume", "-r", type=click.Path(exists=True, path_type=Path), default=None)
-@click.option("--device", default="cuda", help="Training device.")
-@click.option("--batch-size", type=int, default=None)
-@click.option("--learning-rate", type=float, default=None)
+@click.option("--model", "-m", default="rrdb_esrgan", help="Model name (e.g., 'swinir', 'rrdb_esrgan').")
+@click.option("--dataset", "-d", required=True, type=click.Path(path_type=Path), help="Dataset directory path.")
+@click.option("--resume", "-r", type=click.Path(exists=True, path_type=Path), default=None,
+              help="Resume from a checkpoint file.")
+@click.option("--device", default="cuda", type=click.Choice(["cuda", "cpu", "auto"]),
+              help="Training device.")
+@click.option("--batch-size", type=int, default=None, help="Batch size for training.")
+@click.option("--learning-rate", type=float, default=None, help="Learning rate.")
 @click.option("--max-epochs", type=int, default=None, help="Total number of epochs to train.")
-@click.option("--num-workers", type=int, default=None, help="Dataloader workers.")
+@click.option("--num-workers", type=int, default=None, help="Dataloader worker count.")
 @click.option("--patch-size", type=int, default=None, help="Training patch size.")
 @click.option("--save-per-epoch", type=int, default=None, help="Save checkpoint every N epochs.")
 @click.option("--validation-enabled/--no-validation-enabled", default=None, help="Enable/disable validation split.")
@@ -33,15 +36,16 @@ def train() -> None:
 @click.option("--experiment-id", type=str, default=None, help="Experiment identifier (auto-generated if omitted).")
 @click.option("--metrics-frequency", type=int, default=1, help="Log metrics every N batches.")
 @click.option("--dump-config", is_flag=True, default=False, help="Print final merged config and exit.")
+@no_workspace_config_option
 @click.option("--project", type=str, default=None, help="Project name (requires workspace).")
 @click.pass_context
 def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate, max_epochs,
         num_workers, patch_size, save_per_epoch,
         validation_enabled, validation_split, machine, experiment_id, metrics_frequency,
-        dump_config, project):
+        dump_config, project, no_workspace_config):
     """Train a super-resolution model."""
 
-    ws: Workspace | None = ctx.obj.get("workspace") if ctx.obj else Workspace.discover()
+    ws, cfg_loader = make_workspace_config_loader(ctx, no_workspace_config)
 
     if project and not ws:
         raise click.ClickException(
@@ -55,13 +59,9 @@ def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate, 
     if ws and project:
         dataset = ws.resolve_dataset(dataset)
 
-    cfg_loader = DefaultConfigs()
+    model_cfg = resolve_model_config(cfg_loader, model)
 
-    model_cfg = cfg_loader.models.get(model)
-    if not model_cfg:
-        raise click.ClickException(f"Model '{model}' not found. Available: {list(cfg_loader.models.keys())}")
-
-    train_cfg = load_config(config) if config else cfg_loader.train
+    train_cfg = load_config(config) if config else cfg_loader.get_train_config()
 
     overrides = {
         k: v for k, v in {
@@ -107,6 +107,8 @@ def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate, 
             "dataset": str(dataset),
         })
 
+    progress_reporter = TqdmReporter(unit="batch")
+
     trainer = Trainer(
         model_cfg=model_cfg,
         train_cfg=train_cfg,
@@ -117,5 +119,6 @@ def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate, 
         validation_split=val_split,
         metrics_stream=metrics_stream,
         metrics_frequency=metrics_frequency,
+        progress_reporter=progress_reporter,
     )
     trainer.train()

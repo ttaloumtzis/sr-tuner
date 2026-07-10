@@ -6,9 +6,10 @@ import yaml
 
 from sr_engine.data.dataset_builder import build_from_video, build_from_preprocessed
 from sr_engine.data.dataset_validator import validate
-from sr_engine.utils.config import load_config, merge_overrides, DefaultConfigs
+from sr_engine.utils.config import load_config, merge_overrides
 from sr_engine.data.dataset_health import check_dataset_health, prune_black_frames
-from sr_engine.workspace import Workspace
+from sr_engine.utils.progress import TqdmReporter
+from .helpers import make_workspace_config_loader, no_workspace_config_option
 
 import sys
 
@@ -25,19 +26,19 @@ def dataset() -> None:
               help="Dataset config YAML. Defaults to internal project config.")
 @click.option("--out", "-o", required=False, type=click.Path(path_type=Path),
               help="Output dataset directory. Required if input is a video file.")
+@no_workspace_config_option
 @click.option("--dump-config", is_flag=True, default=False, help="Print final merged config and exit.")
 @click.pass_context
-def build(ctx, input: Path, config: Path | None, out: Path | None, dump_config: bool) -> None:
+def build(ctx, input: Path, config: Path | None, out: Path | None,
+          no_workspace_config: bool, dump_config: bool) -> None:
     """Build a dataset from a video file or validate a preprocessed directory."""
-    ws: Workspace | None = ctx.obj.get("workspace") if ctx.obj else Workspace.discover()
-
-    cfg_loader = DefaultConfigs()
+    ws, cfg_loader = make_workspace_config_loader(ctx, no_workspace_config)
 
     if config is not None:
         custom_cfg = load_config(config)
-        cfg = merge_overrides(cfg_loader.datasets, custom_cfg)
+        cfg = merge_overrides(cfg_loader.get_dataset_config(), custom_cfg)
     else:
-        cfg = cfg_loader.datasets
+        cfg = cfg_loader.get_dataset_config()
 
     if dump_config:
         yaml.safe_dump(cfg, sys.stdout, default_flow_style=False, sort_keys=False)
@@ -69,7 +70,7 @@ def validate_cmd(path: Path) -> None:
     """Validate that an existing dataset directory is well-formed."""
     click.echo(f"Running deep validation scan on: {path}...")
 
-    report = validate(path)
+    report = validate(path, reporter=TqdmReporter(unit="pair"))
 
     if report.ok:
         click.secho(
@@ -101,7 +102,7 @@ def validate_cmd(path: Path) -> None:
 def health_cmd(path: Path, yes: bool) -> None:
     """Profile statistical balance and attributes of an existing dataset."""
     click.echo(f"Analyzing dataset health and distribution at: {path}...")
-    report = check_dataset_health(path)
+    report = check_dataset_health(path, reporter=TqdmReporter(unit="img"))
 
     if "error" in report:
         click.secho(f"Error: {report['error']}", fg="red", bold=True)
