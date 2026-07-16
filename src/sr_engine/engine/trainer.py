@@ -165,7 +165,12 @@ class Trainer:
         torch.manual_seed(seed)
 
         self.model = build_model(model_cfg["name"], model_cfg).to(self.device)
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate)
+        self.optimizer = torch.optim.Adam(
+            self.model.parameters(),
+            lr=self.learning_rate,
+            weight_decay=float(train_cfg.get("weight_decay", 0.0)),
+            betas=list(train_cfg.get("betas", [0.9, 0.99])),
+        )
 
         dtype_str = str(train_cfg.get("dtype", "float32")).lower()
         if dtype_str == "bf16":
@@ -196,14 +201,14 @@ class Trainer:
 
         transform = Compose([
             RandomCrop(
-                patch_size=int(train_cfg.get("patch_size", 48)),
+                patch_size=int(train_cfg.get("patch_size", 128)),
                 scale=int(model_cfg.get("scale", 4)),
             ),
             RandomFlip(),
             RandomRotate(),
         ])
 
-        batch_size = int(train_cfg.get("batch_size", 16))
+        batch_size = int(train_cfg.get("batch_size", 32))
         num_workers = int(train_cfg.get("num_workers", 4))
         pin = self.device.type == "cuda"
 
@@ -217,7 +222,7 @@ class Trainer:
                 range(len(full_dataset)), [train_size, val_size], generator=generator,
             )
             val_transform = CenterCrop(
-                patch_size=int(train_cfg.get("patch_size", 48)),
+                patch_size=int(train_cfg.get("patch_size", 128)),
                 scale=int(model_cfg.get("scale", 4)),
             )
             self.train_dataset = _TransformSubset(full_dataset, train_idx.indices, transform)

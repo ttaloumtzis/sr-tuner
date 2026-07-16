@@ -320,7 +320,7 @@ class DefaultConfigs:
 
 | File | Key Parameters |
 |------|---------------|
-| `default.yaml` | device: auto, seed: 42, scale: 4, patch_size: 128, batch_size: 8, lr: 2e-4, tile settings |
+| `default.yaml` | *(deleted — values distributed to specific configs)* |
 | `train/base.yaml` | max_epochs: 10, save_per_epoch: 5, warmup_steps: 2000, min_lr: 1e-7, loss weights, dtype: float32 |
 | `datasets/video_pairs.yaml` | degradation params (blur kernel, noise std, JPEG quality), frame_rate |
 | `models/swinir.yaml` | embed_dim: 180, depths: [6,6,6,6,6,6], num_heads: [6,6,6,6,6,6] |

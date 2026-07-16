@@ -114,3 +114,55 @@ class TestTrainRunStep:
         assert "total" in losses
         assert losses["pixel"] > 0.0
         assert losses["total"] > 0.0
+
+
+class TestOptimizerConfig:
+    """Tests for optimizer creation with config values."""
+
+    def test_optimizer_receives_weight_decay_and_betas(self, model_cfg, tmp_path):
+        """The Adam optimizer should receive weight_decay and betas from config."""
+        d = _create_dataset_dir(tmp_path, num_pairs=5)
+        cfg = {
+            "max_epochs": 1,
+            "batch_size": 2,
+            "num_workers": 0,
+            "patch_size": 16,
+            "seed": 42,
+            "checkpoint_dir": "checkpoints",
+            "losses": {"perceptual_weight": 0.0},
+            "validation": {"enabled": False},
+            "weight_decay": 0.1,
+            "betas": [0.8, 0.888],
+        }
+        trainer = Trainer(
+            model_cfg=model_cfg,
+            train_cfg=cfg,
+            dataset_dir=d,
+            device="cpu",
+            validation_enabled=False,
+        )
+        assert trainer.optimizer.param_groups[0]["weight_decay"] == 0.1
+        assert list(trainer.optimizer.param_groups[0]["betas"]) == [0.8, 0.888]
+
+    def test_optimizer_defaults_when_config_missing(self, model_cfg, tmp_path):
+        """The Adam optimizer should use default values when config has no weight_decay/betas."""
+        d = _create_dataset_dir(tmp_path, num_pairs=5)
+        cfg = {
+            "max_epochs": 1,
+            "batch_size": 2,
+            "num_workers": 0,
+            "patch_size": 16,
+            "seed": 42,
+            "checkpoint_dir": "checkpoints",
+            "losses": {"perceptual_weight": 0.0},
+            "validation": {"enabled": False},
+        }
+        trainer = Trainer(
+            model_cfg=model_cfg,
+            train_cfg=cfg,
+            dataset_dir=d,
+            device="cpu",
+            validation_enabled=False,
+        )
+        assert trainer.optimizer.param_groups[0]["weight_decay"] == 0.0
+        assert list(trainer.optimizer.param_groups[0]["betas"]) == [0.9, 0.99]

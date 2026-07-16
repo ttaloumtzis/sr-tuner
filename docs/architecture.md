@@ -288,8 +288,7 @@ src/sr_engine/
 │   ├── logging.py                # get_logger()
 │   ├── progress.py               # ProgressReporter, TqdmReporter
 │   └── configs/                  # Built-in YAML configs
-│       ├── default.yaml
-│       ├── train/base.yaml
+    │       ├── train/base.yaml
 │       ├── datasets/video_pairs.yaml
 │       ├── models/swinir.yaml
 │       └── models/rrdb_esrgan.yaml

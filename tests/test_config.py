@@ -147,3 +147,30 @@ class TestDefaultConfigs:
         cfg = configs.get_full_config("rrdb_esrgan")
         assert isinstance(cfg, dict)
         assert "max_epochs" in cfg
+
+    def test_train_config_has_expected_defaults(self):
+        """Train config should contain expected default values."""
+        configs = DefaultConfigs()
+        cfg = configs.get_train_config()
+        assert cfg.get("batch_size") == 32
+        assert cfg.get("patch_size") == 128
+        assert cfg.get("num_workers") == 4
+        assert float(cfg.get("learning_rate")) == 2e-4
+        assert float(cfg.get("weight_decay")) == 0.0
+        assert cfg.get("betas") == [0.9, 0.99]
+        assert cfg.get("max_epochs") == 10
+
+    def test_configs_load_without_default_yaml(self):
+        """Configs should load correctly even though default.yaml has been deleted."""
+        import os
+        default_path = DefaultConfigs.builtin_config_path() / "default.yaml"
+        assert not default_path.exists(), (
+            "default.yaml should have been deleted."
+        )
+        configs = DefaultConfigs()
+        train = configs.get_train_config()
+        assert isinstance(train, dict) and len(train) > 0
+        dataset = configs.get_dataset_config()
+        assert isinstance(dataset, dict) and len(dataset) > 0
+        model = configs.get_model_config("rrdb_esrgan")
+        assert model is not None

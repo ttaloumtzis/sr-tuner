@@ -338,3 +338,50 @@ class TestTrainRunMixedPrecision:
             "--no-bf16",
         ] + TRAIN_BASE_NO_VAL)
         assert r.exit_code == 0, r.output
+
+
+class TestTrainRunAdditionalOverrides:
+    """Tests for --seed, --weight-decay, --betas CLI overrides."""
+
+    def test_seed_override_in_dump_config(self, cli_invoker, tmp_path):
+        """``--seed 7 --dump-config`` should show seed: 7."""
+        r = cli_invoker([
+            "train", "run", "--seed", "7", "--dump-config",
+            "--dataset", str(tmp_path),
+        ] + TRAIN_BASE_NO_VAL)
+        assert r.exit_code == 0, r.output
+        import yaml
+        cfg = yaml.safe_load(r.output)
+        assert cfg.get("seed") == 7
+
+    def test_weight_decay_override_in_dump_config(self, cli_invoker, tmp_path):
+        """``--weight-decay 0.1 --dump-config`` should show weight_decay: 0.1."""
+        r = cli_invoker([
+            "train", "run", "--weight-decay", "0.1", "--dump-config",
+            "--dataset", str(tmp_path),
+        ] + TRAIN_BASE_NO_VAL)
+        assert r.exit_code == 0, r.output
+        import yaml
+        cfg = yaml.safe_load(r.output)
+        assert cfg.get("weight_decay") == 0.1
+
+    def test_betas_override_in_dump_config(self, cli_invoker, tmp_path):
+        """``--betas 0.8 0.888 --dump-config`` should show betas: [0.8, 0.888]."""
+        r = cli_invoker([
+            "train", "run", "--betas", "0.8", "0.888", "--dump-config",
+            "--dataset", str(tmp_path),
+        ] + TRAIN_BASE_NO_VAL)
+        assert r.exit_code == 0, r.output
+        import yaml
+        cfg = yaml.safe_load(r.output)
+        assert cfg.get("betas") == [0.8, 0.888]
+
+    def test_betas_training_succeeds(self, cli_invoker, tmp_path):
+        """Training with ``--betas`` should complete successfully."""
+        from conftest import _create_dataset_dir
+        dataset = _create_dataset_dir(tmp_path, 3)
+        r = cli_invoker([
+            "train", "run", "--dataset", str(dataset),
+            "--betas", "0.8", "0.888",
+        ] + TRAIN_BASE_NO_VAL)
+        assert r.exit_code == 0, r.output

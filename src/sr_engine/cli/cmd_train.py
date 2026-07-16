@@ -29,6 +29,9 @@ def train() -> None:
               help="Training device.")
 @click.option("--batch-size", type=int, default=None, help="Batch size for training.")
 @click.option("--learning-rate", type=float, default=None, help="Learning rate.")
+@click.option("--seed", type=int, default=None, help="Random seed.")
+@click.option("--weight-decay", type=float, default=None, help="Adam weight decay.")
+@click.option("--betas", type=float, nargs=2, default=None, help="Adam betas (two floats, e.g. --betas 0.9 0.999).")
 @click.option("--max-epochs", type=int, default=None, help="Total number of epochs to train.")
 @click.option("--num-workers", type=int, default=None, help="Dataloader worker count.")
 @click.option("--patch-size", type=int, default=None, help="Training patch size.")
@@ -45,7 +48,8 @@ def train() -> None:
 @click.option("--instance", "-i", type=str, default=None,
               help="Model instance name. Overrides checkpoint_dir and creates a run directory.")
 @click.pass_context
-def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate, max_epochs,
+def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate,
+        seed, weight_decay, betas, max_epochs,
         num_workers, patch_size, save_per_epoch,
         validation_enabled, validation_split, machine, experiment_id, metrics_frequency,
         bf16, dump_config, instance, no_workspace_config):
@@ -98,12 +102,16 @@ def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate, 
             "device": device,
             "batch_size": batch_size,
             "learning_rate": learning_rate,
+            "seed": seed,
+            "weight_decay": weight_decay,
             "max_epochs": max_epochs,
             "num_workers": num_workers,
             "patch_size": patch_size,
             "save_per_epoch": save_per_epoch,
         }.items() if v is not None
     }
+    if betas is not None:
+        overrides["betas"] = list(betas)
     if bf16 is not None:
         overrides["dtype"] = "bf16" if bf16 else "float32"
     if validation_enabled is not None:
