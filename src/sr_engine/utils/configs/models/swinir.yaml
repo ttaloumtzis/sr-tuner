@@ -11,3 +11,5 @@ mlp_ratio: 2.0
 img_range: 1.0
 upsampler: pixelshuffle
 scale: 4
+# DIV2K RGB means for [0, 1] input; omit or set to null to disable
+rgb_mean: [0.4488, 0.4371, 0.4040]

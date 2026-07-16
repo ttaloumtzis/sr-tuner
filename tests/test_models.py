@@ -148,3 +148,36 @@ class TestSwinIRNumerical:
         assert out.abs().sum() > 0
         assert not torch.isnan(out).any()
         assert not torch.isinf(out).any()
+
+
+class TestSwinIRExtended:
+    """Tests for SwinIR scale=3, rgb_mean, and old-checkpoint rejection."""
+
+    def test_forward_output_shape_scale_3(self):
+        """SwinIR(scale=3) should upscale 16x16 -> 48x48."""
+        model = SwinIR(scale=3)
+        dummy = torch.randn(1, 3, 16, 16)
+        out = model(dummy)
+        assert out.shape == (1, 3, 48, 48)
+
+    def test_rgb_mean_finite_output(self):
+        """SwinIR with rgb_mean should produce finite output."""
+        model = SwinIR(scale=4, rgb_mean=[0.4488, 0.4371, 0.4040])
+        model.eval()
+        dummy = torch.randn(1, 3, 16, 16)
+        with torch.no_grad():
+            out = model(dummy)
+        assert out.shape == (1, 3, 64, 64)
+        assert torch.isfinite(out).all()
+
+    def test_old_checkpoint_rejected(self):
+        """Loading old-format state_dict should raise ValueError."""
+        model = SwinIR(scale=4)
+        old_sd = {
+            'upsampler.0.weight': torch.randn(48, 180, 3, 3),
+            'upsampler.0.bias': torch.randn(48),
+            'upsampler.2.weight': torch.randn(3, 3, 3, 3),
+            'upsampler.2.bias': torch.randn(3),
+        }
+        with pytest.raises(ValueError, match="old single-stage"):
+            model.load_state_dict(old_sd)

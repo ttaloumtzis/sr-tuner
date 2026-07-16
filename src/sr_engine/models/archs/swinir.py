@@ -273,6 +273,24 @@ class RSTB(nn.Module):
         return self.conv(x) + shortcut
 
 
+def _build_upsampler(embed_dim: int, num_out_ch: int, scale: int) -> nn.Sequential:
+    stages: list[nn.Module] = []
+    remaining = scale
+    while remaining % 2 == 0 and remaining > 1:
+        stages.append(nn.Sequential(
+            nn.Conv2d(embed_dim, embed_dim * 4, 3, 1, 1),
+            nn.PixelShuffle(2),
+        ))
+        remaining //= 2
+    if remaining > 1:
+        stages.append(nn.Sequential(
+            nn.Conv2d(embed_dim, embed_dim * remaining ** 2, 3, 1, 1),
+            nn.PixelShuffle(remaining),
+        ))
+    stages.append(nn.Conv2d(embed_dim, num_out_ch, 3, 1, 1))
+    return nn.Sequential(*stages)
+
+
 @register("swinir")
 class SwinIR(nn.Module):
     """SwinIR model — shallow feature extraction, RSTB body, upsampler."""
@@ -287,6 +305,7 @@ class SwinIR(nn.Module):
         window_size: int = 8,
         mlp_ratio: float = 2.0,
         img_range: float = 1.0,
+        rgb_mean: Optional[list[float]] = None,
         upsampler: str = "pixelshuffle",
         scale: int = 4,
         **kwargs,
@@ -302,12 +321,27 @@ class SwinIR(nn.Module):
             window_size: Size of the attention window.
             mlp_ratio: Ratio of MLP hidden dim to feature dim.
             img_range: Image value range (multiplied on input, divided on output).
-            upsampler: ``"pixelshuffle"`` or ``"nearest+conv"``.
+            rgb_mean: Optional RGB mean values for input centering
+                (e.g. ``[0.4488, 0.4371, 0.4040]`` for DIV2K in ``[0, 1]``
+                range). Subtracted from input, added back to output.
+                ``None`` disables mean normalization.
+            upsampler: ``"pixelshuffle"`` (multi-stage ×2 for power-of-2
+                scales, maintaining embed_dim throughout; final conv to
+                ``num_out_ch``) or ``"nearest+conv"``.
             scale: Super-resolution scale factor.
         """
         super().__init__()
         self.scale = scale
         self.img_range = img_range
+        if rgb_mean is not None:
+            if len(rgb_mean) != num_in_ch:
+                raise ValueError(
+                    f"rgb_mean length {len(rgb_mean)} != num_in_ch {num_in_ch}"
+                )
+            t = torch.tensor(rgb_mean, dtype=torch.float32).view(1, -1, 1, 1)
+            self.register_buffer("rgb_mean", t)
+        else:
+            self.rgb_mean = None
         depths = depths or [6, 6, 6, 6, 6, 6]
         num_heads = num_heads or [6, 6, 6, 6, 6, 6]
 
@@ -325,16 +359,24 @@ class SwinIR(nn.Module):
         )
 
         if upsampler == "pixelshuffle":
-            self.upsampler = nn.Sequential(
-                nn.Conv2d(embed_dim, num_out_ch * scale ** 2, 3, 1, 1),
-                nn.PixelShuffle(scale),
-                nn.Conv2d(num_out_ch, num_out_ch, 3, 1, 1),
-            )
+            self.upsampler = _build_upsampler(embed_dim, num_out_ch, scale)
         else:
             self.upsampler = nn.Sequential(
                 nn.Upsample(scale_factor=scale, mode='nearest'),
                 nn.Conv2d(embed_dim, num_out_ch, 3, 1, 1),
             )
+
+    def load_state_dict(self, state_dict, strict=True):
+        old_keys = ['upsampler.0.weight', 'upsampler.0.bias',
+                    'upsampler.2.weight', 'upsampler.2.bias']
+        if any(k in state_dict for k in old_keys):
+            raise ValueError(
+                "This SwinIR checkpoint uses the old single-stage upsampler. "
+                "v0.2+ uses multi-stage ×2 upsampling at embed_dim throughout. "
+                "The old checkpoints are not loadable due to structural changes "
+                "in the reconstruction head. Retrain from scratch."
+            )
+        return super().load_state_dict(state_dict, strict=strict)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Apply shallow conv, RSTB body, and upsampler.
@@ -345,7 +387,10 @@ class SwinIR(nn.Module):
         Returns:
             Output tensor ``(B, C_out, H*scale, W*scale)``.
         """
-        x = x * self.img_range
+        if self.rgb_mean is not None:
+            x = (x - self.rgb_mean) * self.img_range
+        else:
+            x = x * self.img_range
 
         shallow = self.conv_first(x)
 
@@ -357,4 +402,6 @@ class SwinIR(nn.Module):
         body = self.conv_before_upsample(body)
 
         out = self.upsampler(body)
+        if self.rgb_mean is not None:
+            return out / self.img_range + self.rgb_mean
         return out / self.img_range if self.img_range > 1 else out
