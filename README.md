@@ -39,8 +39,11 @@ srengine workspace init
 # Build a dataset from video
 srengine dataset build --input video.mp4
 
-# Train an RRDB model
+# Train an RRDB model (add --bf16 for mixed precision)
 srengine train run --dataset ./datasets/my_set --model rrdb_esrgan
+
+# Train with BF16 mixed precision (faster, less memory)
+srengine train run --dataset ./datasets/my_set --model swinir --bf16
 
 # Run inference on an image
 srengine infer run --model checkpoints/model.pth --input input.png --output output.png

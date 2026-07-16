@@ -86,6 +86,8 @@ def cli_args_for_train(params: dict) -> list[str]:
         args.extend(["--project", params["project"]])
     if "instance" in params:
         args.extend(["--instance", params["instance"]])
+    if "bf16" in params:
+        args.append("--bf16" if params["bf16"] else "--no-bf16")
     if params.get("machine"):
         args.append("--machine")
     if params.get("experiment_id"):

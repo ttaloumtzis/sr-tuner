@@ -236,6 +236,55 @@ Three export formats:
 
 ONNX and TorchScript exports trace the model with a dummy input of the given size. SafeTensors writes raw weight tensors without computation graph.
 
+## Mixed Precision Training
+
+BF16 (bfloat16) mixed precision reduces GPU memory usage and accelerates training with negligible quality impact on most super-resolution models.
+
+### Usage
+
+```bash
+# Enable BF16 via CLI flag
+srengine train run --dataset ./datasets/my_set --model swinir --bf16
+
+# Disable BF16 explicitly (overrides YAML config)
+srengine train run --dataset ./datasets/my_set --model swinir --no-bf16
+```
+
+The `dtype` key can also be set persistently in YAML config:
+
+```yaml
+# train/base.yaml or custom config
+dtype: bf16
+```
+
+### How It Works
+
+- Forward pass and loss computation run under `torch.autocast` with the chosen dtype
+- Backward pass and optimizer step remain in FP32 for numerical stability
+- Validation also uses autocast for metric consistency with training behaviour
+- BF16 is preferred over FP16 because it requires no loss scaling (`GradScaler`)
+
+### Hardware Compatibility & Fallbacks
+
+| Setting | BF16 supported | fp16 supported | Behaviour |
+|---------|---------------|---------------|-----------|
+| `dtype: bf16` | Yes | — | Uses `torch.bfloat16` autocast |
+| `dtype: bf16` | No | Yes | Falls back to `torch.float16` + GradScaler |
+| `dtype: bf16` | No | No | Disables AMP, runs FP32 |
+| `dtype: float16` | — | Yes | Uses `torch.float16` + GradScaler |
+| `dtype: float32` (default) | — | — | Pure FP32, no AMP |
+| CPU (any dtype) | — | — | AMP disabled, runs FP32 |
+
+Check BF16 support with `srengine env check` — look for the `BF16 support` and `Autocast dtype` lines.
+
+### FP16 Mode
+
+FP16 can be enabled by setting `dtype: float16` in YAML (not exposed via CLI flag). FP16 uses `GradScaler` to prevent gradient underflow. BF16 is recommended when available because it eliminates the need for loss scaling.
+
+### Limitations
+
+- Mixed precision is **training only** — inference still runs in FP32. Models trained with `--bf16` can be used for inference without any special handling.
+
 ## Config System
 
 ### 4-Level Precedence
@@ -272,7 +321,7 @@ class DefaultConfigs:
 | File | Key Parameters |
 |------|---------------|
 | `default.yaml` | device: auto, seed: 42, scale: 4, patch_size: 128, batch_size: 8, lr: 2e-4, tile settings |
-| `train/base.yaml` | max_epochs: 100, save_per_epoch: 5, warmup_steps: 1000, min_lr: 1e-7, loss weights |
+| `train/base.yaml` | max_epochs: 10, save_per_epoch: 5, warmup_steps: 2000, min_lr: 1e-7, loss weights, dtype: float32 |
 | `datasets/video_pairs.yaml` | degradation params (blur kernel, noise std, JPEG quality), frame_rate |
 | `models/swinir.yaml` | embed_dim: 180, depths: [6,6,6,6,6,6], num_heads: [6,6,6,6,6,6] |
 | `models/rrdb_esrgan.yaml` | num_feat: 64, num_block: 23, num_grow_ch: 32 |

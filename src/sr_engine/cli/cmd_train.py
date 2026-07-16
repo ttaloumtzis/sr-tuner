@@ -38,6 +38,7 @@ def train() -> None:
 @click.option("--machine", is_flag=True, default=False, help="Enable machine-readable metrics output.")
 @click.option("--experiment-id", type=str, default=None, help="Experiment identifier (auto-generated if omitted).")
 @click.option("--metrics-frequency", type=int, default=1, help="Log metrics every N batches.")
+@click.option("--bf16/--no-bf16", default=None, help="Enable bfloat16 mixed precision training.")
 @click.option("--dump-config", is_flag=True, default=False, help="Print final merged config and exit.")
 @no_workspace_config_option
 @click.option("--project", type=str, default=None, help="Project name (requires workspace).")
@@ -48,7 +49,7 @@ def train() -> None:
 def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate, max_epochs,
         num_workers, patch_size, save_per_epoch,
         validation_enabled, validation_split, machine, experiment_id, metrics_frequency,
-        dump_config, project, instance, no_workspace_config):
+        bf16, dump_config, project, instance, no_workspace_config):
     """Train a super-resolution model."""
 
     ws, cfg_loader = make_workspace_config_loader(ctx, no_workspace_config)
@@ -111,6 +112,8 @@ def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate, 
             "save_per_epoch": save_per_epoch,
         }.items() if v is not None
     }
+    if bf16 is not None:
+        overrides["dtype"] = "bf16" if bf16 else "float32"
     if validation_enabled is not None:
         overrides.setdefault("validation", {})["enabled"] = validation_enabled
     if validation_split is not None:

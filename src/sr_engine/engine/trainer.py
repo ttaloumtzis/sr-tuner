@@ -8,6 +8,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset, random_split
 
 from sr_engine.utils.progress import ProgressReporter
+from sr_engine.device.backend import autocast_dtype
 
 from sr_engine.data.datasets import PairedImageFolderDataset
 from sr_engine.data.transforms import CenterCrop, Compose, RandomCrop, RandomFlip, RandomRotate
@@ -166,6 +167,25 @@ class Trainer:
         self.model = build_model(model_cfg["name"], model_cfg).to(self.device)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate)
 
+        dtype_str = str(train_cfg.get("dtype", "float32")).lower()
+        if dtype_str == "bf16":
+            if self.device.type == "cpu":
+                log.info("BF16 requested but device is CPU — disabling AMP")
+                self.amp_dtype = None
+            elif not torch.cuda.is_bf16_supported():
+                fallback = autocast_dtype()
+                log.warning("bf16 requested but not supported — falling back to %s", fallback)
+                self.amp_dtype = fallback
+            else:
+                self.amp_dtype = torch.bfloat16
+        elif dtype_str == "float16":
+            self.amp_dtype = torch.float16 if self.device.type != "cpu" else None
+        else:
+            self.amp_dtype = None
+
+        self.amp_enabled = self.amp_dtype is not None
+        self.grad_scaler = torch.amp.GradScaler() if self.amp_dtype == torch.float16 else None
+
         self.pixel_loss = L1Loss()
         loss_cfg = train_cfg.get("losses", {})
         self.perceptual_weight = float(loss_cfg.get("perceptual_weight", 0.0))
@@ -287,12 +307,16 @@ class Trainer:
             epoch: Current epoch number (used in the filename).
         """
         path = self.checkpoint_dir / f"epoch_{epoch:03d}.pt"
+        ckpt_config = {
+            **self.model_cfg,
+            "training_dtype": str(self.amp_dtype),
+        }
         save_checkpoint(
             path=path,
             state_dict=self.model.state_dict(),
             optimizer_state=self.optimizer.state_dict(),
             step=epoch,
-            config=self.model_cfg,
+            config=ckpt_config,
             backend_info={"device": str(self.device)},
         )
 
@@ -308,15 +332,28 @@ class Trainer:
         """
         lr, hr = lr.to(self.device, non_blocking=True), hr.to(self.device, non_blocking=True)
         self.optimizer.zero_grad(set_to_none=True)
-        pred = self.model(lr)
-        loss = self.pixel_loss(pred, hr)
-        comp = {"pixel": loss.item()}
-        if self.perceptual_loss:
-            ploss = self.perceptual_loss(pred, hr)
-            loss += self.perceptual_weight * ploss
-            comp["perceptual"] = ploss.item()
-        loss.backward()
-        self.optimizer.step()
+
+        with torch.autocast(
+            device_type=self.device.type,
+            dtype=self.amp_dtype,
+            enabled=self.amp_enabled,
+        ):
+            pred = self.model(lr)
+            loss = self.pixel_loss(pred, hr)
+            comp = {"pixel": loss.item()}
+            if self.perceptual_loss:
+                ploss = self.perceptual_loss(pred, hr)
+                loss += self.perceptual_weight * ploss
+                comp["perceptual"] = ploss.item()
+
+        if self.grad_scaler is not None:
+            self.grad_scaler.scale(loss).backward()
+            self.grad_scaler.step(self.optimizer)
+            self.grad_scaler.update()
+        else:
+            loss.backward()
+            self.optimizer.step()
+
         self.scheduler.step()
         comp["total"] = loss.item()
         comp["lr"] = self.optimizer.param_groups[0]["lr"]
@@ -335,7 +372,12 @@ class Trainer:
         with torch.no_grad():
             for lr, hr in self.val_dataloader:
                 lr, hr = lr.to(self.device), hr.to(self.device)
-                pred = self.model(lr)
+                with torch.autocast(
+                    device_type=self.device.type,
+                    dtype=self.amp_dtype,
+                    enabled=self.amp_enabled,
+                ):
+                    pred = self.model(lr)
                 pred_clamped = pred.clamp(0.0, 1.0)
                 total_psnr += psnr(pred_clamped, hr).item()
                 total_ssim += ssim(pred_clamped, hr).item()

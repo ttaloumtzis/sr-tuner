@@ -287,3 +287,67 @@ class TestTrainRunValidationConfig:
             "train", "run", "--dataset", str(dataset),
         ] + TRAIN_BASE_NO_VAL)
         assert r.exit_code == 0, r.output
+
+
+class TestTrainRunMixedPrecision:
+    """Tests for --bf16/--no-bf16 mixed precision flags."""
+
+    def test_bf16_flag_in_help(self, cli_invoker):
+        """``--bf16`` should appear in help output."""
+        r = cli_invoker(["train", "run", "--help"])
+        assert r.exit_code == 0
+        assert "--bf16" in r.output
+        assert "--no-bf16" in r.output
+
+    def test_bf16_flag_shows_in_dump_config(self, cli_invoker, tmp_path):
+        """``--bf16 --dump-config`` should show dtype: bf16."""
+        r = cli_invoker([
+            "train", "run", "--bf16", "--dump-config",
+            "--dataset", str(tmp_path),
+        ] + TRAIN_BASE_NO_VAL)
+        assert r.exit_code == 0, r.output
+        import yaml
+        cfg = yaml.safe_load(r.output)
+        assert cfg.get("dtype") == "bf16"
+
+    def test_no_bf16_flag_shows_float32_in_dump_config(self, cli_invoker, tmp_path):
+        """Without ``--bf16``, dump-config should show float32 (default)."""
+        r = cli_invoker([
+            "train", "run", "--dump-config",
+            "--dataset", str(tmp_path),
+        ] + TRAIN_BASE_NO_VAL)
+        assert r.exit_code == 0, r.output
+        import yaml
+        cfg = yaml.safe_load(r.output)
+        assert cfg.get("dtype") == "float32"
+
+    def test_no_bf16_overrides_dtype_to_float32(self, cli_invoker, tmp_path):
+        """``--no-bf16 --dump-config`` should always show dtype: float32."""
+        r = cli_invoker([
+            "train", "run", "--no-bf16", "--dump-config",
+            "--dataset", str(tmp_path),
+        ] + TRAIN_BASE_NO_VAL)
+        assert r.exit_code == 0, r.output
+        import yaml
+        cfg = yaml.safe_load(r.output)
+        assert cfg.get("dtype") == "float32"
+
+    def test_bf16_training_succeeds(self, cli_invoker, tmp_path):
+        """Training with ``--bf16`` should complete successfully."""
+        from conftest import _create_dataset_dir
+        dataset = _create_dataset_dir(tmp_path, 3)
+        r = cli_invoker([
+            "train", "run", "--dataset", str(dataset),
+            "--bf16",
+        ] + TRAIN_BASE_NO_VAL)
+        assert r.exit_code == 0, r.output
+
+    def test_no_bf16_training_succeeds(self, cli_invoker, tmp_path):
+        """Training with ``--no-bf16`` should complete successfully."""
+        from conftest import _create_dataset_dir
+        dataset = _create_dataset_dir(tmp_path, 3)
+        r = cli_invoker([
+            "train", "run", "--dataset", str(dataset),
+            "--no-bf16",
+        ] + TRAIN_BASE_NO_VAL)
+        assert r.exit_code == 0, r.output

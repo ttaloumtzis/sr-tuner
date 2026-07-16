@@ -21,6 +21,9 @@ lr_scheduler: cosine
 warmup_steps: 2000
 min_lr: 1e-7
 
+# --- Mixed precision ---
+dtype: float32  # "bf16" enables bfloat16, "float16" enables fp16 + GradScaler
+
 # --- Losses ---
 losses:
   perceptual_weight: 0.1

@@ -65,6 +65,24 @@ class TestCliArgsForTrain:
         args = cli_args_for_train({"model_name": "swinir", "batch_size": 2})
         assert args == ["train", "run", "--model", "swinir", "--batch-size", "2"]
 
+    def test_bf16_true(self):
+        """bf16=True should produce ``--bf16``."""
+        args = cli_args_for_train({"bf16": True})
+        assert "--bf16" in args
+        assert "--no-bf16" not in args
+
+    def test_bf16_false(self):
+        """bf16=False should produce ``--no-bf16``."""
+        args = cli_args_for_train({"bf16": False})
+        assert "--no-bf16" in args
+        assert "--bf16" not in args
+
+    def test_bf16_omitted(self):
+        """bf16 key absent should produce neither flag."""
+        args = cli_args_for_train({"model_name": "swinir"})
+        assert "--bf16" not in args
+        assert "--no-bf16" not in args
+
 
 class TestCliArgsForInfer:
     """Tests for the ``cli_args_for_infer`` builder."""
