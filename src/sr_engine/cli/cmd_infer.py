@@ -15,7 +15,7 @@ def infer() -> None:
 
 @infer.command()
 @click.option("--model", "-m", type=click.Path(exists=True, path_type=Path),
-              help="Model checkpoint path. Required without --project/--instance.")
+              help="Model checkpoint path. Required without --instance.")
 @click.option("--input", "-i", "input_path", required=True,
               type=click.Path(exists=True, path_type=Path),
               help="Input image or video file.")
@@ -28,9 +28,8 @@ def infer() -> None:
 @click.option("--device", default="cuda", show_default=True,
               type=click.Choice(["cuda", "cpu", "auto"]),
               help="Device to run inference on.")
-@click.option("--project", type=str, default=None, help="Project name (requires workspace).")
 @click.option("--instance", "inst", type=str, default=None,
-              help="Model instance name (requires --project). Auto-resolves latest checkpoint.")
+              help="Model instance name. Auto-resolves latest checkpoint.")
 @click.pass_context
 def run(
     ctx,
@@ -40,24 +39,23 @@ def run(
     tile: int,
     overlap: int,
     device: str,
-    project: str | None,
     inst: str | None,
 ) -> None:
     """Run super-resolution inference on an image or video.
 
     Provide --model <path> to use a specific checkpoint, or
-    --project --instance to auto-resolve the latest checkpoint.
+    --instance to auto-resolve the latest checkpoint.
     """
-    if project and inst:
+    if inst:
         ws = require_workspace(ctx)
-        model_inst = ws.get_model_instance(project, inst)
+        model_inst = ws.get_model_instance(inst)
         ckpts = sorted(model_inst.path.glob("checkpoints/*.pt"))
         if not ckpts:
             raise click.ClickException(f"No checkpoints in instance '{inst}'")
         model = ckpts[-1]
     elif not model:
         raise click.ClickException(
-            "Provide --model <path> or --project --instance"
+            "Provide --model <path> or --instance"
         )
 
     if tile > 0 and overlap >= tile:

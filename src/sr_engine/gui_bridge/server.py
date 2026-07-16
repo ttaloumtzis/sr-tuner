@@ -250,15 +250,15 @@ def _handle_workspace_check(server: Server, params: dict) -> dict:
 
 
 def _handle_project_list(server: Server, params: dict) -> dict:
-    """List all projects in the workspace."""
+    """List all model instances (workspace IS the project)."""
     from sr_engine.workspace import Workspace
     ws = Workspace(server._workspace)
-    projects = ws.list_projects() if hasattr(ws, "list_projects") else []
-    return {"projects": projects}
+    instances = ws.list_model_instances() if hasattr(ws, "list_model_instances") else []
+    return {"instances": [i.name for i in instances]}
 
 
 def _handle_project_create(server: Server, params: dict) -> dict:
-    """Create a new project in the workspace.
+    """Create a model instance in the workspace.
 
     Args:
         params: Must include ``name`` key.
@@ -266,10 +266,14 @@ def _handle_project_create(server: Server, params: dict) -> dict:
     from sr_engine.workspace import Workspace
     ws = Workspace(server._workspace)
     name = params.get("name")
+    arch = params.get("arch", "swinir")
     if not name:
         return {"status": "error", "message": "missing 'name' parameter"}
-    ws.create_project(name)
-    return {"project": name, "status": "created"}
+    from sr_engine.utils.config import DefaultConfigs
+    cfg = DefaultConfigs(workspace=ws)
+    arch_config = cfg.get_model_config(arch)
+    ws.create_model_instance(name, arch_config)
+    return {"instance": name, "status": "created"}
 
 
 def _handle_dataset_validate(server: Server, params: dict) -> dict:

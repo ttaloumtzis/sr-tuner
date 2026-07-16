@@ -97,10 +97,9 @@ def cli_invoker(cli_runner):
 
 @pytest.fixture
 def tmp_workspace(tmp_path):
-    """Create an initialised workspace with a ``test_proj`` project."""
+    """Create an initialised workspace."""
     ws = Workspace(tmp_path / "workspace")
     ws.init()
-    ws.create_project("test_proj")
     return ws
 
 

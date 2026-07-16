@@ -11,7 +11,7 @@ from .cmd_infer import infer
 from .cmd_model import model
 from .cmd_env import env
 from .cmd_serve import serve
-from .workspace_commands import workspace, project
+from .workspace_commands import workspace
 
 
 @click.group()
@@ -34,5 +34,4 @@ cli.add_command(infer)
 cli.add_command(model)
 cli.add_command(env)
 cli.add_command(workspace)
-cli.add_command(project)
 cli.add_command(serve)

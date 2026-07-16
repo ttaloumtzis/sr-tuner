@@ -33,10 +33,10 @@ def test_workspace_init_creates_marker(cli_runner, tmp_path):
 
 
 def test_workspace_init_creates_dirs(cli_runner, tmp_path):
-    """``workspace init`` should create datasets, projects, and configs dirs."""
+    """``workspace init`` should create datasets, models, experiments, and configs dirs."""
     r = cli_runner.invoke(cli, ["workspace", "init", "--path", str(tmp_path / "ws")])
     assert r.exit_code == 0
-    for name in ("datasets", "projects", "configs"):
+    for name in ("datasets", "models", "experiments", "configs"):
         assert (tmp_path / "ws" / name).is_dir()
 
 

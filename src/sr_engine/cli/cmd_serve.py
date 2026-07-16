@@ -11,8 +11,10 @@ def serve() -> None:
 
 
 @serve.command()
-@click.option("--port", type=int, default=8765, show_default=True)
-@click.option("--host", default="127.0.0.1", show_default=True)
+@click.option("--port", type=int, default=8765, show_default=True,
+              help="TCP port to listen on.")
+@click.option("--host", default="127.0.0.1", show_default=True,
+              help="Network interface to bind to (use 0.0.0.0 for all).")
 @click.pass_context
 def start(ctx, host, port) -> None:
     """Start the socket server. Blocks until killed."""

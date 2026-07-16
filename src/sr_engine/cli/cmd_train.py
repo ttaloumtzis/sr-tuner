@@ -24,7 +24,7 @@ def train() -> None:
 @click.option("--model", "-m", default="rrdb_esrgan", help="Model name (e.g., 'swinir', 'rrdb_esrgan').")
 @click.option("--dataset", "-d", required=True, type=click.Path(path_type=Path), help="Dataset directory path.")
 @click.option("--resume", "-r", type=str, default=None,
-              help="Resume from a checkpoint. A path, a filename (with --project --instance), or 'latest'.")
+              help="Resume from a checkpoint. A path, a filename (with --instance), or 'latest'.")
 @click.option("--device", default="cuda", type=click.Choice(["cuda", "cpu", "auto"]),
               help="Training device.")
 @click.option("--batch-size", type=int, default=None, help="Batch size for training.")
@@ -35,48 +35,40 @@ def train() -> None:
 @click.option("--save-per-epoch", type=int, default=None, help="Save checkpoint every N epochs.")
 @click.option("--validation-enabled/--no-validation-enabled", default=None, help="Enable/disable validation split.")
 @click.option("--validation-split", type=click.FloatRange(0.0, 1.0), default=None, help="Fraction of data for validation.")
-@click.option("--machine", is_flag=True, default=False, help="Enable machine-readable metrics output.")
+@click.option("--machine", is_flag=True, default=False,
+              help="Emit metrics as JSON Lines (one JSON object per event) for programmatic consumption.")
 @click.option("--experiment-id", type=str, default=None, help="Experiment identifier (auto-generated if omitted).")
 @click.option("--metrics-frequency", type=int, default=1, help="Log metrics every N batches.")
 @click.option("--bf16/--no-bf16", default=None, help="Enable bfloat16 mixed precision training.")
 @click.option("--dump-config", is_flag=True, default=False, help="Print final merged config and exit.")
 @no_workspace_config_option
-@click.option("--project", type=str, default=None, help="Project name (requires workspace).")
 @click.option("--instance", "-i", type=str, default=None,
-              help="Model instance name (requires --project). "
-                   "Overrides checkpoint_dir and creates a run directory.")
+              help="Model instance name. Overrides checkpoint_dir and creates a run directory.")
 @click.pass_context
 def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate, max_epochs,
         num_workers, patch_size, save_per_epoch,
         validation_enabled, validation_split, machine, experiment_id, metrics_frequency,
-        bf16, dump_config, project, instance, no_workspace_config):
+        bf16, dump_config, instance, no_workspace_config):
     """Train a super-resolution model."""
 
     ws, cfg_loader = make_workspace_config_loader(ctx, no_workspace_config)
 
-    if instance and not project:
-        raise click.ClickException("--instance requires --project")
-
-    if project and not ws:
-        raise click.ClickException(
-            "--project requires a workspace. Initialize one with 'workspace init' "
-            "or set --workspace explicitly."
-        )
-
-    if project:
-        ws.get_project(project)
-
     if instance:
+        if not ws:
+            raise click.ClickException(
+                "--instance requires a workspace. Initialize one with 'workspace init' "
+                "or set --workspace explicitly."
+            )
         try:
-            model_inst = ws.get_model_instance(project, instance)
+            model_inst = ws.get_model_instance(instance)
         except FileNotFoundError:
             raise click.ClickException(
-                f"Model instance '{instance}' not found in project '{project}'. "
-                f"Create it with: sre model create-instance {project} {instance} --model <arch>"
+                f"Model instance '{instance}' not found in workspace. "
+                f"Create it with: sre model create-instance {instance} --model <arch>"
             )
 
         inst_ckpt_dir = model_inst.path / "checkpoints"
-        run_dir = ws.get_run_path(project, instance)
+        run_dir = ws.get_run_path(instance)
 
         if resume:
             resume_path = Path(resume)
@@ -94,7 +86,7 @@ def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate, 
                     if candidate.exists():
                         resume = str(candidate)
 
-    if ws and project:
+    if ws:
         dataset = ws.resolve_dataset(dataset)
 
     model_cfg = resolve_model_config(cfg_loader, model)
@@ -146,10 +138,11 @@ def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate, 
     if machine:
         if experiment_id is None:
             experiment_id = f"exp_{int(time.time())}"
-        if ws and project and instance:
+        if ws and instance:
             metrics_dir = run_dir
-        elif ws and project:
-            metrics_dir = ws.path / "projects" / project / "metrics"
+        elif ws:
+            metrics_dir = ws.path / "experiments"
+            metrics_dir.mkdir(parents=True, exist_ok=True)
         else:
             metrics_dir = Path(train_cfg.get("checkpoint_dir", "checkpoints")) / "metrics"
         metrics_path = metrics_dir / f"{experiment_id}.jsonl"

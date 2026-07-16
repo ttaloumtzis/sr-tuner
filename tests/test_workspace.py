@@ -1,4 +1,4 @@
-"""Tests for workspace.py — Workspace discovery, init, projects, check, dataset resolution."""
+"""Tests for workspace.py — Workspace discovery, init, models, check, dataset resolution."""
 
 import os
 from pathlib import Path
@@ -12,11 +12,12 @@ class TestWorkspaceInit:
     """Tests for ``Workspace.init``."""
 
     def test_init_creates_directories(self, tmp_path):
-        """init() should create datasets, projects, configs dirs and the marker."""
+        """init() should create models, datasets, experiments, configs dirs and the marker."""
         ws = Workspace(tmp_path / "my_ws")
         ws.init()
+        assert (tmp_path / "my_ws" / "models").is_dir()
         assert (tmp_path / "my_ws" / "datasets").is_dir()
-        assert (tmp_path / "my_ws" / "projects").is_dir()
+        assert (tmp_path / "my_ws" / "experiments").is_dir()
         assert (tmp_path / "my_ws" / "configs").is_dir()
         assert (tmp_path / "my_ws" / MARKER).is_file()
 
@@ -25,7 +26,7 @@ class TestWorkspaceInit:
         ws = Workspace(tmp_path / "my_ws")
         ws.init()
         ws.init()
-        assert (tmp_path / "my_ws" / "datasets").is_dir()
+        assert (tmp_path / "my_ws" / "models").is_dir()
 
 
 class TestWorkspaceDiscover:
@@ -70,59 +71,6 @@ class TestWorkspaceDiscover:
             os.chdir(str(old_cwd))
 
 
-class TestWorkspaceProjects:
-    """Tests for project CRUD operations."""
-
-    def test_create_project(self, tmp_path):
-        """create_project() should create the project directory structure."""
-        ws = Workspace(tmp_path)
-        ws.init()
-        proj = ws.create_project("my_proj")
-        assert proj.name == "my_proj"
-        assert proj.path == tmp_path / "projects" / "my_proj"
-        assert (proj.path / "configs").is_dir()
-        assert (proj.path / "checkpoints").is_dir()
-        assert (proj.path / "metrics").is_dir()
-
-    def test_create_duplicate_project_raises(self, tmp_path):
-        """Creating a project with an existing name should raise FileExistsError."""
-        ws = Workspace(tmp_path)
-        ws.init()
-        ws.create_project("my_proj")
-        with pytest.raises(FileExistsError):
-            ws.create_project("my_proj")
-
-    def test_list_projects(self, tmp_path):
-        """list_projects() should return projects sorted by name."""
-        ws = Workspace(tmp_path)
-        ws.init()
-        ws.create_project("proj_b")
-        ws.create_project("proj_a")
-        projects = ws.list_projects()
-        assert [p.name for p in projects] == ["proj_a", "proj_b"]
-
-    def test_list_projects_empty(self, tmp_path):
-        """list_projects() should return an empty list when no projects exist."""
-        ws = Workspace(tmp_path)
-        ws.init()
-        assert ws.list_projects() == []
-
-    def test_get_project_found(self, tmp_path):
-        """get_project() should return the matching project."""
-        ws = Workspace(tmp_path)
-        ws.init()
-        ws.create_project("my_proj")
-        proj = ws.get_project("my_proj")
-        assert proj.name == "my_proj"
-
-    def test_get_project_not_found(self, tmp_path):
-        """get_project() should raise FileNotFoundError for unknown projects."""
-        ws = Workspace(tmp_path)
-        ws.init()
-        with pytest.raises(FileNotFoundError):
-            ws.get_project("nonexistent")
-
-
 class TestWorkspaceCheck:
     """Tests for ``Workspace.check``."""
 
@@ -130,20 +78,29 @@ class TestWorkspaceCheck:
         """A healthy workspace should return status 'ok'."""
         ws = Workspace(tmp_path)
         ws.init()
-        ws.create_project("proj1")
+        ws.create_model_instance("m1", {"name": "swinir"})
         report = ws.check()
         assert report["status"] == "ok"
         assert len(report["issues"]) == 0
-        assert "proj1" in report["projects"]
+        assert "m1" in report["models"]
 
-    def test_check_missing_project_dir(self, tmp_path):
-        """A workspace with a missing projects dir should report an error."""
+    def test_check_missing_models_dir(self, tmp_path):
+        """A workspace with a missing models dir should report an error."""
         ws = Workspace(tmp_path)
         ws.init()
-        (tmp_path / "projects").rmdir()
+        import shutil
+        shutil.rmtree(tmp_path / "models")
         report = ws.check()
         assert report["status"] == "error"
         assert len(report["issues"]) > 0
+
+    def test_check_detects_old_projects_dir(self, tmp_path):
+        """An old projects/ dir should be flagged as an issue."""
+        ws = Workspace(tmp_path)
+        ws.init()
+        (tmp_path / "projects").mkdir(exist_ok=True)
+        report = ws.check()
+        assert any("projects" in i.lower() for i in report["issues"])
 
 
 class TestWorkspaceResolveDataset:

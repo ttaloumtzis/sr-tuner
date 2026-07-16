@@ -1,4 +1,4 @@
-"""CLI commands for workspace and project management."""
+"""CLI commands for workspace management."""
 
 from pathlib import Path
 import click
@@ -31,8 +31,8 @@ def info(ctx) -> None:
     ws = require_workspace(ctx)
     d = ws.info()
     click.echo(f"Workspace: {d['path']}")
-    click.echo(f"Projects:  {len(d['projects'])}")
-    for name in d['projects']:
+    click.echo(f"Models:    {len(d['models'])}")
+    for name in d['models']:
         click.echo(f"  - {name}")
     click.echo(f"Datasets:  {len(d['datasets'])}")
     for name in d['datasets']:
@@ -47,7 +47,7 @@ def check(ctx) -> None:
     report = ws.check()
     click.echo(f"Workspace: {report['path']}")
     click.echo(f"Structure:  {'OK' if report['status'] == 'ok' else report['status'].upper()}")
-    click.echo(f"Projects:   {len(report['projects'])}")
+    click.echo(f"Models:     {len(report['models'])}")
     click.echo(f"Datasets:   {len(report['datasets'])}")
     if report["issues"]:
         click.secho("Issues:", fg="yellow", bold=True)
@@ -56,35 +56,3 @@ def check(ctx) -> None:
         ctx.exit(1 if report["status"] == "error" else 0)
     else:
         click.secho("No issues found.", fg="green")
-
-
-@click.group()
-def project() -> None:
-    """Project management commands."""
-
-
-@project.command()
-@click.argument("name")
-@click.pass_context
-def create(ctx, name: str) -> None:
-    """Create a new project in the workspace."""
-    ws = require_workspace(ctx)
-    try:
-        proj = ws.create_project(name)
-        click.secho(f"Project '{proj.name}' created at {proj.path}", fg="green", bold=True)
-    except FileExistsError as e:
-        raise click.ClickException(str(e))
-
-
-@project.command(name="list")
-@click.pass_context
-def list_projects(ctx) -> None:
-    """List projects in the workspace."""
-    ws: Workspace | None = require_workspace(ctx)
-    projects = ws.list_projects()
-    if not projects:
-        click.echo("No projects yet.")
-        return
-    click.echo(f"Projects ({len(projects)}):")
-    for p in projects:
-        click.echo(f"  - {p.name}")

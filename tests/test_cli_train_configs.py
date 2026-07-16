@@ -116,42 +116,39 @@ class TestTrainRunWorkspaceAware:
         from conftest import _create_dataset_dir
         ws = Workspace(tmp_path / "ws")
         ws.init()
-        ws.create_project("proj1")
         dataset = _create_dataset_dir(tmp_path / "ws" / "datasets" / "my_set", 3)
 
         old_cwd = os.getcwd()
         try:
             os.chdir(str(tmp_path / "ws"))
             r = cli_invoker([
-                "train", "run", "--project", "proj1",
-                "--dataset", str(dataset),
+                "train", "run", "--dataset", str(dataset),
             ] + TRAIN_BASE_NO_VAL)
             assert r.exit_code == 0, r.output
         finally:
             os.chdir(str(old_cwd))
 
     def test_workspace_resolves_checkpoint_dir(self, cli_invoker, tmp_path):
-        """Workspace-aware checkpoint directory resolution."""
+        """Config-specified checkpoint directory should be used."""
         from conftest import _create_dataset_dir
         ws = Workspace(tmp_path / "ws")
         ws.init()
-        ws.create_project("proj_cp")
         dataset = _create_dataset_dir(tmp_path / "tmp_data", 3)
+        ckpt_dir = tmp_path / "custom_ckpts"
         cfg_path = tmp_path / "ws_cfg.yaml"
         save_config({
-            "checkpoint_dir": str(tmp_path / "ws" / "projects" / "proj_cp" / "checkpoints"),
+            "checkpoint_dir": str(ckpt_dir),
         }, cfg_path)
 
         old_cwd = os.getcwd()
         try:
             os.chdir(str(tmp_path / "ws"))
             r = cli_invoker([
-                "train", "run", "--project", "proj_cp",
-                "--dataset", str(dataset),
+                "train", "run", "--dataset", str(dataset),
                 "--config", str(cfg_path),
             ] + TRAIN_BASE_NO_VAL)
             assert r.exit_code == 0, r.output
-            assert (tmp_path / "ws" / "projects" / "proj_cp" / "checkpoints").exists()
+            assert (ckpt_dir).exists()
         finally:
             os.chdir(str(old_cwd))
 
@@ -164,22 +161,21 @@ class TestTrainRunWithInstance:
         from conftest import _create_dataset_dir
         ws = Workspace(tmp_path / "ws")
         ws.init()
-        ws.create_project("proj1")
-        ws.create_model_instance("proj1", "v1", {"name": "rrdb_esrgan", "scale": 4})
+        ws.create_model_instance("v1", {"name": "rrdb_esrgan", "scale": 4})
         dataset = _create_dataset_dir(tmp_path / "ws" / "datasets" / "my_set", 3)
 
         old_cwd = os.getcwd()
         try:
             os.chdir(str(tmp_path / "ws"))
             r = cli_invoker([
-                "train", "run", "--project", "proj1", "--instance", "v1",
+                "train", "run", "--instance", "v1",
                 "--dataset", str(dataset),
             ] + TRAIN_BASE_NO_VAL)
             assert r.exit_code == 0, r.output
         finally:
             os.chdir(str(old_cwd))
 
-        runs_dir = tmp_path / "ws" / "projects" / "proj1" / "models" / "v1" / "runs"
+        runs_dir = tmp_path / "ws" / "models" / "v1" / "runs"
         run_dirs = list(runs_dir.glob("run_*"))
         assert len(run_dirs) >= 1
 
@@ -188,22 +184,21 @@ class TestTrainRunWithInstance:
         from conftest import _create_dataset_dir
         ws = Workspace(tmp_path / "ws")
         ws.init()
-        ws.create_project("proj1")
-        ws.create_model_instance("proj1", "v1", {"name": "rrdb_esrgan", "scale": 4})
+        ws.create_model_instance("v1", {"name": "rrdb_esrgan", "scale": 4})
         dataset = _create_dataset_dir(tmp_path / "ws" / "datasets" / "my_set", 3)
 
         old_cwd = os.getcwd()
         try:
             os.chdir(str(tmp_path / "ws"))
             r = cli_invoker([
-                "train", "run", "--project", "proj1", "--instance", "v1",
+                "train", "run", "--instance", "v1",
                 "--dataset", str(dataset),
             ] + TRAIN_BASE_NO_VAL)
             assert r.exit_code == 0, r.output
         finally:
             os.chdir(str(old_cwd))
 
-        runs_dir = tmp_path / "ws" / "projects" / "proj1" / "models" / "v1" / "runs"
+        runs_dir = tmp_path / "ws" / "models" / "v1" / "runs"
         run_dirs = sorted(runs_dir.glob("run_*"))
         assert len(run_dirs) >= 1
         tc = run_dirs[0] / "train_config.yaml"
@@ -212,25 +207,18 @@ class TestTrainRunWithInstance:
         cfg = yaml.safe_load(tc.read_text())
         assert cfg["max_epochs"] == 2
 
-    def test_train_run_instance_without_project_raises(self, cli_invoker, tmp_path):
-        """--instance without --project should raise an error."""
-        r = cli_invoker(["train", "run", "--instance", "v1", "--dataset", str(tmp_path)])
-        assert r.exit_code != 0
-        assert "--instance requires --project" in r.output
-
     def test_train_run_instance_without_create_raises(self, cli_invoker, tmp_path):
         """--instance without creating it first should raise an error."""
         from conftest import _create_dataset_dir
         ws = Workspace(tmp_path / "ws")
         ws.init()
-        ws.create_project("proj1")
         dataset = _create_dataset_dir(tmp_path / "ws" / "datasets" / "my_set", 3)
 
         old_cwd = os.getcwd()
         try:
             os.chdir(str(tmp_path / "ws"))
             r = cli_invoker([
-                "train", "run", "--project", "proj1", "--instance", "nonexistent",
+                "train", "run", "--instance", "nonexistent",
                 "--dataset", str(dataset),
             ] + TRAIN_BASE_NO_VAL)
             assert r.exit_code != 0
@@ -243,15 +231,14 @@ class TestTrainRunWithInstance:
         from conftest import _create_dataset_dir
         ws = Workspace(tmp_path / "ws")
         ws.init()
-        ws.create_project("proj1")
-        ws.create_model_instance("proj1", "v1", {"name": "rrdb_esrgan", "scale": 4})
+        ws.create_model_instance("v1", {"name": "rrdb_esrgan", "scale": 4})
         dataset = _create_dataset_dir(tmp_path / "ws" / "datasets" / "my_set", 3)
 
         old_cwd = os.getcwd()
         try:
             os.chdir(str(tmp_path / "ws"))
             r = cli_invoker([
-                "train", "run", "--project", "proj1", "--instance", "v1",
+                "train", "run", "--instance", "v1",
                 "--dataset", str(dataset),
                 "--machine", "--experiment-id", "test_inst_001",
             ] + TRAIN_BASE_NO_VAL)
@@ -259,7 +246,7 @@ class TestTrainRunWithInstance:
         finally:
             os.chdir(str(old_cwd))
 
-        runs_dir = tmp_path / "ws" / "projects" / "proj1" / "models" / "v1" / "runs"
+        runs_dir = tmp_path / "ws" / "models" / "v1" / "runs"
         run_dirs = sorted(runs_dir.glob("run_*"))
         assert len(run_dirs) >= 1
         jsonl_files = list(run_dirs[0].glob("*.jsonl"))
