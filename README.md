@@ -1,54 +1,76 @@
-# sr-tuner
+# sr-engine
 
-Super-resolution training toolkit for video and image upscaling. Provides a complete pipeline from raw video to trained models, with first-class GPU support for both NVIDIA (CUDA) and AMD (ROCm).
+Super-resolution engine for training and running super-resolution models on video/image data, with first-class support for both NVIDIA (CUDA) and AMD (ROCm) GPUs.
 
-## Components
+## Requirements
 
-| Component | Description |
-|-----------|-------------|
-| **sr-engine** | Core Python package: dataset building, training, inference, model export, GUI bridge |
-| [sr-engine/README.md](sr-engine/README.md) | Setup and quick start |
+- Python 3.11 (strictly pinned)
+- [uv](https://docs.astral.sh/uv/) (package manager)
+- Linux (ROCm) or Linux/Windows (CUDA) — CPU-only mode works anywhere
 
 ## Quick Setup
 
 ```bash
-cd sr-engine
-./envs/build.sh --backend cpu     # CPU-only
-# or ./envs/build.sh --backend cuda   # NVIDIA CUDA
-# or ./envs/build.sh --backend rocm   # AMD ROCm
+# CPU-only (no GPU)
+./envs/build.sh --backend cpu
 
-uv run srengine env check          # Verify installation
+# NVIDIA CUDA
+./envs/build.sh --backend cuda
+
+# AMD ROCm
+./envs/build.sh --backend rocm
 ```
 
-Requirements: Python 3.11, [uv](https://docs.astral.sh/uv/), Linux (ROCm) or Linux/Windows (CUDA).
+One command creates `.venv`, pins the right PyTorch index, installs deps, and runs `envs/verify_env.py` to confirm everything works.
+
+Manual alternative:
+```bash
+uv venv
+uv sync
+uv pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
+```
 
 ## Quick Start
 
 ```bash
-cd sr-engine
-uv run srengine workspace init                        # Set up workspace
-uv run srengine dataset build --input video.mp4        # Build dataset
-uv run srengine train run --dataset my_set --model swinir  # Train model
-uv run srengine infer run --model model.pth --input image.png --output sr.png  # Upscale
+# Initialize a workspace
+srengine workspace init
+
+# Build a dataset from video
+srengine dataset build --input video.mp4
+
+# Train an RRDB model
+srengine train run --dataset ./datasets/my_set --model rrdb_esrgan
+
+# Run inference on an image
+srengine infer run --model checkpoints/model.pth --input input.png --output output.png
 ```
 
-## Documentation
+## What's Next?
 
-| Topic | Location |
-|-------|----------|
-| Architecture & design patterns | [sr-engine/docs/architecture.md](sr-engine/docs/architecture.md) |
-| CLI reference (all commands) | [sr-engine/docs/cli-reference.md](sr-engine/docs/cli-reference.md) |
-| Training deep dive | [sr-engine/docs/training.md](sr-engine/docs/training.md) |
-| Data pipeline | [sr-engine/docs/data-pipeline.md](sr-engine/docs/data-pipeline.md) |
-| Inference & export | [sr-engine/docs/inference.md](sr-engine/docs/inference.md) |
-| Workspace management | [sr-engine/docs/workspace.md](sr-engine/docs/workspace.md) |
-| Device backend (CUDA/ROCm) | [sr-engine/docs/device-backend.md](sr-engine/docs/device-backend.md) |
-| GUI bridge protocol | [sr-engine/docs/gui_bridge.md](sr-engine/docs/gui_bridge.md) |
-| Development guide | [sr-engine/docs/development.md](sr-engine/docs/development.md) |
+| Topic | Doc |
+|---|---|
+| System architecture and design patterns | [docs/architecture.md](docs/architecture.md) |
+| Full CLI reference | [docs/cli-reference.md](docs/cli-reference.md) |
+| Training deep dive (trainer, models, metrics, config) | [docs/training.md](docs/training.md) |
+| Data pipeline (dataset build, degradation, validation) | [docs/data-pipeline.md](docs/data-pipeline.md) |
+| Inference and model export | [docs/inference.md](docs/inference.md) |
+| Workspace and project management | [docs/workspace.md](docs/workspace.md) |
+| Device abstraction (CUDA/ROCm) | [docs/device-backend.md](docs/device-backend.md) |
+| GUI bridge protocol | [docs/gui_bridge.md](docs/gui_bridge.md) |
+| Development guide (testing, adding models, etc.) | [docs/development.md](docs/development.md) |
 
-## Supported Models
+## Project Structure
 
-| Model | Architecture | Type |
-|-------|-------------|------|
-| `rrdb_esrgan` | RRDBNet (23 RRDB blocks, 64 channels) | CNN-based |
-| `swinir` | SwinIR (6-stage, 6-head, 180-dim embed) | Transformer-based |
+```
+envs/                 - Build scripts and Dockerfiles
+src/sr_engine/        - Python package
+  cli/                - Click CLI commands
+  data/               - Dataset building, validation, transforms, degradation
+  device/             - CUDA/ROCm backend abstraction
+  engine/             - Inference, trainer, metrics, tiling
+  models/             - RRDB, SwinIR, checkpointing, losses, registry
+  utils/              - Config loader, I/O, logging
+    configs/          - YAML configuration files
+tests/                - Test suite
+```
