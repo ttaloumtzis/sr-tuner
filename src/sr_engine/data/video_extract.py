@@ -16,7 +16,29 @@ def extract_frames(
         duration: float | None = None,
         reporter: Optional[ProgressReporter] = None,
 ) -> list[Path]:
-    """Extract frames from *video_path* into *out_dir* as PNG images efficiently."""
+    """Extract frames from a video file into a directory as sequential PNG images.
+
+    Uses ``cv2.VideoCapture`` for decoding. Supports frame-rate throttling,
+    seeking to a start time, and limiting extraction to a duration window.
+    Frames that fall outside the desired sampling rate are skipped via
+    ``grab()`` (decode bypass) for performance.
+
+    Args:
+        video_path: Path to the input video file.
+        out_dir: Output directory for the extracted PNG frames.
+        frame_rate: Target output frame rate. If ``None`` or greater than
+            the video's native FPS, all frames are kept.
+        start_time: Time in seconds to start extracting from.
+        duration: Maximum duration in seconds to extract. ``None`` extracts
+            the entire video.
+        reporter: Optional progress reporter.
+
+    Returns:
+        List of paths to the extracted PNG files, sorted alphabetically.
+
+    Raises:
+        FileNotFoundError: If the video file cannot be opened.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
 
     vidcap = cv2.VideoCapture(str(video_path))

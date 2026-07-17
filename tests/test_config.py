@@ -153,7 +153,7 @@ class TestDefaultConfigs:
         configs = DefaultConfigs()
         cfg = configs.get_train_config()
         assert cfg.get("batch_size") == 32
-        assert cfg.get("patch_size") == 128
+        assert cfg.get("patch_size") == 64
         assert cfg.get("num_workers") == 4
         assert float(cfg.get("learning_rate")) == 2e-4
         assert float(cfg.get("weight_decay")) == 0.0

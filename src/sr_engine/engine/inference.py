@@ -93,27 +93,34 @@ def _super_resolve_tensor(
 
 
 def infer_image(
-    model_checkpoint: Path,
-    input_path: Path,
-    output_path: Path,
+    model_checkpoint: Path | None = None,
+    input_path: Path | None = None,
+    output_path: Path | None = None,
     tile_size: int = 512,
     tile_overlap: int = 64,
     device: str = "cuda",
+    model: torch.nn.Module | None = None,
+    scale: int | None = None,
 ) -> Path:
     """Run super-resolution inference on a single image.
 
     Args:
-        model_checkpoint: Path to the model checkpoint.
+        model_checkpoint: Path to the model checkpoint (alternative to model).
         input_path: Input image path.
         output_path: Output image path.
         tile_size: Tile size for VRAM-safe tiled inference.
         tile_overlap: Overlap between tiles in pixels.
         device: Torch device string.
+        model: Pre-loaded model (alternative to model_checkpoint).
+        scale: Model scale factor (required if model is pre-loaded).
 
     Returns:
         Path to the output image.
     """
-    model, scale = _load_model(model_checkpoint, device)
+    if model is None:
+        model, scale = _load_model(model_checkpoint, device)
+    else:
+        assert scale is not None, "scale is required when passing a pre-loaded model"
 
     lr_tensor = _read_image_tensor(input_path)
     hr_tensor = _super_resolve_tensor(model, lr_tensor, scale, tile_size, tile_overlap, device)
@@ -126,29 +133,36 @@ def infer_image(
 
 
 def infer_video(
-    model_checkpoint: Path,
-    input_path: Path,
-    output_path: Path,
+    model_checkpoint: Path | None = None,
+    input_path: Path | None = None,
+    output_path: Path | None = None,
     tile_size: int = 512,
     tile_overlap: int = 64,
     device: str = "cuda",
     reporter: Optional[ProgressReporter] = None,
+    model: torch.nn.Module | None = None,
+    scale: int | None = None,
 ) -> Path:
     """Run super-resolution inference on a video file frame-by-frame.
 
     Args:
-        model_checkpoint: Path to the model checkpoint.
+        model_checkpoint: Path to the model checkpoint (alternative to model).
         input_path: Input video path.
         output_path: Output video path.
         tile_size: Tile size for VRAM-safe tiled inference.
         tile_overlap: Overlap between tiles in pixels.
         device: Torch device string.
         reporter: Optional progress reporter.
+        model: Pre-loaded model (alternative to model_checkpoint).
+        scale: Model scale factor (required if model is pre-loaded).
 
     Returns:
         Path to the output video.
     """
-    model, scale = _load_model(model_checkpoint, device)
+    if model is None:
+        model, scale = _load_model(model_checkpoint, device)
+    else:
+        assert scale is not None, "scale is required when passing a pre-loaded model"
 
     cap = cv2.VideoCapture(str(input_path))
     if not cap.isOpened():

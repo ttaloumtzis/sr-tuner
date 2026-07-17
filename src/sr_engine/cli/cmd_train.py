@@ -24,7 +24,9 @@ def train() -> None:
 @click.option("--model", "-m", default="rrdb_esrgan", help="Model name (e.g., 'swinir', 'rrdb_esrgan').")
 @click.option("--dataset", "-d", required=True, type=click.Path(path_type=Path), help="Dataset directory path.")
 @click.option("--resume", "-r", type=str, default=None,
-              help="Resume from a checkpoint. A path, a filename (with --instance), or 'latest'.")
+              help="With --instance: version tag ('v1', 'latest'). "
+                   "Without --instance: path to .pt checkpoint file. "
+                   "Defaults to latest existing version.")
 @click.option("--device", default="cuda", type=click.Choice(["cuda", "cpu", "auto"]),
               help="Training device.")
 @click.option("--batch-size", type=int, default=None, help="Batch size for training.")
@@ -46,7 +48,7 @@ def train() -> None:
 @click.option("--dump-config", is_flag=True, default=False, help="Print final merged config and exit.")
 @no_workspace_config_option
 @click.option("--instance", "-i", type=str, default=None,
-              help="Model instance name. Overrides checkpoint_dir and creates a run directory.")
+              help="Model instance name. Creates a run dir and auto-loads latest model version.")
 @click.pass_context
 def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate,
         seed, weight_decay, betas, max_epochs,
@@ -56,6 +58,10 @@ def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate,
     """Train a super-resolution model."""
 
     ws, cfg_loader = make_workspace_config_loader(ctx, no_workspace_config)
+
+    load_weights_from = None
+    resume_from = None
+    run_dir = None
 
     if instance:
         if not ws:
@@ -71,24 +77,20 @@ def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate,
                 f"Create it with: sre model create-instance {instance} --model <arch>"
             )
 
-        inst_ckpt_dir = model_inst.path / "checkpoints"
         run_dir = ws.get_run_path(instance)
 
-        if resume:
-            resume_path = Path(resume)
-            if not resume_path.is_absolute() and '/' not in str(resume_path):
-                if resume == "latest":
-                    ckpts = sorted(inst_ckpt_dir.glob("*.pt"))
-                    if ckpts:
-                        resume = str(ckpts[-1])
-                    else:
-                        resume = None
-                else:
-                    candidate = inst_ckpt_dir / resume
-                    if candidate.suffix != ".pt":
-                        candidate = inst_ckpt_dir / f"{resume}.pt"
-                    if candidate.exists():
-                        resume = str(candidate)
+        # Resolve version: --resume v1, --resume latest, or auto-detect
+        version_path = ws.resolve_version(instance, resume)
+        if version_path:
+            load_weights_from = version_path
+        elif resume:
+            resume_candidate = Path(resume)
+            if resume_candidate.exists():
+                resume_from = resume_candidate
+            else:
+                raise click.ClickException(
+                    f"Checkpoint not found: {resume}"
+                )
 
     if ws:
         dataset = ws.resolve_dataset(dataset)
@@ -120,7 +122,6 @@ def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate,
         overrides.setdefault("validation", {})["split"] = validation_split
 
     if instance:
-        overrides["checkpoint_dir"] = str(inst_ckpt_dir)
         overrides["model"] = model
 
     if overrides:
@@ -136,7 +137,7 @@ def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate,
     val_enabled = bool(val_cfg.get("enabled", True))
     val_split = float(val_cfg.get("split", 0.1))
 
-    if instance:
+    if instance and run_dir:
         (run_dir / "train_config.yaml").write_text(
             yaml.safe_dump(train_cfg, default_flow_style=False, sort_keys=False),
             encoding="utf-8",
@@ -166,7 +167,9 @@ def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate,
         model_cfg=model_cfg,
         train_cfg=train_cfg,
         dataset_dir=dataset,
-        resume_from=resume,
+        load_weights_from=load_weights_from,
+        resume_from=resume_from,
+        checkpoint_dir=run_dir,
         device=train_cfg.get("device", "cuda"),
         validation_enabled=val_enabled,
         validation_split=val_split,
@@ -177,3 +180,23 @@ def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate,
         cancel_check=resolve_cancel_check(),
     )
     trainer.train()
+
+    # Post-training: save model version if in instance mode
+    if instance and run_dir:
+        try:
+            next_ver = ws.next_model_version(instance)
+            ws.save_model_version(
+                instance, next_ver,
+                trainer.get_model().state_dict(),
+                {
+                    "run": run_dir.name,
+                    "timestamp": time.time(),
+                    "train_cfg": {k: v for k, v in train_cfg.items()
+                                  if k in ("max_epochs", "batch_size", "patch_size",
+                                           "learning_rate", "dtype", "seed")},
+                    "version": next_ver,
+                },
+            )
+            click.echo(f"Saved model version {next_ver}")
+        except Exception as e:
+            click.echo(f"Warning: failed to save model version: {e}", err=True)

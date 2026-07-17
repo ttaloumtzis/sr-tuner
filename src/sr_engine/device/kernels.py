@@ -45,7 +45,22 @@ def get_conv2d(
     padding: int = 0,
     bias: bool = True,
 ) -> nn.Conv2d:
-    """Return the standard optimized Conv2d layer."""
+    """Create a standard 2D convolution layer.
+
+    A thin wrapper around ``nn.Conv2d`` that serves as an extension point
+    for backend-specific optimizations (e.g., cuDNN backend selection).
+
+    Args:
+        in_channels: Number of input channels.
+        out_channels: Number of output channels.
+        kernel_size: Spatial size of the convolution kernel.
+        stride: Convolution stride.
+        padding: Zero-padding on each spatial side.
+        bias: Whether to include a learnable bias term.
+
+    Returns:
+        An ``nn.Conv2d`` module.
+    """
     return nn.Conv2d(
         in_channels, out_channels, kernel_size, stride, padding, bias=bias
     )

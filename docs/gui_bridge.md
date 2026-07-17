@@ -223,7 +223,7 @@ Runs a deep validation scan on a dataset directory.
 
 If validation finds issues:
 ```json
-{"ok": false, "num_pairs": 998, "problems": ["Missing LR for frame_042.png", "HR file frame_123.png has mismatched dimensions"]}
+{"ok": false, "num_pairs": 998, "problems": ["Missing LR for 000042.png", "HR file 000123.png has mismatched dimensions"]}
 ```
 
 ---
@@ -244,7 +244,7 @@ Profiles a dataset's spatial properties and detects black/corrupt frames.
   "aspect_ratios": {"1.78": 800, "1.6": 200},
   "channels": {"RGB (3 channels)": 1000},
   "computed_threshold": 3.5,
-  "black_frames": ["frame_042.png", "frame_099.png"]
+  "black_frames": ["000042.png", "000099.png"]
 }
 ```
 

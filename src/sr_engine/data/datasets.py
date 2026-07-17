@@ -65,9 +65,11 @@ class PairedImageFolderDataset(Dataset):
             raise FileNotFoundError(f"Dataset directory not found: {self.dataset_dir}")
 
         manifest_path = self.dataset_dir / "manifest.json"
+        self.pairs = []
         if manifest_path.is_file():
             self.pairs = self._pairs_from_manifest(manifest_path)
-        else:
+
+        if not self.pairs:
             self.pairs = self._pairs_from_directory_scan()
 
         if not self.pairs:

@@ -60,6 +60,24 @@ def validate(dataset_dir: Path,
         problems.append(f"Failed to parse manifest.json: {e}")
         return ValidationReport(ok=False, problems=problems)
 
+    # 2b. Minimal manifest (empty pairs) — validate via directory scan
+    if not manifest_pairs:
+        hr_files = sorted(hr_dir.glob("*.png"))
+        lr_files = sorted(lr_dir.glob("*.png"))
+
+        if not hr_files:
+            problems.append("HR/ directory contains no PNG images.")
+        if not lr_files:
+            problems.append("LR/ directory contains no PNG images.")
+        if hr_files and lr_files and len(hr_files) != len(lr_files):
+            problems.append(
+                f"HR/ has {len(hr_files)} file(s) but LR/ has {len(lr_files)}."
+            )
+
+        num_pairs = min(len(hr_files), len(lr_files)) if hr_files and lr_files else 0
+        is_ok = len(problems) == 0 and num_pairs > 0
+        return ValidationReport(ok=is_ok, num_pairs=num_pairs, problems=problems)
+
     # Build tracking sets of expected files from the manifest
     expected_hr = set()
     expected_lr = set()

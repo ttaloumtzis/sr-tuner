@@ -13,7 +13,7 @@ Video file (.mp4, .avi, .mov)
       ▼
 ┌─────────────────┐
 │ video_extract   │  Extract frames at target frame rate
-│                 │  Skip duplicated frames (SSIM-based)
+│                 │  (SSIM duplicate detection planned, not yet implemented)
 └────────┬────────┘
          │
          ▼  HR frames (original resolution)
@@ -54,17 +54,18 @@ Reads a video file using OpenCV and extracts frames at a configurable rate:
 ```python
 extract_frames(
     video_path="/path/to/video.mp4",
-    output_dir="/path/to/frames/",
-    frame_rate=24,          # frames per second to extract
-    skip_duplicates=True,   # SSIM-based duplicate detection
-    duplicate_threshold=0.98
-) → List[Path]
+    out_dir="/path/to/frames/",
+    frame_rate=24,          # frames per second to extract (None = all frames)
+    start_time=0.0,         # seek to this time in seconds before extracting
+    duration=None,          # max duration in seconds (None = entire video)
+) → list[Path]
 ```
 
 - Supports `.mp4`, `.avi`, `.mov`, `.mkv`, `.webm` formats
-- Frame rate control: extracts at `min(video_fps, target_fps)` by default
-- Duplicate detection: compares consecutive frames via SSIM; skips frames with SSIM > 0.98 to avoid feeding near-identical frames to the training set
-- Outputs PNG files named `frame_000001.png`, `frame_000002.png`, ...
+- Frame rate control: if `frame_rate` is None or >= video FPS, all frames are kept
+- Fast-forward via `CAP_PROP_POS_FRAMES` to `start_time`
+- Unwanted frames are skipped via `grab()` (decode bypass) for performance
+- Outputs PNG files named `000001.png`, `000002.png`, ... (zero-padded to match total frame count length)
 
 ## Degradation Pipeline
 
@@ -80,7 +81,7 @@ HR → Crop to scale-multiple
     → Blur                  (optional, enabled by default)
         → Gaussian (prob)  OR  Motion (prob)   — coin-flip if both trigger
     → Downsample            (always — configurable method + optional antialias)
-    → Noise                 (optional, enabled by default)
+    → Noise                 (optional, disabled by default)
         → Gaussian (prob)  OR  Poisson (prob)  OR  Salt & Pepper (prob)  — pick one
     → JPEG                  (optional, enabled by default)
     → JPEG2000              (optional, disabled by default)
@@ -152,18 +153,17 @@ Three sub-types; if multiple trigger one is selected randomly:
 
 ```yaml
 noise:
-  enabled: true
-  gaussian:
-    sigma_range: [1, 30]
-    prob: 0.5
-  poisson:
-    scale_range: [0.05, 3.0]
-    prob: 0.5
-  salt_pepper:
-    amount: 0.01
-    salt_vs_pepper: 0.5
-    prob: 0.3
-```
+    enabled: false
+    gaussian:
+      sigma_range: [1, 30]
+      prob: 0.5
+    poisson:
+      scale_range: [0.05, 3.0]
+      prob: 0.5
+    salt_pepper:
+      amount: 0.01
+      salt_vs_pepper: 0.5
+      prob: 0.3
 
 ### 5. JPEG Compression (optional)
 
@@ -213,7 +213,7 @@ degradation:
     method: area
     antialias: true
   noise:
-    enabled: true
+    enabled: false
     gaussian:
       sigma_range: [1, 30]
       prob: 0.5
@@ -265,19 +265,19 @@ srengine dataset build -i video.mp4 -c my_config.yaml -d jpeg
 ### `build_from_video()`
 
 ```python
-build_from_video(video_path, output_dir, config) → Path
+build_from_video(video_path, out_dir, config, reporter=None) → Path
 ```
 
 1. Create output directory structure: `output_dir/HR/`, `output_dir/LR/`
-2. Extract frames from video → `HR/frame_*.png`
-3. For each HR frame, run degradation pipeline → `LR/frame_*.png`
+2. Extract frames from video → `HR/000001.png`, `HR/000002.png`, ...
+3. For each HR frame, run degradation pipeline → `LR/000001.png`, `LR/000002.png`, ...
 4. Write `manifest.json` with pairs index
 5. Run validation
 
 ### `build_from_preprocessed()`
 
 ```python
-build_from_preprocessed(input_dir) → Path
+build_from_preprocessed(dataset_dir, config, reporter=None) → Path
 ```
 
 1. Scan `input_dir/HR/` and `input_dir/LR/` for matching files
@@ -334,14 +334,12 @@ prune_black_frames(dataset_dir, threshold=None, yes=False) → list[str]
 
 ```python
 class PairedImageFolderDataset(Dataset):
-    def __init__(self, root_dir, split="train", scale=4, transforms=None):
-        # Loads manifest.json
-        # Splits into train/val based on ratio
+    def __init__(self, dataset_dir, transform=None):
+        # Reads manifest.json if present, otherwise matches HR/ and LR/ files by name
         # Returns (lr_tensor, hr_tensor) pairs
 ```
 
-- Reads HR and LR image paths from `manifest.json`
-- Supports train/validation split via `split` parameter
+- Reads HR and LR image paths from `manifest.json`, or falls back to filename matching between `HR/` and `LR/` directories
 - Returns `(lr, hr)` tuples with shape `(C, H, W)` in range `[0, 1]`
 - Uses OpenCV for image loading (BGR → RGB conversion)
 - On-the-fly file I/O — no pre-caching to RAM
@@ -354,7 +352,7 @@ class PairedImageFolderDataset(Dataset):
 |-----------|-------------|
 | `RandomCrop(patch_size, scale)` | Randomly crops a `patch_size×patch_size` region from LR and the corresponding `patch_size*scale × patch_size*scale` region from HR |
 | `CenterCrop(patch_size, scale)` | Center crop (used for validation) |
-| `RandomFlip(direction)` | Horizontal or vertical flip (50% probability) |
+| `RandomFlip(p_horizontal, p_vertical)` | Horizontal and/or vertical flip with configurable probability |
 | `RandomRotate(angles)` | Rotation by 90°, 180°, or 270° |
 | `Compose(transforms)` | Chains multiple transforms together |
 
@@ -364,15 +362,15 @@ Transforms operate on `(lr, hr)` tuples simultaneously, ensuring aligned croppin
 
 ```python
 from sr_engine.data.transforms import Compose, RandomCrop, RandomFlip
+from sr_engine.data.datasets import PairedImageFolderDataset
 
 train_transforms = Compose([
     RandomCrop(patch_size=128, scale=4),
-    RandomFlip(direction='horizontal'),
+    RandomFlip(p_horizontal=0.5, p_vertical=0.5),
 ])
 
 dataset = PairedImageFolderDataset(
-    root_dir="./datasets/my_set",
-    split="train",
-    transforms=train_transforms
+    dataset_dir="./datasets/my_set",
+    transform=train_transforms,
 )
 ```

@@ -33,36 +33,47 @@ def _extract_color_data(img: np.ndarray, channels_summary: Counter) -> np.ndarra
 
 
 # --- Adaptive threshold constants ---
-# Percentile of darkest frames to analyse for gap detection.
-# 0.15 = bottom 15% — empirically covers the noise floor without
-# pulling in legitimate low-light content.
 DARK_PERCENTILE: float = 0.15
+"""Percentile of darkest frames to analyse for gap detection.
+0.15 = bottom 15% — empirically covers the noise floor without
+pulling in legitimate low-light content."""
 
-# Minimum brightness gap (on 0-255 scale) needed to classify a
-# transition between frames as a "noise floor vs. real content" boundary.
-# Values above 1.5 indicate a genuine intensity discontinuity rather
-# than random sampling noise.
 GAP_THRESHOLD: float = 1.5
+"""Minimum brightness gap (on 0-255 scale) to classify a transition
+as a "noise floor vs. real content" boundary. Values above 1.5
+indicate a genuine intensity discontinuity rather than random noise."""
 
-# Upper clamp for the computed adaptive threshold. Prevents the
-# threshold from exceeding 25.0 even if the detected gap is very large,
-# avoiding false positives on legitimately dark-but-valid content.
 MAX_THRESHOLD: float = 25.0
+"""Upper clamp for the computed adaptive threshold. Prevents the threshold
+from exceeding 25.0 even if the detected gap is very large, avoiding
+false positives on legitimately dark-but-valid content."""
 
-# Fallback threshold when no clear gap is detected and the data
-# distribution suggests a full-range (0-255) encoding.
-# 3.5 is tight enough to catch only truly black/near-black frames
-# in full-range data.
 FULL_RANGE_FALLBACK: float = 3.5
+"""Fallback threshold when no clear gap is detected and the data
+distribution suggests a full-range (0-255) encoding. 3.5 is tight
+enough to catch only truly black/near-black frames."""
 
-# Fallback threshold when no clear gap is detected and the data
-# distribution suggests a limited-range (16-235) encoding.
-# 18.5 corresponds to the BT.709 black level (~16) plus a small margin.
 LIMITED_RANGE_FALLBACK: float = 18.5
+"""Fallback threshold when no clear gap is detected and the data
+distribution suggests a limited-range (16-235) encoding. 18.5 corresponds
+to the BT.709 black level (~16) plus a small margin."""
 
 
 def _compute_adaptive_threshold(image_means: list[float]) -> float:
-    """Helper that calculates a tailored black-cutoff point based on image distribution gaps."""
+    """Calculate a data-driven brightness threshold for black-frame detection.
+
+    Analyses the distribution of mean pixel intensities in the darkest
+    ``DARK_PERCENTILE`` of frames. If a sharp brightness gap is found,
+    uses the midpoint as threshold; otherwise selects a conservative
+    fallback based on the observed dynamic range.
+
+    Args:
+        image_means: List of mean pixel intensities per image.
+
+    Returns:
+        A float threshold value. Images with mean below this threshold
+        are considered black frames.
+    """
     if not image_means:
         return 3.0  # Safe minimum fallback floor
 
@@ -105,7 +116,23 @@ def _compute_adaptive_threshold(image_means: list[float]) -> float:
 def check_dataset_health(dataset_dir: Path,
                          reporter: Optional[ProgressReporter] = None,
                          ) -> dict:
-    """Analyze the dataset's spatial properties, color channels, and locate bad black frames."""
+    """Analyze dataset spatial properties, color channels, and detect black frames.
+
+    Examines all images in the ``HR/`` subdirectory, collecting resolution
+    and aspect-ratio distributions, channel counts, and mean pixel
+    brightness. Uses an adaptive thresholding algorithm to identify
+    completely black or near-black frames.
+
+    Args:
+        dataset_dir: Path to the dataset directory containing an ``HR/`` folder.
+        reporter: Optional progress reporter.
+
+    Returns:
+        A dict with keys:
+        ``total_images``, ``resolutions``, ``aspect_ratios``, ``channels``,
+        ``computed_threshold``, ``black_frames``. On error, returns
+        ``{"error": <message>}``.
+    """
     hr_dir = dataset_dir / "HR"
     if not hr_dir.is_dir():
         return {"error": "HR directory not found. Run validation/build first."}
@@ -166,7 +193,20 @@ def check_dataset_health(dataset_dir: Path,
 
 def prune_black_frames(dataset_dir: Path, black_filenames: list[str],
                        reporter: Optional[ProgressReporter] = None) -> None:
-    """Physically remove black frame pairs from disk and filter out their manifest records."""
+    """Delete black frame pairs from disk and update the dataset manifest.
+
+    Removes the corresponding HR and LR image files, then filters the
+    entries out of ``manifest.json`` so it remains consistent with the
+    filesystem state.
+
+    Args:
+        dataset_dir: Path to the dataset directory.
+        black_filenames: List of filenames (not full paths) to remove.
+        reporter: Optional progress reporter.
+
+    Raises:
+        RuntimeError: If any files could not be deleted.
+    """
     hr_dir = dataset_dir / "HR"
     lr_dir = dataset_dir / "LR"
     manifest_path = dataset_dir / "manifest.json"

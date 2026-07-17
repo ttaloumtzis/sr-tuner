@@ -10,13 +10,15 @@ The inference pipeline takes a trained model checkpoint and applies it to images
 
 ```python
 infer_image(
-    model,
-    image_path: str,
-    output_path: str,
+    model_checkpoint=None,   # Path to checkpoint (alternative to pre-loaded model)
+    input_path=None,
+    output_path=None,
+    tile_size=512,           # 0 = no tiling
+    tile_overlap=64,
     device="cuda",
-    tile=0,        # 0 = no tiling
-    overlap=64
-) → None
+    model=None,              # Pre-loaded model (alternative to model_checkpoint)
+    scale=None,              # Required if passing a pre-loaded model
+) → Path
 ```
 
 Pipeline:
@@ -71,13 +73,16 @@ Tiling is essential for large inputs on GPUs with limited VRAM:
 
 ```python
 infer_video(
-    model,
-    video_path: str,
-    output_path: str,
+    model_checkpoint=None,   # Path to checkpoint (alternative to pre-loaded model)
+    input_path=None,
+    output_path=None,
+    tile_size=512,           # 0 = no tiling
+    tile_overlap=64,
     device="cuda",
-    tile=0,
-    overlap=64
-) → None
+    reporter=None,           # Optional ProgressReporter
+    model=None,              # Pre-loaded model (alternative to model_checkpoint)
+    scale=None,              # Required if passing a pre-loaded model
+) → Path
 ```
 
 Pipeline:
@@ -138,7 +143,11 @@ stitch_tiles(tiles, output_size, overlap=64) → Tensor
 ### ONNX
 
 ```bash
+# Export from a checkpoint file
 srengine model export --model-name swinir --ckpt model.pth --format onnx --out model.onnx
+
+# Export from a model instance (resolves arch and latest version automatically)
+srengine model export --instance my_model --format onnx --out model.onnx
 ```
 
 - Standard ONNX format for cross-platform inference

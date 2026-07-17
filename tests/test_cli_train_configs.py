@@ -83,8 +83,9 @@ class TestTrainRunCustomConfig:
 class TestTrainRunMachineMode:
     """Tests for machine-readable metrics mode."""
 
-    def test_machine_mode_creates_jsonl(self, cli_invoker, tmp_path):
+    def test_machine_mode_creates_jsonl(self, cli_invoker, tmp_path, monkeypatch):
         """``--machine`` should produce a JSONL metrics file."""
+        monkeypatch.chdir(tmp_path)
         from conftest import _create_dataset_dir
         dataset = _create_dataset_dir(tmp_path, 3)
         ckpt_dir = tmp_path / "my_checkpoints"

@@ -252,11 +252,11 @@ src/sr_engine/
 │   ├── main.py                   # Root srengine Click group
 │   ├── cmd_train.py              # srengine train run
 │   ├── cmd_infer.py              # srengine infer run
-│   ├── cmd_dataset.py            # srengine dataset {build,validate,health}
+│   ├── cmd_dataset.py            # srengine dataset {build,validate,health,merge}
 │   ├── cmd_model.py              # srengine model {export,info,list-instances,...}
 │   ├── cmd_env.py                # srengine env {check,bench}
 │   ├── cmd_serve.py              # srengine serve start
-│   ├── workspace_commands.py     # workspace/project CLI commands
+│   ├── workspace_commands.py     # workspace CLI commands (init, info, check)
 │   └── helpers.py                # Shared CLI utilities
 ├── data/
 │   ├── datasets.py               # PairedImageFolderDataset

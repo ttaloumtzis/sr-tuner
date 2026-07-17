@@ -1,9 +1,12 @@
-"""Workspace discovery, initialisation, model instances, and dataset resolution."""
+"""Workspace discovery, initialisation, model instances, versioning, and dataset resolution."""
 
 import json
+import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+
+import torch
 
 
 MARKER = ".sr_workspace"
@@ -206,6 +209,7 @@ class Workspace:
                 f"Model instance '{name}' already exists"
             )
         (inst_path / "checkpoints").mkdir(parents=True, exist_ok=True)
+        (inst_path / "versions").mkdir(parents=True, exist_ok=True)
         (inst_path / "runs").mkdir(parents=True, exist_ok=True)
 
         import yaml
@@ -252,6 +256,84 @@ class Workspace:
             ),
             key=lambda x: x.name,
         )
+
+    # ── Model version API ─────────────────────────────────────────────
+
+    def latest_model_version(self, instance_name: str) -> str | None:
+        """Return the highest existing version tag (e.g. ``'v3'``) or ``None``."""
+        versions_dir = self.path / "models" / instance_name / "versions"
+        if not versions_dir.is_dir():
+            return None
+        versions = []
+        for d in versions_dir.iterdir():
+            m = re.fullmatch(r"v(\d+)", d.name)
+            if d.is_dir() and m:
+                versions.append((int(m.group(1)), d.name))
+        if not versions:
+            return None
+        return max(versions, key=lambda x: x[0])[1]
+
+    def next_model_version(self, instance_name: str) -> str:
+        """Return the next available version tag (e.g. ``'v4'``).
+
+        The slot is claimed atomically via ``mkdir`` to prevent races
+        between concurrent processes.
+        """
+        versions_dir = self.path / "models" / instance_name / "versions"
+        versions_dir.mkdir(parents=True, exist_ok=True)
+        n = 1
+        while True:
+            candidate = f"v{n}"
+            try:
+                (versions_dir / candidate).mkdir(parents=False, exist_ok=False)
+                return candidate
+            except FileExistsError:
+                n += 1
+
+    def save_model_version(
+        self, instance_name: str, version: str,
+        state_dict: dict, metadata: dict | None = None,
+    ) -> None:
+        """Save a model version (bare state_dict on CPU + metadata JSON).
+
+        Args:
+            instance_name: Model instance name.
+            version: Version tag (e.g. ``'v1'``).
+            state_dict: Model state dict (will be moved to CPU).
+            metadata: Optional dict saved as ``version.json``.
+        """
+        v_path = self.path / "models" / instance_name / "versions" / version
+        v_path.mkdir(parents=True, exist_ok=True)
+        cpu_sd = {k: v.contiguous().cpu() for k, v in state_dict.items()}
+        torch.save(cpu_sd, v_path / "model.pt")
+        if metadata:
+            (v_path / "version.json").write_text(
+                json.dumps(metadata, indent=2, default=str) + "\n",
+                encoding="utf-8",
+            )
+
+    def get_model_version_path(self, instance_name: str, version: str) -> Path:
+        """Return the path to a model version's ``model.pt`` file."""
+        return self.path / "models" / instance_name / "versions" / version / "model.pt"
+
+    def resolve_version(self, instance_name: str, spec: str | None) -> Path | None:
+        """Resolve a version specification to a ``model.pt`` path.
+
+        Args:
+            instance_name: Model instance name.
+            spec: ``None``, ``'latest'``, or a tag like ``'v1'``.
+
+        Returns:
+            Path to the version's ``model.pt``, or ``None`` if no version exists.
+        """
+        if spec and spec != "latest":
+            tag = spec
+        else:
+            tag = self.latest_model_version(instance_name)
+            if tag is None:
+                return None
+        path = self.get_model_version_path(instance_name, tag)
+        return path if path.is_file() else None
 
     def get_instance_checkpoints(self, instance: str) -> list[Path]:
         """List ``.pt`` checkpoint files for an instance, sorted by mtime descending.

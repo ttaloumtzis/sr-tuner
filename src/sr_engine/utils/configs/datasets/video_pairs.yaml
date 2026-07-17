@@ -20,7 +20,7 @@ degradation:
     method: area       # area, bicubic, bilinear, lanczos, nearest
     antialias: true
   noise:
-    enabled: true
+    enabled: false
     gaussian:
       sigma_range: [1, 30]
       prob: 0.5

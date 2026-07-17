@@ -40,15 +40,17 @@ def test_workspace_init_creates_dirs(cli_runner, tmp_path):
         assert (tmp_path / "ws" / name).is_dir()
 
 
-def test_workspace_info_on_uninitialized_fails(cli_runner, tmp_path):
+def test_workspace_info_on_uninitialized_fails(cli_runner, tmp_path, monkeypatch):
     """``workspace info`` without a workspace should fail."""
+    monkeypatch.chdir(tmp_path)
     r = cli_runner.invoke(cli, ["workspace", "info"])
     assert r.exit_code != 0
     assert "No workspace found" in r.output
 
 
-def test_workspace_check_on_uninitialized_fails(cli_runner, tmp_path):
+def test_workspace_check_on_uninitialized_fails(cli_runner, tmp_path, monkeypatch):
     """``workspace check`` without a workspace should fail."""
+    monkeypatch.chdir(tmp_path)
     r = cli_runner.invoke(cli, ["workspace", "check"])
     assert r.exit_code != 0
     assert "No workspace found" in r.output

@@ -6,11 +6,11 @@
 srengine [--version] [--workspace PATH] <command> [options]
 ```
 
-Standalone aliases exist for each command group — they bypass the `srengine` parent and auto-detect the workspace from CWD:
+Standalone aliases exist for most command groups — they bypass the `srengine` parent and auto-detect the workspace from CWD:
 
 ```
 train        infer        dataset        model
-env          workspace    project        serve
+env          workspace    serve
 ```
 
 Use `srengine <cmd>` when you need explicit `--workspace PATH` control. Use standalone aliases for convenience when already inside a workspace directory.
@@ -29,14 +29,15 @@ srengine
 ├── dataset
 │   ├── build                  Video → HR/LR dataset, or validate preprocessed
 │   ├── validate               Deep structural validation
-│   └── health                 Profile dataset, detect/prune black frames
+│   ├── health                 Profile dataset, detect/prune black frames
+│   └── merge                  Combine multiple datasets by scale
 ├── train
 │   └── run                    Train SR model
 ├── infer
 │   └── run                    Inference on image or video
 ├── model
-│   ├── create-instance        Create named model instance in a project
-│   ├── list-instances         List instances in a project
+│   ├── create-instance        Create named model instance in a workspace
+│   ├── list-instances         List instances in the workspace
 │   ├── list-runs              List training runs for an instance
 │   ├── export                 Export to ONNX/safetensors/TorchScript
 │   └── info                   Display checkpoint or instance info
@@ -47,9 +48,6 @@ srengine
 │   ├── init                   Initialize workspace directory tree
 │   ├── info                   Show workspace summary
 │   └── check                  Validate workspace health
-├── project
-│   ├── create                 Create project in workspace
-│   └── list                   List workspace projects
 └── serve
     └── start                  Start GUI socket server
 ```
@@ -153,23 +151,28 @@ srengine train run \
 | Flag | Config key | Default | Description |
 |------|------------|---------|-------------|
 | `--dataset PATH` | — | required | Dataset path or workspace dataset name |
-| `--model TEXT` | — | required | Model name (`rrdb_esrgan` or `swinir`) |
+| `--model TEXT` | — | `rrdb_esrgan` | Model name (`rrdb_esrgan` or `swinir`) |
 | `--config PATH` | — | built-in | Training config YAML path |
 | `--batch-size N` | `batch_size` | config | Batch size |
 | `--learning-rate F` | `learning_rate` | config | Learning rate |
 | `--max-epochs N` | `max_epochs` | config | Maximum epochs |
+| `--seed N` | `seed` | config | Random seed |
+| `--weight-decay F` | `weight_decay` | config | Adam weight decay |
+| `--betas F F` | `betas` | config | Adam betas (two floats) |
+| `--device TEXT` | `device` | `cuda` | Device (`cuda`, `cpu`, `auto`) |
+| `--bf16/--no-bf16` | `dtype` | config | Enable bfloat16 mixed precision |
 | `--validation-split F` | `validation.split` | config | Validation split ratio |
 | `--validation-enabled` | `validation.enabled` | config | Enable/disable validation |
 | `--no-validation-enabled` | | | |
 | `--patch-size N` | — | config | Training patch size |
 | `--num-workers N` | — | config | Dataloader worker count |
 | `--save-per-epoch N` | — | config | Save checkpoint every N epochs |
-| `--project TEXT` | — | — | Project name (requires workspace) |
+| `--instance TEXT` | — | — | Model instance name (requires workspace) |
 | `--machine` | — | false | Enable JSONL metrics output |
 | `--experiment-id TEXT` | — | auto | Experiment identifier for metrics |
 | `--metrics-frequency N` | — | config | Log metrics every N batches |
 | `--dump-config` | — | false | Print final merged config and exit |
-| `--resume PATH` | — | — | Resume from checkpoint |
+| `--resume TEXT` | — | — | Resume: version tag (with `--instance`) or checkpoint path |
 
 ## infer
 
@@ -197,14 +200,18 @@ srengine infer run \
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--model PATH` | required | Model checkpoint path |
+| `--model PATH` | required* | Model checkpoint path (required without `--instance`) |
 | `--input PATH` | required | Input image or video path |
 | `--output PATH` | required | Output path |
-| `--tile N` | 0 (off) | Tile size for tiled inference (0 = no tiling) |
+| `--tile N` | 512 | Tile size for tiled inference (0 = no tiling) |
 | `--overlap N` | 64 | Tile overlap in pixels |
-| `--device TEXT` | auto | Device (`cuda`, `cpu`, or `auto`) |
+| `--device TEXT` | cuda | Device (`cuda`, `cpu`, `auto`) |
+| `--instance TEXT` | — | Model instance name (resolves latest version automatically) |
+| `--version TEXT` | — | Specific version tag (e.g. `v2`); defaults to latest |
 
-Tiling trades VRAM for speed. Tiling off is fastest on high-VRAM GPUs. Tiling on (`--tile 512`) avoids OOM on 8 GB cards.
+\* Either `--model` or `--instance` is required.
+
+Tiling trades VRAM for speed. Tiling off (`--tile 0`) is fastest on high-VRAM GPUs. Tiling on (`--tile 512`) avoids OOM on 8 GB cards.
 
 ## model
 
@@ -254,14 +261,14 @@ srengine model info --model model.pth
 ### model create-instance / list-instances / list-runs
 
 ```bash
-# Create a named model instance in a project
-srengine model create-instance --project my_project --name my_model --model swinir
+# Create a named model instance in the workspace
+srengine model create-instance my_model --model swinir
 
-# List instances in a project
-srengine model list-instances --project my_project
+# List instances in the workspace
+srengine model list-instances
 
 # List training runs for an instance
-srengine model list-runs --instance my_project/my_model
+srengine model list-runs --instance my_model
 ```
 
 ## env
@@ -300,9 +307,7 @@ Runs on a 128x128 dummy batch. Exits 0 on success, 1 on failure (model not found
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--model TEXT` | `rrdb_esrgan` | Model to benchmark |
-| `--device TEXT` | auto | Device (`cuda`, `cpu`, `auto`) |
-| `--batch-size N` | 1 | Batch size |
-| `--iterations N` | 10 | Number of iterations |
+| `--iterations N` | 10 | Number of timed forward+backward iterations |
 
 ## workspace
 
@@ -320,16 +325,6 @@ srengine workspace check
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--path PATH` | CWD | Path to initialize |
-
-## project
-
-```bash
-# Create a project
-srengine project create my_experiment
-
-# List projects
-srengine project list
-```
 
 ## serve
 
@@ -360,7 +355,6 @@ The `--machine` flag enables realtime metrics output via JSONL files for GUI con
 
 ```bash
 srengine train run \
-  --project my_experiment \
   --dataset my_set \
   --model swinir \
   --machine \
@@ -368,7 +362,7 @@ srengine train run \
   --metrics-frequency 1
 ```
 
-Writes `<project>/metrics/<experiment-id>.jsonl` with one JSON object per line. Message types:
+Writes `<experiment-dir>/metrics/<experiment-id>.jsonl` with one JSON object per line. Message types:
 
 | type | When | Fields |
 |------|------|--------|

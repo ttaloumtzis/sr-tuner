@@ -14,13 +14,18 @@ The workspace system provides structured project organization, path auto-resolut
 │       ├── HR/                    # High-resolution frames
 │       ├── LR/                    # Low-resolution (degraded) frames
 │       └── manifest.json          # Pairs index
-├── projects/                      # Training projects
+├── models/                        # Named model instances
 │   └── <name>/
-│       ├── configs/               # Experiment configs (YAML)
-│       ├── checkpoints/           # epoch_XXX.pt files
-│       └── metrics/               # *.jsonl files (machine mode)
+│       ├── config.yaml            # Frozen model-architecture config
+│       ├── versions/              # Versioned checkpoints (v1/, v2/, ...)
+│       ├── checkpoints/           # Training checkpoints (epoch_*.pt)
+│       └── runs/                  # Per-training-run metadata
+│           └── run_<timestamp>/
+│               ├── train_config.yaml
+│               └── metrics.jsonl  # (optional, --machine mode)
 ├── jobs/                          # Job manifests (GUI bridge)
 │   └── <job_id>.json
+├── experiments/                   # Experiment data
 ├── configs/                       # User-overridable configs
 │   ├── train/
 │   │   └── base.yaml              # Overrides built-in train config
@@ -29,11 +34,6 @@ The workspace system provides structured project organization, path auto-resolut
 │   └── models/
 │       ├── swinir.yaml            # Overrides built-in SwinIR config
 │       └── rrdb_esrgan.yaml       # Overrides built-in RRDB config
-└── model_instances/               # Named model instances (optional)
-    └── <name>/
-        ├── checkpoints/
-        ├── runs/
-        └── config.yaml
 ```
 
 ## Auto-Discovery
@@ -67,41 +67,42 @@ srengine train run --dataset ./datasets/my_set          # relative to CWD
 srengine train run --dataset my_set                     # workspace datasets/my_set
 ```
 
-## Project CRUD
+## Model Instance CRUD
 
 ### Create
 
 ```bash
-srengine project create my_experiment
-# Creates: <workspace>/projects/my_experiment/
-#   configs/
+srengine model create-instance my_model --model swinir
+# Creates: <workspace>/models/my_model/
+#   config.yaml
+#   versions/
 #   checkpoints/
-#   metrics/
+#   runs/
 ```
 
 ### List
 
 ```bash
-srengine project list
-# Projects in <workspace>:
-#   my_experiment
-#   ablation_study
-#   production_v2
+srengine model list-instances
+# Model instances:
+#   my_model  (3 versions, 5 runs)
+#   ablation_study  (1 version, 2 runs)
 ```
 
-## Using Projects with Training
+## Using Model Instances with Training
 
-When `--project` is specified, paths auto-resolve:
+When `--instance` is specified, checkpoints and metrics are stored under the instance directory:
 
 ```bash
 srengine train run \
-  --project my_experiment \
+  --instance my_model \
   --dataset my_set \
   --model swinir
 
 # dataset resolves to:     <workspace>/datasets/my_set/
-# checkpoints go to:       <workspace>/projects/my_experiment/checkpoints/
-# metrics go to:           <workspace>/projects/my_experiment/metrics/
+# checkpoints go to:       <workspace>/models/my_model/checkpoints/
+# version checkpoints to:  <workspace>/models/my_model/versions/
+# run metadata to:         <workspace>/models/my_model/runs/run_<timestamp>/
 ```
 
 Without a workspace, all paths are literal.
@@ -131,25 +132,28 @@ Named model instances track checkpoint history and training runs:
 
 ```bash
 # Create an instance
-srengine model create-instance --project my_project --name my_model --model swinir
+srengine model create-instance my_model --model swinir
 
 # List instances
-srengine model list-instances --project my_project
+srengine model list-instances
 
 # List training runs for an instance
-srengine model list-runs --instance my_project/my_model
+srengine model list-runs --instance my_model
 ```
 
 Training runs are organized in timestamped directories:
 ```
-<workspace>/model_instances/my_model/
+<workspace>/models/my_model/
 ├── config.yaml
+├── versions/
+│   └── v1/
+│       ├── model.pt
+│       └── version.json
 ├── checkpoints/
 │   ├── epoch_010.pt
 │   └── epoch_020.pt
 └── runs/
     └── run_20250516_120000/
-        ├── config.yaml
-        ├── metrics.jsonl
-        └── checkpoint.pt
+        ├── train_config.yaml
+        └── metrics.jsonl
 ```

@@ -117,6 +117,8 @@ class Trainer:
         train_cfg: dict,
         dataset_dir: Path,
         resume_from: Path | None = None,
+        load_weights_from: Path | None = None,
+        checkpoint_dir: Path | None = None,
         device: str = "cuda",
         validation_enabled: bool = True,
         validation_split: float = 0.1,
@@ -158,13 +160,22 @@ class Trainer:
         self.current_epoch = 0
 
         self.learning_rate = float(train_cfg.get("learning_rate", 1e-4))
-        self.checkpoint_dir = Path(train_cfg.get("checkpoint_dir", "checkpoints"))
+        if checkpoint_dir is not None:
+            self.checkpoint_dir = Path(checkpoint_dir)
+        else:
+            self.checkpoint_dir = Path(train_cfg.get("checkpoint_dir", "checkpoints"))
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
         seed = int(train_cfg.get("seed", 42))
         torch.manual_seed(seed)
 
         self.model = build_model(model_cfg["name"], model_cfg).to(self.device)
+
+        if load_weights_from:
+            sd = torch.load(load_weights_from, weights_only=True,
+                            map_location=self.device)
+            self.model.load_state_dict(sd)
+
         self.optimizer = torch.optim.Adam(
             self.model.parameters(),
             lr=self.learning_rate,
@@ -294,6 +305,10 @@ class Trainer:
             log.warning("No optimizer state in checkpoint — starting fresh optimizer")
         self.current_epoch = int(ckpt.get("epoch", ckpt.get("step", 0)))
         log.info("Resumed from epoch %d", self.current_epoch)
+
+    def get_model(self) -> torch.nn.Module:
+        """Return the underlying model instance."""
+        return self.model
 
     def _emit(self, event: str, **payload: Any) -> None:
         """Dispatch an event to all registered callbacks.

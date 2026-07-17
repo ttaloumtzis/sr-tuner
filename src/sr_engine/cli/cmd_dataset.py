@@ -6,6 +6,7 @@ import yaml
 
 from sr_engine.data.dataset_builder import build_from_video, build_from_preprocessed
 from sr_engine.data.dataset_validator import validate
+from sr_engine.data.dataset_merge import merge_datasets
 from sr_engine.utils.config import load_config, merge_overrides
 from sr_engine.data.dataset_health import check_dataset_health, prune_black_frames
 from .helpers import make_workspace_config_loader, no_workspace_config_option, resolve_reporter
@@ -174,3 +175,57 @@ def health_cmd(path: Path, yes: bool) -> None:
             click.echo("Skipping cleanup.")
     else:
         click.echo("\nQuality Check: No dead or black frame anomalies discovered.")
+
+
+@dataset.command()
+@click.option("--input", "-i", required=True, type=click.Path(exists=True, path_type=Path),
+              help="Directory containing dataset subdirectories (each must have HR/, LR/, and manifest.json).")
+@click.option("--out", "-o", required=False, type=click.Path(path_type=Path),
+              help="Output directory. Defaults to <input>/merged.")
+@click.option("--scale", type=int, default=None,
+              help="Only merge datasets with this scale factor.")
+@click.option("--name", type=str, default=None,
+              help="Custom output subdirectory name (default: scale_{N}). Requires --scale or single scale group.")
+@click.option("--yes", "-y", is_flag=True, default=False,
+              help="Skip deletion confirmation.")
+@click.option("--keep-sources", is_flag=True, default=False,
+              help="Keep original datasets after merge (don't delete).")
+@click.pass_context
+def merge(ctx, input: Path, out: Path | None, scale: int | None,
+          name: str | None, yes: bool, keep_sources: bool) -> None:
+    """Merge all datasets under INPUT into combined datasets grouped by scale."""
+    if out is None:
+        out = input / "merged"
+
+    click.echo(f"Scanning for datasets in: {input}")
+    results = merge_datasets(
+        datasets_root=input,
+        out_dir=out,
+        scale=scale,
+        output_name=name,
+        reporter=resolve_reporter(unit="dataset"),
+    )
+
+    for r in results:
+        click.secho(f"✓ Merged dataset (scale {r.scale}) at: {r.output_path}", fg="green", bold=True)
+
+    if not keep_sources and results:
+        click.echo("")
+        for r in results:
+            click.echo(f"Scale {r.scale}: {len(r.source_datasets)} source dataset(s)")
+            for src in r.source_datasets:
+                click.echo(f"  - {src}")
+
+        delete_ok = yes or click.confirm(
+            "Delete these source datasets?",
+            default=False,
+        )
+        if delete_ok:
+            import shutil
+            for r in results:
+                for src in r.source_datasets:
+                    click.echo(f"Removing: {src}")
+                    shutil.rmtree(src)
+            click.secho("Source datasets removed.", fg="green", bold=True)
+        else:
+            click.echo("Source datasets preserved.")
