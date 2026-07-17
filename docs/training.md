@@ -47,7 +47,6 @@ Callbacks are attached via `trainer.add_callback(callback)`. Multiple callbacks 
 | Callback | Module | Purpose |
 |----------|--------|---------|
 | `_MetricsStreamCallback` | `engine/trainer.py` | Writes JSONL metrics file |
-| `SocketCallback` | `gui_bridge/protocol.py` | Streams events to GUI over TCP |
 | `TqdmReporter` | `utils/progress.py` | Terminal progress bar |
 
 ## Available Models

@@ -81,7 +81,7 @@ ruff check --fix src/ tests/
 
 ### Type Checking
 
-The project does not currently use static type checking (mypy/pyright) in CI, but type hints are encouraged in new code following the existing convention in `workspace.py` and `gui_bridge/`.
+The project does not currently use static type checking (mypy/pyright) in CI, but type hints are encouraged in new code following the existing convention in `workspace.py`.
 
 ## Adding a New Model
 
@@ -166,28 +166,6 @@ To support a new input source (e.g., image folder instead of video):
 3. Update `cli/cmd_dataset.py` flags if new parameters are needed
 4. Add config keys to `utils/configs/datasets/video_pairs.yaml`
 
-## Adding GUI Bridge Commands
-
-1. Add the command handler in `gui_bridge/server.py`:
-
-```python
-class Server:
-    def _handle_my_command(self, params, job_id):
-        # synchronous: return data dict
-        return {"result": "ok"}
-```
-
-2. Register in the command map:
-
-```python
-COMMAND_MAP = {
-    "my.command": "_handle_my_command",
-    ...
-}
-```
-
-3. For async (subprocess) commands, add the job type to `gui_bridge/jobs.py`.
-
 ## Test Coverage Expectations
 
 - New features should include tests covering the public API
@@ -199,7 +177,6 @@ COMMAND_MAP = {
 Current coverage targets (enforced by CI):
 - Core engine modules: > 85%
 - CLI commands: > 90%
-- GUI bridge: > 80%
 - Data pipeline: > 80%
 - Models: > 85%
 

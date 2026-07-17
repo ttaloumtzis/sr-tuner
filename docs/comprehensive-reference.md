@@ -316,10 +316,6 @@ The `torch.amp.autocast` context manager handles the dtype selection automatical
 │  │  CUDA/ROCm detection, bf16/fp16 selection, SDPA, flash   │      │
 │  └──────────────────────────────────────────────────────────┘      │
 │                                                                       │
-├──────────────────────────────────────────────────────────────────────┤
-│                  GUI Bridge Layer (gui_bridge/)                        │
-│  server.py │ jobs.py │ protocol.py                                   │
-│  TCP/NDJSON server, subprocess manager, job manifests               │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -341,10 +337,6 @@ The `torch.amp.autocast` context manager handles the dtype selection automatical
 cli/ ─────► utils/config.py ──► workspace.py ──► data/ ──► models/ ──► device/
   │              │                                  │          │
   └──────────────┴──────────────────────────────────┴──────────┘
-                              │
-                         gui_bridge/
-                              │
-                         subprocess → cli commands
 ```
 
 ## Module Dependency Graph (Detailed)
@@ -357,7 +349,6 @@ cli/cmd_train.py
   ├── workspace.py             (Workspace — resolve_dataset, get_model_instance)
   ├── engine/trainer.py        (Trainer class)
   ├── models/checkpoint.py     (load_checkpoint for resume)
-  └── gui_bridge/protocol.py   (SocketReporter, SocketCallback)
 
 cli/cmd_dataset.py
   ├── cli/helpers.py
@@ -378,12 +369,6 @@ engine/trainer.py
   ├── data/transforms.py        (Compose, RandomCrop, RandomFlip, RandomRotate)
   └── utils/progress.py         (ProgressReporter)
 
-gui_bridge/server.py
-  ├── gui_bridge/jobs.py        (JobManager, JobManifest)
-  └── workspace.py              (Workspace)
-
-gui_bridge/jobs.py
-  └── gui_bridge/protocol.py    (connect_control_socket, make_json_sender)
 ```
 
 ---
@@ -410,7 +395,7 @@ Provides the primary user-facing interface — a tree of Click commands that exp
 | `cmd_env.py` | `env` | `check`, `bench` |
 | `cmd_serve.py` | `serve` | `start` |
 | `workspace_commands.py` | `workspace`, `project` | `init`, `info`, `check`, `create`, `list` |
-| `helpers.py` | (shared utilities) | `resolve_workspace`, `resolve_reporter`, `resolve_callbacks`, `resolve_cancel_check`, `parse_config_overrides` |
+| `helpers.py` | (shared utilities) | `resolve_workspace`, `resolve_reporter`, `resolve_callbacks`, `resolve_cancel_check` |
 
 ### Entry Points
 
@@ -433,44 +418,38 @@ Each standalone alias bypasses the `srengine` parent group and auto-detects the 
 
 ### Helpers Module (`cli/helpers.py`)
 
-Three critical resolver functions that implement the **Strategy Pattern**:
+Three resolver functions for progress reporting, callbacks, and cancellation:
 
 #### `resolve_reporter()`
 ```python
-def resolve_reporter(machine: bool = False) -> ProgressReporter:
+def resolve_reporter(**tqdm_kwargs) -> ProgressReporter:
 ```
-- If `SRENGINE_GUI_SOCKET` env var is set: returns `SocketReporter` (sends NDJSON to GUI)
-- If `machine=True`: returns `TqdmReporter` (terminal) — the metrics go to JSONL via `MetricsStreamCallback` instead
-- Otherwise: returns `TqdmReporter`
+Always returns a `TqdmReporter` for terminal progress output.
 
 #### `resolve_callbacks()`
 ```python
-def resolve_callbacks(machine: bool = False) -> list[TrainerCallback]:
+def resolve_callbacks() -> list[TrainerCallback]:
 ```
-- If `SRENGINE_GUI_SOCKET` is set: returns `[SocketCallback]` for GUI streaming
-- If `machine=True`: sets up `MetricsStreamCallback` internally (in Trainer)
-- Otherwise: returns `[]`
+Always returns an empty list (no GUI callbacks in CLI mode).
 
 #### `resolve_cancel_check()`
 ```python
 def resolve_cancel_check() -> Callable[[], bool]:
 ```
-- If `SRENGINE_GUI_SOCKET` is set: installs a SIGTERM handler and returns `was_cancelled` callback
-- Otherwise: returns `lambda: False` (no-op)
+Always returns `lambda: False` (no-op cancellation check).
 
 ### Inputs/Outputs
 
 | Input | Source | Example |
 |-------|--------|---------|
 | CLI arguments | User | `srengine train run --dataset my_set --model swinir --batch-size 4` |
-| Environment variables | OS | `SRENGINE_WORKSPACE=/data/ws`, `SRENGINE_GUI_SOCKET=...` |
+| Environment variables | OS | `SRENGINE_WORKSPACE=/data/ws` |
 | YAML config files | Filesystem | `--config my_train.yaml` |
 
 | Output | Destination | Example |
 |--------|-------------|---------|
 | Terminal output | stdout/stderr | Progress bars, log messages, tables |
 | Metrics JSONL | Filesystem | `<project>/metrics/<experiment_id>.jsonl` |
-| NDJSON events | TCP socket (GUI) | `{"type":"step","epoch":1,...}` |
 
 ### Key Internal Logic
 
@@ -1346,8 +1325,6 @@ class TrainerCallback:
 
 Built-in callbacks:
 - `_MetricsStreamCallback`: Writes JSONL metrics file
-- `SocketCallback` (gui_bridge): Sends events over TCP to GUI
-- CLI-injected callbacks from `resolve_callbacks()`
 
 ### Mixed Precision
 
@@ -1673,157 +1650,6 @@ elif format == "torchscript":
 
 ---
 
-## 6.12 GUI Bridge
-
-**Location:** `src/sr_engine/gui_bridge/`
-
-### Purpose
-
-Provides a TCP/NDJSON protocol for integrating sr-engine with a Godot (C#) GUI client. Supports synchronous queries (workspace info, dataset validation) and asynchronous jobs (training, inference, dataset building) with real-time progress streaming.
-
-### Architecture
-
-```
-┌──────────────────────┐     TCP / NDJSON      ┌──────────────────────────────┐
-│   Godot GUI (C#)     │◄──────────────────────►│   sr-engine Server           │
-│                      │    persistent conn     │                              │
-│  SrEngineClient      │    port 8765 (default) │  Server                      │
-│    ↕ event-driven    │                        │    ├─ gui_listener :8765     │
-│    ↕ _Process queue  │                        │    ├─ job_listener :random   │
-│                      │                        │    ├─ ClientHandler(s)       │
-│                      │                        │    ├─ ControlHandler(s)      │
-│                      │                        │    └─ JobManager             │
-└──────────────────────┘                        └──────────┬───────────────────┘
-                                                           │
-                                  TCP / NDJSON             │
-                                  control socket           │
-                                                           ▼
-                                                  ┌──────────────────┐
-                                                  │  Subprocess      │
-                                                  │  (srengine       │
-                                                  │   train/infer/   │
-                                                  │   dataset.build) │
-                                                  │                  │
-                                                  │  SocketReporter  │
-                                                  │  SocketCallback  │
-                                                  └──────────────────┘
-```
-
-### Server (`server.py`)
-
-```python
-class Server:
-    def __init__(self, workspace, host="127.0.0.1", gui_port=8765):
-        self.workspace = workspace
-        self.host = host
-        self.gui_port = gui_port
-        self.job_manager = JobManager(workspace)
-        self._gui_clients = []
-        self._control_clients = {}
-
-    def start(self):
-        # Accept GUI connections on gui_port
-        # Accept control connections on random port
-        # Dispatch handlers
-```
-
-### JobManager (`jobs.py`)
-
-```python
-class JobManager:
-    def start_job(self, job_type: str, params: dict) -> str:
-        job_id = f"{job_type}_{timestamp}_{random_suffix}"
-        manifest = JobManifest(job_id=job_id, job_type=job_type, ...)
-        self._save_manifest(manifest)
-
-        # Build CLI args from params
-        cli_args = cli_args_for(job_type, params)
-        env = os.environ.copy()
-        env["SRENGINE_GUI_SOCKET"] = json.dumps({
-            "job_id": job_id,
-            "token": token,
-            "control_host": self.host,
-            "control_port": self._control_port,
-        })
-
-        process = subprocess.Popen(cli_args, env=env, ...)
-        return job_id
-
-    def cancel_job(self, job_id: str):
-        process = self._processes.get(job_id)
-        if process:
-            process.terminate()  # SIGTERM
-```
-
-### Wire Protocol
-
-**Transport:** Raw TCP, NDJSON framing.
-
-**Request:** `{"id": "<string>", "command": "<string>", "params": {...}}`
-
-**Response types:**
-- `{"id": "...", "type": "result", "data": {...}}` — synchronous command result
-- `{"id": "...", "type": "accepted", "data": {"job_id": "..."}}` — async command accepted
-- `{"id": "...", "type": "error", "message": "...", "error_type": "..."}` — error
-
-**Unsolicited events (broadcast to all GUI clients):**
-- `{"type": "progress_start", "total": N, "desc": "...", "job_id": "..."}`
-- `{"type": "progress_update", "n": 1, "job_id": "..."}`
-- `{"type": "progress_end", "job_id": "..."}`
-- `{"type": "postfix", "desc": "...", "loss": 0.05, "job_id": "..."}`
-- `{"type": "phase", "phase": "training", "max_epochs": 100, "job_id": "..."}`
-- `{"type": "step", "epoch": 1, "batch": 10, "total": 0.05, "lr": 0.0001, "job_id": "..."}`
-- `{"type": "validate", "epoch": 1, "psnr": 30.2, "ssim": 0.89, "job_id": "..."}`
-- `{"type": "done", "exit_code": 0, "job_id": "..."}`
-- `{"type": "log", "level": "info", "message": "...", "job_id": "..."}`
-
-### Commands
-
-**Synchronous:**
-| Command | Purpose |
-|---------|---------|
-| `hello` | Handshake — returns schema_version, server_version |
-| `workspace.info` | Returns resolved workspace path |
-| `workspace.check` | Checks workspace exists |
-| `project.list` | Lists workspace projects |
-| `project.create` | Creates a new project |
-| `dataset.validate` | Deep validation of dataset |
-| `dataset.health` | Dataset profiling |
-| `model.info` | Model config information |
-| `job.cancel` | Cancel a running job |
-| `job.list` | List all completed jobs |
-| `job.status` | Get a specific job's status |
-
-**Asynchronous (returns job_id immediately):**
-| Command | Purpose |
-|---------|---------|
-| `train.start` | Start model training |
-| `infer.start` | Start inference on image/video |
-| `dataset.build` | Build dataset from video |
-
-### Job Lifecycle
-
-```
-accept ─► pending ─► running ─► completed (exit 0)
-                                ├── cancelled (exit 130)
-                                └── failed (exit 1+)
-```
-
-- **pending**: Subprocess spawned, waiting for control socket connection (10s timeout)
-- **running**: Control socket connected, events flowing
-- **completed/cancelled/failed**: Exit code mapped to status, manifest persisted to `<workspace>/jobs/<job_id>.json`
-
-### Subprocess Integration
-
-When a subprocess starts, it:
-1. Reads `SRENGINE_GUI_SOCKET` env var for connection info
-2. Connects control socket, sends `hello` with job_id + token
-3. Uses `SocketReporter` (instead of `TqdmReporter`) for progress
-4. Uses `SocketCallback` (instead of no-op) for training events
-5. Checks `was_cancelled()` periodically for early termination
-
----
-
 ## 6.13 Progress Reporting
 
 **Location:** `src/sr_engine/utils/progress.py`
@@ -1863,27 +1689,6 @@ class TqdmReporter(ProgressReporter):
 
     def set_postfix(self, **kwargs):
         self._pbar.set_postfix(kwargs)
-```
-
-### SocketReporter
-
-```python
-class SocketReporter(ProgressReporter):
-    def __init__(self, send_fn):
-        self._send = send_fn
-
-    def start(self, total, desc=""):
-        self._send({"type": "progress_start", "total": total, "desc": desc})
-
-    def update(self, n=1):
-        self._send({"type": "progress_update", "n": n})
-
-    def finish(self):
-        self._send({"type": "progress_end"})
-
-    def set_postfix(self, **kwargs):
-        desc = kwargs.pop("desc", "")
-        self._send({"type": "postfix", "desc": desc, **kwargs})
 ```
 
 ---
@@ -2226,45 +2031,6 @@ Client                          Server
   │                               ├── returns {"schema_version": 1, ...}
   │   ◄──── result ────────────   │
   │                               │
-  ├── send("project.list") ───►   │
-  │                               ├── _handle_project_list()
-  │                               ├── workspace.list_projects()
-  │                               ├── returns {"projects": [...]}
-  │   ◄──── result ────────────   │
-  │                               │
-```
-
-### Asynchronous Command (e.g., train.start)
-
-```
-Client            Server                         Subprocess
-  │                 │                                │
-  ├── train.start ─►│                                │
-  │                 ├── JobManager.start_job()       │
-  │                 │   ├── Generate job_id + token  │
-  │                 │   ├── Persist manifest         │
-  │                 │   ├── Build CLI args           │
-  │                 │   ├── Set SRENGINE_GUI_SOCKET  │
-  │                 │   └── subprocess.Popen(...) ──►│
-  │                 │                                │
-  │   ◄── accepted ─┤                                │
-  │                 │                                │
-  │                 │   (10s timeout)                │
-  │                 │   ◄── connect control socket ──┤
-  │                 │         hello with job_id+tok  │
-  │                 │         status=ok ────────────►│
-  │                 │                                │
-  │                 │   ◄── progress events ─────────┤
-  │   ◄── broadcast ─┤    (SocketReporter)            │
-  │                 │                                │
-  │                 │   ◄── training events ─────────┤
-  │   ◄── broadcast ─┤    (SocketCallback)            │
-  │                 │                                │
-  │                 │   ◄── exit ────────────────────┤
-  │                 ├── Map exit code → status       │
-  │                 ├── Persist final manifest       │
-  │   ◄── broadcast ─┤    done event                  │
-  │                 │                                │
 ```
 
 ### Message Format
@@ -2594,21 +2360,6 @@ get_conv2d(in_ch, out_ch, kernel_size, ...) → nn.Conv2d
 ```python
 ProgressReporter()                     # Base (no-op)
 TqdmReporter()                         # Terminal progress bar
-SocketReporter(send_fn)                # TCP progress events
-```
-
-**GUI Bridge:**
-```python
-Server(workspace, host, gui_port)
-server.start()
-JobManager(workspace)
-job_manager.start_job(job_type, params) → str
-job_manager.cancel_job(job_id)
-SocketReporter(send_fn)
-SocketCallback(send_fn)
-connect_control_socket() → (job_id, send_fn, close_fn)
-make_json_sender(writer) → callable
-parse_message(data) → dict
 ```
 
 ## CLI Interface
@@ -2623,55 +2374,7 @@ srengine train run -d <dataset> -m <model>  # Train a model
 srengine infer run -m <ckpt> -i <input> -o <output>  # Inference
 srengine model export -m <name> -c <ckpt> -f <fmt> -o <out>  # Export
 srengine env check                # Hardware diagnostics
-srengine serve start --port 8765  # Start GUI bridge server
-```
-
-## GUI Bridge Protocol (TCP/NDJSON)
-
-**Wire format:** Newline-delimited JSON over raw TCP.
-
-**Request:**
-```json
-{"id": "req_1", "command": "hello"}
-{"id": "req_2", "command": "train.start", "params": {"model_name": "swinir", "dataset": "/data/my_set"}}
-```
-
-**Response:**
-```json
-{"id": "req_1", "type": "result", "data": {"schema_version": 1, "server_version": "0.1.0"}}
-{"id": "req_2", "type": "accepted", "data": {"status": "accepted", "job_id": "train_1747000000_a1b2"}}
-```
-
-**Error:**
-```json
-{"id": "req_1", "type": "error", "message": "Unknown command: foo", "error_type": "KeyError"}
-```
-
-**Events (broadcast):**
-```json
-{"type": "phase", "phase": "training", "max_epochs": 100, "job_id": "train_..."}
-{"type": "step", "epoch": 1, "batch": 10, "total_batches": 100, "total": 0.05, "lr": 0.0001, "job_id": "train_..."}
-{"type": "validate", "epoch": 1, "psnr": 30.2, "ssim": 0.89, "job_id": "train_..."}
-{"type": "done", "exit_code": 0, "elapsed_seconds": 3600.0, "job_id": "train_..."}
-{"type": "log", "level": "info", "message": "Epoch 1/100 started", "job_id": "train_..."}
-```
-
-### C# Client (Godot 4.x)
-
-A complete C# client implementation is provided in [docs/gui_bridge.md](gui_bridge.md). Key patterns:
-
-```csharp
-public async Task<string> StartTrainAsync(Dictionary<string, JsonElement> paramsDict)
-{
-    var result = await SendCommandAsync("train.start", paramsDict);
-    return result["job_id"].GetString();
-}
-
-public override void _Process(double delta)
-{
-    while (_incoming.TryDequeue(out var msg))
-        DispatchMessage(msg);
-}
+srengine serve start --port 8765  # Start HTTP API server (FastAPI)
 ```
 
 ---
@@ -3200,18 +2903,14 @@ for img in inputs/*.png; do
 done
 ```
 
-### GUI Server Setup
+### HTTP API Server
 
 ```bash
 # Terminal 1: Start server
 srengine serve start --port 8765
 
-# Terminal 2: Godot client connects
-# (see docs/gui_bridge.md for C# implementation)
-
-# Terminal 3: Test with netcat
-echo '{"id":"1","command":"hello"}' | nc 127.0.0.1 8765
-# → {"id":"1","type":"result","data":{"schema_version":1,"server_version":"0.1.0"}}
+# Terminal 2: Query the API
+curl http://127.0.0.1:8765/api/workspace
 ```
 
 ---
@@ -3371,32 +3070,27 @@ If training loss decreases and PSNR increases, the architecture learns. If not, 
 |---------|--------|------------|------------|
 | YAML config loading | Arbitrary YAML from `--config` | Low | PyYAML `safe_load` — no arbitrary code execution |
 | Checkpoint loading | Pickle-based `.pt` files | **High** | `weights_only=True` by default; fallback warning |
-| GUI bridge TCP | Network access to port 8765 | Low | Binds to `127.0.0.1` only; no TLS but local-only |
 | Video/image files | Malformed media triggering buffer overflows | Low | OpenCV handles parsing; CVEs are rare and patched |
 | Subprocess arguments | CLI injection via job params | Low | `subprocess.Popen` with list args (no shell=True) |
-| Environment variables | `SRENGINE_GUI_SOCKET` content | Low | JSON parsed, validated before use |
 
 ## Authentication
 
 - **CLI**: No authentication — assumed to run in a trusted user session
-- **GUI bridge**: Token-based authentication for subprocess control socket handshake. The token is a 32-byte random hex string generated per job, passed via environment variable, verified by the server on control socket connection.
 - **No multi-user support**: The system assumes a single user operating in a trusted environment
 
 ## Authorization
 
 - **Filesystem-based**: Relies on OS file permissions. No internal authorization layer.
-- **GUI bridge**: Any connected GUI client can issue any command. No per-client authorization. The server binds to localhost only, limiting network exposure.
 
 ## Encryption
 
 - **At rest**: No built-in encryption for checkpoint files, configs, or datasets. Use filesystem-level encryption (LUKS, eCryptfs) if needed.
-- **In transit**: No TLS for GUI bridge. The server binds to `127.0.0.1` by default, so traffic never leaves the host. For remote access, tunnel through SSH or a VPN.
+- **In transit**: No TLS for the HTTP API. The server binds to `127.0.0.1` by default. For remote access, tunnel through SSH or a VPN.
 
 ## Secrets Management
 
 | Secret | Location | Risk | Recommendation |
 |--------|----------|------|---------------|
-| GUI bridge tokens | Environment variable (`SRENGINE_GUI_SOCKET`) | Low (ephemeral per job) | No action needed — tokens are random, per-job, short-lived |
 | Model weights | `.pt` files on disk | Low (no inherent secrets) | None |
 | Dataset paths | Config YAML files | Low (no sensitive data) | None |
 
@@ -3695,15 +3389,6 @@ sr-engine does not natively support distributed training (DDP/FSDP). For multi-G
 - Leverage gradient checkpointing for memory efficiency on a single GPU
 
 ### Multiple GUI Bridge Clients
-
-The GUI bridge server supports multiple simultaneous GUI clients. All clients receive all events (broadcast model). The server does not have per-client state beyond the TCP connection.
-
-## Load Balancing
-
-The GUI bridge uses a single-threaded async socket model. For very high event rates (>1000 events/second), the server may become a bottleneck. Mitigations:
-- Reduce `metrics_frequency` (log every 10 batches instead of every batch)
-- Batch progress updates in `SocketReporter`
-- Use multiple server instances on different ports for different workspaces
 
 ## Caching
 
@@ -4050,8 +3735,6 @@ Step 4: Monitor job
 | `CUDA out of memory. Tried to allocate X MiB` | PyTorch | Batch/patch too large for VRAM | Reduce batch_size or patch_size |
 | `KeyError: 'Missing required config key: scale'` | `config.py` | Config file missing required key | Add key or use built-in defaults |
 | `FileNotFoundError: Checkpoint file not found` | `checkpoint.py` | Wrong path to `.pt` file | Check path, use absolute path |
-| `ConnectionRefusedError` | GUI bridge | Server not running | Start server with `srengine serve start` |
-| `Exception: hello handshake rejected` | GUI bridge | Wrong token or job_id | Check `SRENGINE_GUI_SOCKET` environment variable |
 | `ValueError: Unknown VGG19 layer name` | `losses.py` | Wrong layer name in perceptual_layers config | Use valid names: `relu1_1` through `relu5_4` |
 | `ValueError: Unsupported gan_type` | `losses.py` | Wrong GAN type in config | Use `vanilla` or `lsgan` |
 | `warnings.warn: Loading with weights_only=False` | `checkpoint.py` | Older PyTorch version | Upgrade PyTorch or accept the warning |
@@ -4802,7 +4485,6 @@ As dataset sizes and model capacities grow, distributed training support (DDP, F
 | Inference Guide | [docs/inference.md](inference.md) |
 | Device Backend Guide | [docs/device-backend.md](device-backend.md) |
 | Workspace Guide | [docs/workspace.md](workspace.md) |
-| GUI Bridge Guide | [docs/gui_bridge.md](gui_bridge.md) |
 | Development Guide | [docs/development.md](development.md) |
 
 ## Academic Papers

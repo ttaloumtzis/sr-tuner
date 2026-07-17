@@ -226,10 +226,6 @@ infer_image(
 │       │   ├── registry.py         # Model registry (register, build_model)
 │       │   ├── checkpoint.py       # Save/load checkpoints, export to ONNX/TorchScript/SafeTensors
 │       │   └── losses.py           # L1Loss (Charbonnier), PerceptualLoss, GANLoss
-│       ├── gui_bridge/             # TCP socket server for GUI frontends
-│       │   ├── server.py           # Server, ClientHandler, ControlHandler
-│       │   ├── protocol.py         # SocketReporter, SocketCallback, connect_control_socket
-│       │   └── jobs.py             # JobManager, JobManifest, CLI arg builders
 │       ├── utils/                   # Utilities
 │       │   ├── config.py           # YAML config loader/merger (DefaultConfigs)
 │       │   ├── configs/            # Built-in YAML config files
@@ -249,7 +245,6 @@ infer_image(
 │   ├── test_degrade.py   # Degradation tests
 │   ├── test_models.py    # Model architecture tests
 │   ├── test_cli_*.py     # CLI command tests
-│   ├── test_gui_bridge_*.py  # GUI bridge tests
 │   └── ...               # Additional test modules
 ├── docs/                 # Documentation files
 │   ├── architecture.md
@@ -259,7 +254,6 @@ infer_image(
 │   ├── inference.md
 │   ├── workspace.md
 │   ├── device-backend.md
-│   ├── gui_bridge.md
 │   └── ...
 ├── pyproject.toml        # Project metadata and build configuration
 ├── LICENSE               # MIT License

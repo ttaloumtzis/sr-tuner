@@ -48,10 +48,6 @@ sr-engine follows a **layered modular architecture** with strict one-directional
 │  │  CUDA/ROCm detection, flash-attn, AMP               │      │
 │  └────────────────────────────────────────────────────┘      │
 │                                                              │
-├──────────────────────────────────────────────────────────────┤
-│              GUI Bridge Layer (gui_bridge/)                   │
-│  server.py │ jobs.py │ protocol.py                           │
-│  TCP/JSON server for Godot client integration                │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -66,7 +62,6 @@ sr-engine follows a **layered modular architecture** with strict one-directional
 | **Engine** | `engine/` | Training loop, inference pipeline, metrics computation, tiled inference |
 | **Models** | `models/` | Architecture definitions, decorator-based registry, checkpoint save/load/export, loss functions |
 | **Device** | `device/` | CUDA/ROCm detection, dtype selection, backend-aware kernels |
-| **GUI Bridge** | `gui_bridge/` | TCP server, subprocess lifecycle, NDJSON protocol |
 
 ## Data Flow
 
@@ -101,8 +96,7 @@ User CLI input
               │
               └── Via callbacks:
                     ├── MetricsStream → JSONL file
-                    ├── TqdmReporter → terminal
-                    └── SocketCallback → GUI
+                    └── TqdmReporter → terminal
 ```
 
 ### Dataset Building
@@ -187,26 +181,18 @@ class TrainerCallback:
 
 Used by:
 - `_MetricsStreamCallback` — writes JSONL metrics
-- `SocketCallback` — streams events to GUI over TCP
 
 ### Strategy (via Composition)
 
-`cli/helpers.py:resolve_reporter()` returns different implementations based on environment:
-
-| Environment | Returns | Behaviour |
-|---|---|---|
-| `SRENGINE_GUI_SOCKET` set | `SocketReporter` | Sends NDJSON progress events over TCP |
-| Terminal (default) | `TqdmReporter` | Renders tqdm progress bar |
-| `--machine` flag | `SocketReporter` via MetricsStream | Writes JSONL to file |
+`cli/helpers.py:resolve_reporter()` always returns a `TqdmReporter` for terminal progress output. The HTTP API layer (FastAPI) provides its own SSE-based progress reporting for frontend clients.
 
 ### Template Method
 
-`utils/progress.py:ProgressReporter` is an abstract base with no-op defaults. Subclasses override specific methods:
+`utils/progress.py:ProgressReporter` is an abstract base with no-op defaults. The terminal subclass overrides specific methods:
 
 ```
 ProgressReporter (abstract)
-    ├── TqdmReporter    — overrides start/update/end
-    └── SocketReporter   — overrides start/update/end/postfix
+    └── TqdmReporter    — overrides start/update/end/postfix
 ```
 
 ### Builder
@@ -237,10 +223,6 @@ build_from_video(video_path, output_dir)
 ```
 
 Each level recursively merges onto the previous. CLI flags win everything.
-
-### Subprocess (GUI Bridge)
-
-`gui_bridge/jobs.py:JobManager` spawns long-running tasks (train, infer, dataset build) as subprocesses. Each subprocess connects back to the server via a control socket for progress streaming and cancellation detection. The server tracks job state in manifest files persisted to the workspace.
 
 ## Directory Layout
 
@@ -288,14 +270,12 @@ src/sr_engine/
 │   ├── logging.py                # get_logger()
 │   ├── progress.py               # ProgressReporter, TqdmReporter
 │   └── configs/                  # Built-in YAML configs
-    │       ├── train/base.yaml
+│       ├── train/base.yaml
 │       ├── datasets/video_pairs.yaml
 │       ├── models/swinir.yaml
 │       └── models/rrdb_esrgan.yaml
-└── gui_bridge/
-    ├── server.py                 # TCP Server with dual accept loops
-    ├── jobs.py                   # JobManager, subprocess lifecycle
-    └── protocol.py               # SocketReporter, SocketCallback, handshake
+└── api/                           # FastAPI HTTP server (planned)
+    └── app.py                     # FastAPI application, routes, SSE events
 ```
 
 ## Dependencies

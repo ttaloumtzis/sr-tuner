@@ -1,7 +1,6 @@
 """Shared fixtures, helpers, and mocks for the sr-engine test suite."""
 
 from pathlib import Path
-import struct
 import json
 import cv2
 import numpy as np
@@ -166,18 +165,6 @@ def mock_torch_cuda():
                 p.stop()
 
     return _mock
-
-
-@pytest.fixture
-def mock_socket():
-    """Create a pair of connected mock sockets for protocol/server tests."""
-    import socket as _socket
-
-    def _make_connected_pair():
-        a, b = _socket.socketpair()
-        return a, b
-
-    return _make_connected_pair
 
 
 @pytest.fixture

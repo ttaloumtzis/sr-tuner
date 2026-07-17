@@ -1,4 +1,4 @@
-"""CLI helper functions — workspace resolution, config loading, GUI bridge integration."""
+"""CLI helper functions — workspace resolution, config loading, progress resolution."""
 
 import os
 from pathlib import Path
@@ -7,7 +7,7 @@ from typing import Any, Callable
 import click
 
 from sr_engine.utils.config import DefaultConfigs
-from sr_engine.utils.progress import ProgressReporter
+from sr_engine.utils.progress import ProgressReporter, TqdmReporter
 from sr_engine.workspace import Workspace
 
 
@@ -92,47 +92,8 @@ no_workspace_config_option = click.option(
     help="Skip workspace config auto-discovery, use package defaults only.",
 )
 
-_SRENGINE_GUI_SOCKET = "SRENGINE_GUI_SOCKET"
-_control_connection: tuple | None = None
-
-
-def invalidate_control_connection() -> None:
-    """Close and clear the cached control socket connection."""
-    global _control_connection
-    if _control_connection is not None:
-        _, _, close_fn = _control_connection
-        close_fn()
-    _control_connection = None
-
-
-def _get_control_connection():
-    """Return a cached control-socket connection, creating one if needed.
-
-    Reads ``SRENGINE_GUI_SOCKET`` env var on first call.
-
-    Returns:
-        ``(job_id, send_fn, close_fn)`` or None.
-    """
-    global _control_connection
-    if _control_connection is None:
-        env_value = os.environ.get(_SRENGINE_GUI_SOCKET)
-        if env_value:
-            from sr_engine.gui_bridge.protocol import connect_control_socket
-            job_id, send_fn, close_fn = connect_control_socket(env_value)
-
-            def _reconnecting_send(msg: dict) -> None:
-                try:
-                    send_fn(msg)
-                except OSError:
-                    invalidate_control_connection()
-                    raise
-
-            _control_connection = (job_id, _reconnecting_send, close_fn)
-    return _control_connection
-
-
 def resolve_reporter(**tqdm_kwargs: Any) -> ProgressReporter:
-    """Return a ``SocketReporter`` if a control connection exists, else a ``TqdmReporter``.
+    """Return a ``TqdmReporter`` for terminal progress output.
 
     Args:
         tqdm_kwargs: Forwarded to ``TqdmReporter``.
@@ -140,35 +101,22 @@ def resolve_reporter(**tqdm_kwargs: Any) -> ProgressReporter:
     Returns:
         A ``ProgressReporter`` instance.
     """
-    conn = _get_control_connection()
-    if conn:
-        from sr_engine.gui_bridge.protocol import SocketReporter
-        return SocketReporter(send_fn=conn[1], job_id=conn[0])
-    from sr_engine.utils.progress import TqdmReporter
     return TqdmReporter(**tqdm_kwargs)
 
 
 def resolve_callbacks() -> list:
-    """Return callback list with a ``SocketCallback`` if a control connection exists.
+    """Return an empty callback list.
 
     Returns:
-        List of ``TrainerCallback`` instances.
+        Empty list (no GUI callbacks in CLI mode).
     """
-    conn = _get_control_connection()
-    if conn:
-        from sr_engine.gui_bridge.protocol import SocketCallback
-        return [SocketCallback(send_fn=conn[1], job_id=conn[0])]
     return []
 
 
 def resolve_cancel_check() -> Callable[[], bool]:
-    """Return a cancellation check function (SIGTERM-aware if running under a GUI server).
+    """Return a no-op cancellation check.
 
     Returns:
-        Callable returning ``True`` when cancellation is requested.
+        Callable that always returns ``False``.
     """
-    if os.environ.get(_SRENGINE_GUI_SOCKET):
-        from sr_engine.gui_bridge.jobs import was_cancelled, install_cancel_handler
-        install_cancel_handler()
-        return was_cancelled
     return lambda: False

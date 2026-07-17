@@ -1,0 +1,40 @@
+{
+  "name": "sr-tuner-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:ui": "vitest --ui"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2",
+    "@tauri-apps/plugin-fs": "^2.5.1",
+    "@tauri-apps/plugin-process": "^2",
+    "@tauri-apps/plugin-shell": "^2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^5.0.3"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/testing-library__jest-dom": "^5.14.9",
+    "@vitejs/plugin-react": "^4.3.3",
+    "@vitest/ui": "^4.1.5",
+    "jsdom": "^29.1.1",
+    "typescript": "^5.6.2",
+    "vite": "^5.4.10",
+    "vitest": "^4.1.5"
+  }
+}
