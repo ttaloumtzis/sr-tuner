@@ -47,6 +47,8 @@ def train() -> None:
 @click.option("--bf16/--no-bf16", default=None, help="Enable bfloat16 mixed precision training.")
 @click.option("--dump-config", is_flag=True, default=False, help="Print final merged config and exit.")
 @no_workspace_config_option
+@click.option("--model-config", type=click.Path(exists=True, path_type=Path),
+              help="Model config overrides YAML.")
 @click.option("--instance", "-i", type=str, default=None,
               help="Model instance name. Creates a run dir and auto-loads latest model version.")
 @click.pass_context
@@ -54,7 +56,7 @@ def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate,
         seed, weight_decay, betas, max_epochs,
         num_workers, patch_size, save_per_epoch,
         validation_enabled, validation_split, machine, experiment_id, metrics_frequency,
-        bf16, dump_config, instance, no_workspace_config):
+        bf16, dump_config, model_config, instance, no_workspace_config):
     """Train a super-resolution model."""
 
     ws, cfg_loader = make_workspace_config_loader(ctx, no_workspace_config)
@@ -96,6 +98,9 @@ def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate,
         dataset = ws.resolve_dataset(dataset)
 
     model_cfg = resolve_model_config(cfg_loader, model)
+    if model_config:
+        model_overrides = load_config(model_config)
+        model_cfg = merge_overrides(model_cfg, model_overrides)
 
     train_cfg = load_config(config) if config else cfg_loader.get_train_config()
 

@@ -54,7 +54,6 @@ class TestCliArgsForTrain:
         assert "--learning-rate" in args
         assert "--max-epochs" in args
         assert args[args.index("--max-epochs") + 1] == "50"
-        assert "--project" in args
         assert "--instance" in args
         assert args[args.index("--instance") + 1] == "v1"
         assert "--machine" in args
@@ -111,17 +110,14 @@ class TestCliArgsForInfer:
         assert "--overlap" in args
         assert "--device" in args
 
-    def test_infer_with_project_instance(self):
-        """Infer should pass --project and --instance if provided."""
+    def test_infer_with_instance(self):
+        """Infer should pass --instance if provided."""
         args = cli_args_for_infer({
             "model": "/ckpt.pt",
             "input_path": "/in.png",
             "output": "/out.png",
-            "project": "proj1",
             "instance": "v1",
         })
-        assert "--project" in args
-        assert args[args.index("--project") + 1] == "proj1"
         assert "--instance" in args
         assert args[args.index("--instance") + 1] == "v1"
 

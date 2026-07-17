@@ -56,50 +56,87 @@ def was_cancelled() -> bool:
     return _cancelled
 
 
-def cli_args_for_train(params: dict) -> list[str]:
+def cli_args_for_train(
+    params: dict, jobs_dir: Path | None = None, job_id: str | None = None
+) -> list[str]:
     """Build CLI argument list for ``train run`` from a parameter dict.
+
+    When ``params["config"]`` is a dict (not a string), it is treated as a full
+    config JSON. The server writes temp YAML files and passes ``--config`` and
+    ``--model-config`` instead of individual CLI flags.
 
     Args:
         params: Dictionary of training parameters.
+        jobs_dir: Job manifest directory for writing temp config YAMLs.
+        job_id: Job identifier for temp config filenames.
 
     Returns:
         List of CLI arguments.
     """
     args = ["train", "run"]
-    if "model_name" in params:
-        args.extend(["--model", params["model_name"]])
+
+    config_json = params.get("config")
+    if isinstance(config_json, dict) and jobs_dir and job_id:
+        from sr_engine.gui_bridge.config_utils import expand_dotted_config, write_temp_config
+
+        model_name = params.get("model_name") or config_json.get("model.name")
+
+        train_overrides = {k.removeprefix("train."): v
+                          for k, v in config_json.items() if k.startswith("train.")}
+        train_overrides.pop("", None)
+        if train_overrides:
+            train_cfg = expand_dotted_config(train_overrides)
+            train_path = write_temp_config(jobs_dir, job_id, train_cfg)
+            args.extend(["--config", str(train_path)])
+
+        model_overrides = {k.removeprefix("model."): v
+                          for k, v in config_json.items()
+                          if k.startswith("model.") and k != "model.name"}
+        if model_overrides:
+            model_cfg = expand_dotted_config(model_overrides)
+            model_path = write_temp_config(jobs_dir, f"{job_id}_model", model_cfg, suffix="_model")
+            args.extend(["--model-config", str(model_path)])
+
+        if model_name:
+            args.extend(["--model", model_name])
+    else:
+        if "model_name" in params:
+            args.extend(["--model", params["model_name"]])
+        if "config" in params and isinstance(params["config"], str):
+            args.extend(["--config", params["config"]])
+        if "resume" in params:
+            args.extend(["--resume", params["resume"]])
+        if "device" in params:
+            args.extend(["--device", params["device"]])
+        if "batch_size" in params:
+            args.extend(["--batch-size", str(params["batch_size"])])
+        if "learning_rate" in params:
+            args.extend(["--learning-rate", str(params["learning_rate"])])
+        if "max_epochs" in params:
+            args.extend(["--max-epochs", str(params["max_epochs"])])
+        if "bf16" in params:
+            args.append("--bf16" if params["bf16"] else "--no-bf16")
+        if params.get("machine"):
+            args.append("--machine")
+        if params.get("experiment_id"):
+            args.extend(["--experiment-id", params["experiment_id"]])
+
     if "dataset" in params:
         args.extend(["--dataset", params["dataset"]])
-    if "config" in params:
-        args.extend(["--config", params["config"]])
-    if "resume" in params:
-        args.extend(["--resume", params["resume"]])
-    if "device" in params:
-        args.extend(["--device", params["device"]])
-    if "batch_size" in params:
-        args.extend(["--batch-size", str(params["batch_size"])])
-    if "learning_rate" in params:
-        args.extend(["--learning-rate", str(params["learning_rate"])])
-    if "max_epochs" in params:
-        args.extend(["--max-epochs", str(params["max_epochs"])])
-    if "project" in params:
-        args.extend(["--project", params["project"]])
     if "instance" in params:
         args.extend(["--instance", params["instance"]])
-    if "bf16" in params:
-        args.append("--bf16" if params["bf16"] else "--no-bf16")
-    if params.get("machine"):
-        args.append("--machine")
-    if params.get("experiment_id"):
-        args.extend(["--experiment-id", params["experiment_id"]])
     return args
 
 
-def cli_args_for_infer(params: dict) -> list[str]:
+def cli_args_for_infer(
+    params: dict, jobs_dir: Path | None = None, job_id: str | None = None
+) -> list[str]:
     """Build CLI argument list for ``infer run`` from a parameter dict.
 
     Args:
         params: Dictionary of inference parameters.
+        jobs_dir: Ignored (inference uses no config system).
+        job_id: Ignored.
 
     Returns:
         List of CLI arguments.
@@ -117,33 +154,54 @@ def cli_args_for_infer(params: dict) -> list[str]:
         args.extend(["--overlap", str(params["overlap"])])
     if "device" in params:
         args.extend(["--device", params["device"]])
-    if "project" in params:
-        args.extend(["--project", params["project"]])
     if "instance" in params:
         args.extend(["--instance", params["instance"]])
     return args
 
 
-def cli_args_for_dataset_build(params: dict) -> list[str]:
+def cli_args_for_dataset_build(
+    params: dict, jobs_dir: Path | None = None, job_id: str | None = None
+) -> list[str]:
     """Build CLI argument list for ``dataset build`` from a parameter dict.
+
+    When ``params["config"]`` is a dict (not a string), it is treated as a full
+    config JSON. The server writes a temp YAML and passes ``--config`` instead
+    of individual ``--degradations`` / ``--resize-method`` flags.
 
     Args:
         params: Dictionary of dataset-build parameters.
+        jobs_dir: Job manifest directory for writing temp config YAMLs.
+        job_id: Job identifier for temp config filenames.
 
     Returns:
         List of CLI arguments.
     """
     args = ["dataset", "build"]
+
+    config_json = params.get("config")
+    if isinstance(config_json, dict) and jobs_dir and job_id:
+        from sr_engine.gui_bridge.config_utils import expand_dotted_config, write_temp_config
+
+        deg_overrides = {k.removeprefix("degradation."): v
+                        for k, v in config_json.items() if k.startswith("degradation.")}
+        deg_overrides.pop("", None)
+        if deg_overrides:
+            deg_cfg = expand_dotted_config(deg_overrides)
+            full_cfg = {"degradation": deg_cfg}
+            deg_path = write_temp_config(jobs_dir, job_id, full_cfg)
+            args.extend(["--config", str(deg_path)])
+    else:
+        if "config" in params and isinstance(params["config"], str):
+            args.extend(["--config", params["config"]])
+        if "degradations" in params:
+            args.extend(["--degradations", params["degradations"]])
+        if "resize_method" in params:
+            args.extend(["--resize-method", params["resize_method"]])
+
     if "input" in params:
         args.extend(["--input", params["input"]])
     if "out" in params:
         args.extend(["--out", params["out"]])
-    if "config" in params:
-        args.extend(["--config", params["config"]])
-    if "degradations" in params:
-        args.extend(["--degradations", params["degradations"]])
-    if "resize_method" in params:
-        args.extend(["--resize-method", params["resize_method"]])
     return args
 
 
@@ -199,7 +257,7 @@ class JobManager:
         job_id = f"{job_type.replace('.', '_')}_{timestamp}_{secrets.token_hex(4)}"
         token = secrets.token_hex(32)
 
-        cli_args = _ARG_BUILDERS[job_type](params)
+        cli_args = _ARG_BUILDERS[job_type](params, jobs_dir=self.jobs_dir, job_id=job_id)
 
         control_info = json.dumps({
             "job_id": job_id,

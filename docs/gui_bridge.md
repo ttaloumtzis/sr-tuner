@@ -175,6 +175,171 @@ Checks whether the workspace directory exists on disk.
 
 ---
 
+#### `workspace.init`
+
+Initializes a workspace directory tree.
+
+| Param | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `path` | string | no | `"."` | Path to initialize workspace in |
+| `reset_configs` | bool | no | `false` | Overwrite workspace configs with fresh defaults |
+
+---
+
+#### `config.schema`
+
+Returns the full command and config schema. Your Godot client calls this once
+on connect to dynamically build the entire UI.
+
+**Params:** none
+
+**Response structure:**
+```json
+{
+  "commands": [
+    {
+      "id": "train.start",
+      "title": "Start Training",
+      "params": [
+        {"key": "model_name", "type": "choice", "choices": ["swinir", "rrdb_esrgan"]},
+        {"key": "dataset", "type": "path", "required": true}
+      ],
+      "config_sections": ["training", "model"]
+    },
+    {
+      "id": "dataset.build",
+      "title": "Build Dataset",
+      "params": [{"key": "input", "type": "path", "required": true}],
+      "config_sections": ["degradation"]
+    }
+  ],
+  "config_sections": {
+    "training": {
+      "title": "Training",
+      "params": [
+        {"key": "train.batch_size", "type": "int", "default": 32, "min": 1, "max": 512, "step": 1, "group": "General"},
+        {"key": "train.learning_rate", "type": "float", "default": 2e-4, "min": 1e-8, "max": 1.0, "step": "log", "group": "Optimizer"}
+      ]
+    },
+    "model": {
+      "title": "Model Architecture",
+      "params": [
+        {"key": "model.name", "type": "choice", "choices": ["swinir", "rrdb_esrgan"], "group": "General"},
+        {"key": "model.embed_dim", "type": "int", "default": 180, "applies_to": ["swinir"], "group": "SwinIR"}
+      ]
+    },
+    "degradation": {
+      "title": "Degradation Pipeline",
+      "params": [
+        {"key": "degradation.blur.enabled", "type": "bool", "default": true, "group": "Blur"}
+      ]
+    }
+  }
+}
+```
+
+**How to use in your Godot client:**
+1. Call `config.schema` once after `hello`.
+2. Iterate `commands` to build the command selector/tab bar.
+3. For each command, build a form from its `params` array:
+   - `"string"` → `LineEdit`
+   - `"int"` → `SpinBox` (set `min`/`max`/`step`)
+   - `"float"` → `HSlider` + `Label` (log scale when `step` is `"log"`)
+   - `"bool"` → `CheckBox`
+   - `"choice"` → `OptionButton`
+   - `"path"` → `LineEdit` + `FileDialog` button
+   - `"multi_choice"` → `OptionButton` or tag list
+4. If `config_sections` is present, add a collapsible panel for each section.
+5. Use `applies_to` on model params to show/hide based on selected model.
+
+---
+
+#### `dataset.merge`
+
+Merge multiple datasets grouped by scale.
+
+| Param | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `input` | string | yes | — | Directory containing dataset subdirectories |
+| `out` | string | no | `<input>/merged` | Output directory |
+| `scale` | int | no | — | Only merge datasets with this scale factor |
+| `name` | string | no | — | Custom output subdirectory name |
+| `keep_sources` | bool | no | `false` | Keep original datasets after merge |
+
+---
+
+#### `model.list_runs`
+
+List training runs for a model instance.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `instance` | string | yes | Model instance name |
+
+---
+
+#### `model.export`
+
+Export a model checkpoint to ONNX, SafeTensors, or TorchScript.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `instance` | string | no | Model instance name (auto-resolves version and arch) |
+| `model_name` | string | no | Model name (required without `instance`) |
+| `ckpt` | string | no | Checkpoint file path (required without `instance`) |
+| `version` | string | no | Version tag to export (defaults to latest) |
+| `format` | string | **yes** | `"onnx"`, `"safetensors"`, or `"torchscript"` |
+| `out` | string | **yes** | Output file path |
+
+---
+
+#### `env.check`
+
+Returns a diagnostic report of the current environment.
+
+**Params:** none
+
+**Response data:**
+```json
+{
+  "torch_version": "2.5.0",
+  "device": "cuda:0",
+  "cuda_available": true,
+  "rocm": false,
+  "device_name": "NVIDIA RTX 4090",
+  "vram_total_mb": 24564,
+  "bf16_supported": true,
+  "flash_attention": true
+}
+```
+
+---
+
+#### `env.bench`
+
+Runs a micro-benchmark (forward + backward pass) and returns throughput statistics.
+
+| Param | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `model` | string | no | `"rrdb_esrgan"` | Model architecture to benchmark |
+| `iterations` | int | no | `10` | Number of timed iterations |
+
+**Response data:**
+```json
+{
+  "device": "cuda:0",
+  "model": "rrdb_esrgan",
+  "iterations": 10,
+  "mean_ms": 12.34,
+  "median_ms": 12.1,
+  "std_ms": 0.89,
+  "min_ms": 11.2,
+  "max_ms": 14.5
+}
+```
+
+---
+
 #### `project.list`
 
 Lists all projects in the workspace.
@@ -366,11 +531,13 @@ unsolicited events (see Unsolicited Events section).
 
 Start training a super-resolution model.
 
+**Flat params (traditional):**
+
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
 | `model_name` | string | no | Model name (e.g. `"rrdb_esrgan"`, `"swinir"`) |
 | `dataset` | string | no | Dataset path or name |
-| `config` | string | no | Path to training config YAML |
+| `config` | string | no | Path to training config YAML (string) |
 | `resume` | string | no | Path to checkpoint to resume from |
 | `device` | string | no | `"cuda"`, `"cpu"`, or `"auto"` |
 | `batch_size` | int | no | Batch size |
@@ -379,6 +546,35 @@ Start training a super-resolution model.
 | `project` | string | no | Project name (requires workspace) |
 | `machine` | bool | no | Enable machine-readable metrics output |
 | `experiment_id` | string | no | Experiment identifier |
+
+**Full config JSON (new approach):**
+
+Pass a `config` dict containing training and model architecture overrides.
+The server writes a temp YAML and passes it via `--config` and `--model-config`
+to the subprocess.
+
+```json
+{
+  "command": "train.start",
+  "params": {
+    "project": "my_project",
+    "instance": "my_model",
+    "config": {
+      "train.batch_size": 16,
+      "train.learning_rate": 0.0001,
+      "train.max_epochs": 100,
+      "train.validation.enabled": true,
+      "model.name": "swinir",
+      "model.embed_dim": 240,
+      "model.depths": [6, 6, 8, 6, 6, 6]
+    }
+  }
+}
+```
+
+When `config` is a JSON object, individual CLI overrides (`batch_size`,
+`learning_rate`, etc.) are ignored — the config dict is the single source
+of truth for training hyperparameters.
 
 **Response data:**
 ```json
@@ -411,13 +607,36 @@ Run super-resolution inference on an image or video.
 
 Build a dataset from a video file or validate a preprocessed directory.
 
+**Flat params (traditional):**
+
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
 | `input` | string | yes | Input video file or preprocessed dataset directory |
 | `out` | string | no | Output dataset directory (required if input is a video) |
 | `config` | string | no | Dataset config YAML path |
-| `degradations` | string | no | Comma-separated enabled degradations: `blur,noise,jpeg,jpeg2000,color-jitter`. Overrides per-section `enabled` fields |
-| `resize_method` | string | no | Downsampling method: `area`, `bicubic`, `bilinear`, `lanczos`, `nearest` |
+| `degradations` | string | no | Comma-separated enabled degradations |
+| `resize_method` | string | no | Downsampling method |
+
+**Full config JSON (new approach):**
+
+```json
+{
+  "command": "dataset.build",
+  "params": {
+    "input": "/path/to/video.mp4",
+    "out": "/path/to/dataset",
+    "config": {
+      "degradation.blur.enabled": true,
+      "degradation.blur.gaussian.sigma_max": 3.0,
+      "degradation.jpeg.quality_min": 50,
+      "degradation.frame_rate": 10
+    }
+  }
+}
+```
+
+When `config` is a JSON object, individual `--degradations` and
+`--resize-method` flags are ignored.
 
 **Response data:**
 ```json
