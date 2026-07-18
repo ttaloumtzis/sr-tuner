@@ -484,6 +484,7 @@ function OpenProjectCard({
         browseTitle="Select .srproj file"
         placeholder="Select .srproj file…"
         compact
+        fileFilters={[{ name: "SR Project", extensions: ["srproj"] }]}
       />
     </div>
   );
@@ -504,14 +505,13 @@ export function ProjectScreen() {
   }, []);
 
   const handleOpenRecent = async (entry: RecentEntry) => {
-    // stale entry check
-    const exists = await invoke<boolean>("path_exists", { path: entry.filePath });
-    if (!exists) {
-      showToast("error", `Project not found: ${entry.filePath}`);
-      setRecent(removeRecent(entry.filePath));
-      return;
-    }
     try {
+      const exists = await invoke<boolean>("path_exists", { path: entry.filePath });
+      if (!exists) {
+        showToast("error", `Project not found: ${entry.filePath}`);
+        setRecent(removeRecent(entry.filePath));
+        return;
+      }
       await openProject(entry.filePath);
     } catch (err) {
       showToast("error", `Failed to open project: ${String(err)}`);

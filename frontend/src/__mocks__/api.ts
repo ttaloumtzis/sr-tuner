@@ -1,5 +1,6 @@
 import { vi } from "vitest";
 
+export const invoke = vi.fn();
 export const apiGet = vi.fn();
 export const apiPost = vi.fn();
 export const initApiUrl = vi.fn().mockResolvedValue(undefined);

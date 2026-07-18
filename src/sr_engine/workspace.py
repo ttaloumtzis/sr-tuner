@@ -6,7 +6,10 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-import torch
+try:
+    import torch
+except ImportError:
+    torch = None  # type: ignore[assignment]
 
 
 MARKER = ".sr_workspace"
@@ -302,6 +305,10 @@ class Workspace:
             state_dict: Model state dict (will be moved to CPU).
             metadata: Optional dict saved as ``version.json``.
         """
+        if torch is None:
+            raise RuntimeError(
+                "PyTorch is not available. Install it with: envs/build.sh --backend cpu"
+            )
         v_path = self.path / "models" / instance_name / "versions" / version
         v_path.mkdir(parents=True, exist_ok=True)
         cpu_sd = {k: v.contiguous().cpu() for k, v in state_dict.items()}

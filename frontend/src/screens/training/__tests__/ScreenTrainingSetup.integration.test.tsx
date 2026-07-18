@@ -108,10 +108,7 @@ describe("validate→launch gate (26.9)", () => {
     expect(getLaunchButton()).toBeDisabled();
   });
 
-  it("strategy='none' path: valid:true without validation_path still enables launch", async () => {
-    const { useDatasetStore } = await import("../../../store/datasetStore");
-    useDatasetStore.setState({ strategy: "none", validationPath: null });
-
+  it("valid dataset enables launch", async () => {
     await renderSetup();
 
     const runNameInput = screen.getByPlaceholderText(/my-run-001/i);

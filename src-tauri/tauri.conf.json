@@ -17,12 +17,16 @@
         "height": 820,
         "minWidth": 1100,
         "minHeight": 700,
-        "decorations": false,
+        "decorations": true,
         "resizable": true
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' http://localhost:8765; style-src 'self' 'unsafe-inline'; font-src 'self' data:"
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**"]
+      },
+      "csp": "default-src 'self'; connect-src 'self' http://localhost:8765; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' asset: https: data:"
     }
   },
   "bundle": {

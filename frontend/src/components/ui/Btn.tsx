@@ -33,7 +33,7 @@ export function Btn({
       ? disabled
         ? "var(--bg2)"
         : hovered
-        ? solidColor + "dd"
+        ? `color-mix(in srgb, ${solidColor} 87%, transparent)`
         : solidColor
       : disabled
       ? "var(--bg2)"

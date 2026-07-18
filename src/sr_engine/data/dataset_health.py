@@ -34,14 +34,9 @@ def _extract_color_data(img: np.ndarray, channels_summary: Counter) -> np.ndarra
 
 # --- Adaptive threshold constants ---
 DARK_PERCENTILE: float = 0.15
-"""Percentile of darkest frames to analyse for gap detection.
-0.15 = bottom 15% — empirically covers the noise floor without
-pulling in legitimate low-light content."""
-
-GAP_THRESHOLD: float = 1.5
-"""Minimum brightness gap (on 0-255 scale) to classify a transition
-as a "noise floor vs. real content" boundary. Values above 1.5
-indicate a genuine intensity discontinuity rather than random noise."""
+"""Percentile used by the fallback heuristic to distinguish full-range
+from limited-range encodings. If the bottom 15% of frames average
+below 10.0, the data is assumed full-range (0-255)."""
 
 MAX_THRESHOLD: float = 25.0
 """Upper clamp for the computed adaptive threshold. Prevents the threshold
@@ -49,23 +44,63 @@ from exceeding 25.0 even if the detected gap is very large, avoiding
 false positives on legitimately dark-but-valid content."""
 
 FULL_RANGE_FALLBACK: float = 3.5
-"""Fallback threshold when no clear gap is detected and the data
-distribution suggests a full-range (0-255) encoding. 3.5 is tight
+"""Fallback threshold used when Otsu finds no frames below its threshold
+and the data suggests a full-range (0-255) encoding. 3.5 is tight
 enough to catch only truly black/near-black frames."""
 
 LIMITED_RANGE_FALLBACK: float = 18.5
-"""Fallback threshold when no clear gap is detected and the data
-distribution suggests a limited-range (16-235) encoding. 18.5 corresponds
+"""Fallback threshold used when Otsu finds no frames below its threshold
+and the data suggests a limited-range (16-235) encoding. 18.5 corresponds
 to the BT.709 black level (~16) plus a small margin."""
+
+
+def _otsu_threshold(hist: np.ndarray) -> float:
+    """Compute Otsu's optimal binary threshold from a 256-bin histogram.
+
+    Finds the threshold that minimises intra-class variance (equivalently
+    maximises inter-class variance) between the "dark" and "bright"
+    populations.
+
+    Args:
+        hist: 256-element histogram array.
+
+    Returns:
+        Threshold value (0-255) separating the two classes.
+    """
+    total = hist.sum()
+    if total == 0:
+        return 3.0
+
+    hist_n = hist.astype(np.float64) / total
+    cum_sum = np.cumsum(hist_n)
+    cum_mean = np.cumsum(hist_n * np.arange(256))
+    mean_total = cum_mean[-1]
+
+    best_t, best_v = 0, 0.0
+    for t in range(256):
+        w0, w1 = cum_sum[t], 1.0 - cum_sum[t]
+        if w0 == 0 or w1 == 0:
+            continue
+        mu0 = cum_mean[t] / w0
+        mu1 = (mean_total - cum_mean[t]) / w1
+        var = w0 * w1 * (mu0 - mu1) ** 2
+        if var > best_v:
+            best_v, best_t = var, t
+
+    return float(best_t)
 
 
 def _compute_adaptive_threshold(image_means: list[float]) -> float:
     """Calculate a data-driven brightness threshold for black-frame detection.
 
-    Analyses the distribution of mean pixel intensities in the darkest
-    ``DARK_PERCENTILE`` of frames. If a sharp brightness gap is found,
-    uses the midpoint as threshold; otherwise selects a conservative
-    fallback based on the observed dynamic range.
+    Uses Otsu's method on the full distribution of mean pixel intensities
+    to find the optimal binary split between "dark" and "bright" frames.
+    The result is clamped to ``MAX_THRESHOLD`` to avoid over-pruning
+    legitimate dark content.
+
+    Falls back to a conservative heuristic (``FULL_RANGE_FALLBACK`` /
+    ``LIMITED_RANGE_FALLBACK``) when no frames fall below the Otsu
+    threshold — indicating a clean dataset with no black frames.
 
     Args:
         image_means: List of mean pixel intensities per image.
@@ -75,42 +110,28 @@ def _compute_adaptive_threshold(image_means: list[float]) -> float:
         are considered black frames.
     """
     if not image_means:
-        return 3.0  # Safe minimum fallback floor
+        return 3.0
 
     sorted_means = np.sort(image_means)
+    log.info("Darkest frame: %.2f | Total frames: %d", sorted_means[0], len(sorted_means))
 
-    # Look for sharp brightness jumps within the lowest DARK_PERCENTILE of the dataset
-    lower_bound_count = max(1, int(len(sorted_means) * DARK_PERCENTILE))
-    dark_subset = sorted_means[:lower_bound_count]
-    percentile_15_score = sorted_means[lower_bound_count - 1]
+    hist, _ = np.histogram(sorted_means, bins=256, range=(0, 255))
+    otsu_t = _otsu_threshold(hist)
 
-    log.info("Absolute darkest frame mean: %.2f", sorted_means[0])
-    log.info("Dataset %dth percentile mean: %.2f", int(DARK_PERCENTILE * 100), percentile_15_score)
+    final = min(otsu_t, MAX_THRESHOLD)
+    log.info("Otsu threshold: %.2f → clamped: %.2f", otsu_t, final)
 
-    if len(dark_subset) > 1:
-        gaps = np.diff(dark_subset)
-        max_gap_idx = np.argmax(gaps)
+    if np.sum(sorted_means < final) == 0:
+        p15 = sorted_means[max(1, int(len(sorted_means) * DARK_PERCENTILE)) - 1]
+        log.info("No frames below threshold. 15th percentile: %.2f", p15)
+        if p15 < 10.0:
+            log.info("Data leans Full Range (0-255). Fallback: %.2f", FULL_RANGE_FALLBACK)
+            return FULL_RANGE_FALLBACK
+        else:
+            log.info("Data leans Limited Range (16-235). Fallback: %.2f", LIMITED_RANGE_FALLBACK)
+            return LIMITED_RANGE_FALLBACK
 
-        # If a true jump between dark noise and real footage exists, split the difference
-        if gaps[max_gap_idx] > GAP_THRESHOLD:
-            computed_threshold = float(dark_subset[max_gap_idx] + (gaps[max_gap_idx] / 2.0))
-            clamped_threshold = min(computed_threshold, MAX_THRESHOLD)
-
-            log.info(
-                "Detected brightness gap: %.2f (between %.2f and %.2f)",
-                gaps[max_gap_idx], dark_subset[max_gap_idx], dark_subset[max_gap_idx + 1])
-            log.info("Calculated optimal threshold: %.2f", clamped_threshold)
-            return clamped_threshold
-
-    # Smart Fallback logic based on dynamic ranges
-    log.info("No significant brightness gap detected in dark frames.")
-    if percentile_15_score < 10.0:
-        fallback_threshold = FULL_RANGE_FALLBACK
-        log.info("Data leans Full Range (0-255). Applying tight fallback: %.2f", fallback_threshold)
-    else:
-        fallback_threshold = LIMITED_RANGE_FALLBACK
-        log.info("Data leans Limited Range (16-235). Applying standard fallback: %.2f", fallback_threshold)
-    return fallback_threshold
+    return final
 
 
 def check_dataset_health(dataset_dir: Path,

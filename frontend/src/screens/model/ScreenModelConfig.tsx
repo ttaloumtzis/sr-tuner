@@ -556,6 +556,7 @@ function PretrainedPanel({ path, onChange }: PretrainedPanelProps) {
               browseTitle="Select Pretrained Weights"
               mono
               placeholder="None — train from scratch"
+              fileFilters={[{ name: "PyTorch Weights", extensions: ["pth", "pt", "safetensors"] }]}
             />
           </div>
           {path && (

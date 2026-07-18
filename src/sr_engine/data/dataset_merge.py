@@ -107,8 +107,9 @@ def merge_datasets(
     scale: Optional[int] = None,
     output_name: Optional[str] = None,
     reporter: Optional[ProgressReporter] = None,
+    dataset_dirs: Optional[list[Path]] = None,
 ) -> list[MergeResult]:
-    """Merge all datasets under *datasets_root* into combined datasets grouped by scale.
+    """Merge datasets under *datasets_root* into combined datasets grouped by scale.
 
     Each dataset subdirectory must contain ``HR/``, ``LR/``, and ``manifest.json``.
     Datasets are grouped by the ``scale`` value in their manifest. For each scale
@@ -124,6 +125,8 @@ def merge_datasets(
         output_name: Custom subdirectory name instead of ``scale_{N}``.
             Only allowed when merging a single scale group.
         reporter: Optional progress reporter.
+        dataset_dirs: If set, only merge these specific subdirectories (relative to
+            *datasets_root*). When omitted, all valid datasets are discovered.
 
     Returns:
         A list of ``MergeResult``, one per scale group processed.
@@ -135,7 +138,15 @@ def merge_datasets(
     """
     reporter = reporter or ProgressReporter()
 
-    datasets = _discover_datasets(datasets_root, exclude=out_dir)
+    if dataset_dirs is not None:
+        datasets = [d for d in dataset_dirs if _is_dataset_dir(d)]
+        if not datasets:
+            raise ValueError(
+                f"None of the specified directories are valid datasets. "
+                "Each must contain HR/, LR/, and manifest.json."
+            )
+    else:
+        datasets = _discover_datasets(datasets_root, exclude=out_dir)
     if not datasets:
         raise ValueError(
             f"No valid datasets found in '{datasets_root}'. "

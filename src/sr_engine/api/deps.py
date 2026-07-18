@@ -10,12 +10,9 @@ _workspace: Workspace | None = None
 _configs: DefaultConfigs | None = None
 
 
-def init_workspace(path: str | None = None) -> Workspace:
+def init_workspace(path: str) -> Workspace:
     global _workspace, _configs
-    if path:
-        _workspace = Workspace(Path(path))
-    else:
-        _workspace = Workspace.discover()
+    _workspace = Workspace(Path(path))
     _configs = DefaultConfigs(workspace=_workspace)
     return _workspace
 

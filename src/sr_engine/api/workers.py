@@ -1,4 +1,5 @@
 import logging
+import shutil
 import time
 from pathlib import Path
 
@@ -14,7 +15,7 @@ from sr_engine.data.dataset_builder import build_from_preprocessed, build_from_v
 from sr_engine.engine.inference import infer_image, infer_video, load_model
 from sr_engine.engine.trainer import Trainer, TrainingCancelled
 from sr_engine.models.registry import build_model
-from sr_engine.utils.config import load_config, merge_overrides
+from sr_engine.utils.config import DefaultConfigs, load_config, merge_overrides
 from sr_engine.workspace import Workspace
 
 log = logging.getLogger(__name__)
@@ -183,11 +184,13 @@ def run_dataset_build(
     job_id: str,
     params: dict,
     ws: Workspace | None,
+    cfg_loader: DefaultConfigs,
     tasks: BackgroundTaskManager,
     events: SSEEventManager,
 ) -> None:
     """Build a dataset in a background thread."""
     tasks.start_job(job_id)
+    t0 = time.time()
     try:
         input_path = Path(params["input"])
         out = params.get("out")
@@ -196,20 +199,174 @@ def run_dataset_build(
         if ws and out_path is None and input_path.is_file():
             out_path = ws.path / "datasets" / input_path.stem
 
+        cfg = cfg_loader.get_dataset_config()
+
+        degradations = params.get("degradations")
+        if degradations:
+            enabled = set(d.strip() for d in degradations.split(","))
+            _DEG_MAP = {
+                "blur": "blur", "noise": "noise", "jpeg": "jpeg",
+                "jpeg2000": "jpeg2000", "color-jitter": "color_jitter",
+            }
+            deg_cfg = cfg.setdefault("degradation", {})
+            for cli_name, cfg_key in _DEG_MAP.items():
+                if cfg_key in deg_cfg:
+                    deg_cfg[cfg_key]["enabled"] = cli_name in enabled
+
+        config_overrides = params.get("config_overrides")
+        if config_overrides:
+            cfg = merge_overrides(cfg, config_overrides)
+
         sse_reporter = SSEProgressReporter(events, job_id)
 
         if input_path.is_dir():
-            result = build_from_preprocessed(input_path, {}, reporter=sse_reporter)
+            result = build_from_preprocessed(input_path, cfg, reporter=sse_reporter)
         else:
             if out_path is None:
                 raise ValueError("--out is required for video files")
             out_path.parent.mkdir(parents=True, exist_ok=True)
-            result = build_from_video(input_path, out_path, {}, reporter=sse_reporter)
+            result = build_from_video(input_path, out_path, cfg, reporter=sse_reporter)
 
+        events.publish(job_id, {"type": "done", "elapsed_seconds": time.time() - t0, "output": str(result)})
         tasks.complete_job(job_id, {"output": str(result)})
 
     except Exception as e:
         log.exception("Dataset build job %s failed", job_id)
+        events.publish(job_id, {"type": "error", "code": type(e).__name__, "message": str(e)})
+        tasks.fail_job(job_id, str(e))
+    finally:
+        events.publish(job_id, None)
+
+
+def run_dataset_merge(
+    job_id: str,
+    params: dict,
+    tasks: BackgroundTaskManager,
+    events: SSEEventManager,
+) -> None:
+    """Merge datasets in a background thread."""
+    tasks.start_job(job_id)
+    t0 = time.time()
+    try:
+        from sr_engine.data.dataset_merge import merge_datasets
+
+        sse = SSEProgressReporter(events, job_id)
+
+        datasets_root = Path(params["input"])
+        out_dir = Path(params["out"]) if params.get("out") else None
+        if out_dir is None:
+            raise ValueError("--out is required for dataset merge")
+
+        results = merge_datasets(
+            datasets_root=datasets_root,
+            out_dir=out_dir,
+            scale=params.get("scale"),
+            output_name=params.get("name"),
+            reporter=sse,
+            dataset_dirs=[Path(d) for d in params["input_datasets"]] if params.get("input_datasets") else None,
+        )
+
+        results_dict = [
+            {"scale": r.scale, "output_path": str(r.output_path), "source_datasets": [str(s) for s in r.source_datasets]}
+            for r in results
+        ]
+
+        if not params.get("keep_sources", False):
+            for r in results:
+                for src in r.source_datasets:
+                    shutil.rmtree(src)
+
+        events.publish(job_id, {"type": "done", "elapsed_seconds": time.time() - t0, "results": results_dict})
+        tasks.complete_job(job_id, {"results": results_dict})
+
+    except Exception as e:
+        log.exception("Dataset merge job %s failed", job_id)
+        events.publish(job_id, {"type": "error", "code": type(e).__name__, "message": str(e)})
+        tasks.fail_job(job_id, str(e))
+    finally:
+        events.publish(job_id, None)
+
+
+def run_dataset_health(
+    job_id: str,
+    params: dict,
+    tasks: BackgroundTaskManager,
+    events: SSEEventManager,
+) -> None:
+    """Run dataset health check in a background thread."""
+    tasks.start_job(job_id)
+    t0 = time.time()
+    try:
+        from sr_engine.data.dataset_health import check_dataset_health
+
+        sse = SSEProgressReporter(events, job_id)
+        dataset_dir = Path(params["path"])
+        report = check_dataset_health(dataset_dir, reporter=sse)
+
+        events.publish(job_id, {"type": "done", "elapsed_seconds": time.time() - t0, "report": report})
+        tasks.complete_job(job_id, {"report": report})
+
+    except Exception as e:
+        log.exception("Dataset health job %s failed", job_id)
+        events.publish(job_id, {"type": "error", "code": type(e).__name__, "message": str(e)})
+        tasks.fail_job(job_id, str(e))
+    finally:
+        events.publish(job_id, None)
+
+
+def run_dataset_validate(
+    job_id: str,
+    params: dict,
+    tasks: BackgroundTaskManager,
+    events: SSEEventManager,
+) -> None:
+    """Validate a dataset in a background thread."""
+    tasks.start_job(job_id)
+    t0 = time.time()
+    try:
+        from sr_engine.data.dataset_validator import validate
+
+        sse = SSEProgressReporter(events, job_id)
+        dataset_dir = Path(params["path"])
+        report = validate(dataset_dir, reporter=sse)
+
+        events.publish(job_id, {
+            "type": "done",
+            "elapsed_seconds": time.time() - t0,
+            "validation": {"valid": report.ok, "problems": report.problems, "num_pairs": report.num_pairs},
+        })
+        tasks.complete_job(job_id, {"valid": report.ok, "problems": report.problems})
+
+    except Exception as e:
+        log.exception("Dataset validate job %s failed", job_id)
+        events.publish(job_id, {"type": "error", "code": type(e).__name__, "message": str(e)})
+        tasks.fail_job(job_id, str(e))
+    finally:
+        events.publish(job_id, None)
+
+
+def run_dataset_prune(
+    job_id: str,
+    dataset_path: str,
+    black_frames: list[str],
+    tasks: BackgroundTaskManager,
+    events: SSEEventManager,
+) -> None:
+    """Prune black frame pairs in a background thread."""
+    tasks.start_job(job_id)
+    try:
+        from sr_engine.data.dataset_health import prune_black_frames
+
+        sse = SSEProgressReporter(events, job_id)
+        dataset_dir = Path(dataset_path)
+        prune_black_frames(dataset_dir, black_frames, reporter=sse)
+
+        events.publish(job_id, {"type": "done", "message": f"Pruned {len(black_frames)} frames"})
+        tasks.complete_job(job_id, {"pruned": len(black_frames)})
+
+    except Exception as e:
+        log.exception("Dataset prune job %s failed", job_id)
+        events.publish(job_id, {"type": "error", "code": type(e).__name__, "message": str(e)})
         tasks.fail_job(job_id, str(e))
     finally:
         events.publish(job_id, None)

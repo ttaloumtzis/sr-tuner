@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from sr_engine.api.deps import get_configs, get_workspace
 from sr_engine.api.schemas import ExportParams, ModelInfo, ModelInstance
@@ -34,7 +34,10 @@ async def list_instances(ws: Workspace = Depends(get_workspace)):
 
 @router.get("/instances/{name}", response_model=ModelInstance)
 async def instance_info(name: str, ws: Workspace = Depends(get_workspace)):
-    inst = ws.get_model_instance(name)
+    try:
+        inst = ws.get_model_instance(name)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
     ckpts = ws.get_instance_checkpoints(name)
     return ModelInstance(
         name=inst.name,
@@ -48,7 +51,10 @@ async def instance_info(name: str, ws: Workspace = Depends(get_workspace)):
 async def export_model(name: str, params: ExportParams, ws: Workspace = Depends(get_workspace)):
     from sr_engine.models.checkpoint import export_checkpoint
 
-    inst = ws.get_model_instance(name)
+    try:
+        inst = ws.get_model_instance(name)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
     ckpt_path = params.output or str(inst.path / "checkpoints" / "latest.pt")
     out_path = export_checkpoint(
         Path(ckpt_path),

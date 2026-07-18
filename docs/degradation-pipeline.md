@@ -1090,17 +1090,16 @@ Profiles a dataset's spatial characteristics and identifies problematic frames (
 
 #### Adaptive Threshold for Black Frame Detection
 
-Rather than using a fixed brightness threshold, the health checker computes a data-driven threshold:
+Rather than using a fixed brightness threshold, the health checker uses **Otsu's method** on the histogram of all mean brightness values to find the optimal binary split between "dark" and "bright" frames:
 
-1. Sort all frame mean brightness values
-2. Analyze the lowest 15th percentile (`DARK_PERCENTILE = 0.15`)
-3. Look for the largest gap between consecutive values in this percentile
-4. If gap exceeds `GAP_THRESHOLD = 1.5`: threshold = midpoint of the gap (clamped to `MAX_THRESHOLD = 25.0`)
-5. If no gap found: fallback based on dynamic range
+1. Build a 256-bin histogram of all frame mean brightness values
+2. Apply Otsu's method to find the threshold that minimises intra-class variance
+3. Clamp the result to `MAX_THRESHOLD = 25.0` to avoid over-pruning legitimate dark content
+4. If no frames fall below the Otsu threshold (clean dataset): fallback based on dynamic range
    - If 15th percentile < 10.0: use `FULL_RANGE_FALLBACK = 3.5` (assumes 0-255 range)
    - Otherwise: use `LIMITED_RANGE_FALLBACK = 18.5` (assumes 16-235 video range)
 
-This approach adapts to different content types: a video with intentionally dark scenes gets a higher threshold than one with uniformly bright content.
+Otsu's method analyses the full distribution in one pass, so black frames are detected and pruned in a single round — no iterative threshold creep.
 
 #### Black Frame Pruning
 

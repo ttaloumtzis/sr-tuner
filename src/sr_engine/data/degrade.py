@@ -320,6 +320,8 @@ def batch_degrade(
         for hr_path, lr_path in results:
             if lr_path is not None:
                 pairs.append((hr_path, lr_path))
+            elif hr_path.exists():
+                hr_path.unlink()
             reporter.update(1)
 
     reporter.finish()

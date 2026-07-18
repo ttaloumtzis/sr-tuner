@@ -48,6 +48,7 @@ class DatasetBuildParams(BaseModel):
     out: str | None = None
     config: str | None = None
     degradations: str | None = None
+    config_overrides: dict | None = None
 
 class DatasetValidateParams(BaseModel):
     path: str
@@ -62,6 +63,11 @@ class DatasetMergeParams(BaseModel):
     scale: int | None = None
     name: str | None = None
     keep_sources: bool = False
+    input_datasets: list[str] | None = None
+
+class DatasetPruneParams(BaseModel):
+    path: str
+    black_frames: list[str]
 
 # ── Training ────────────────────────────────────────────────────────────
 

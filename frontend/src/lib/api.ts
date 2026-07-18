@@ -52,9 +52,11 @@ export const startInference = (params: InferParams) => request<JobAccepted>("POS
 // ── Datasets ────────────────────────────────────────────────────────────
 
 export const buildDataset = (params: DatasetBuildParams) => request<JobAccepted>("POST", "/api/datasets/build", params);
-export const validateDatasetPath = (params: DatasetValidateParams) => request<{ valid: boolean; problems: string[] }>("POST", "/api/datasets/validate", params);
-export const healthCheck = (params: DatasetHealthParams) => request<Record<string, unknown>>("POST", "/api/datasets/health", params);
-export const mergeDatasets = (params: DatasetMergeParams) => request<{ scale: number; output_path: string }[]>("POST", "/api/datasets/merge", params);
+export const validateDatasetPath = (params: DatasetValidateParams) => request<{ valid: boolean; problems: string[]; num_pairs: number }>("POST", "/api/datasets/validate", params);
+export const startValidateDataset = (params: DatasetValidateParams) => request<JobAccepted>("POST", "/api/datasets/validate-async", params);
+export const healthCheck = (params: DatasetHealthParams) => request<JobAccepted>("POST", "/api/datasets/health", params);
+export const mergeDatasets = (params: DatasetMergeParams) => request<JobAccepted>("POST", "/api/datasets/merge", params);
+export const pruneBlackFrames = (params: { path: string; black_frames: string[] }) => request<JobAccepted>("POST", "/api/datasets/prune", params);
 
 // ── Jobs ────────────────────────────────────────────────────────────────
 

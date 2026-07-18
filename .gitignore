@@ -8,6 +8,7 @@ dist/
 build/
 uv.lock
 .pytest_cache/
+.ruff_cache/
 .idea/
 graphify-out/
 .opencode/
@@ -17,3 +18,6 @@ experiments/
 .tokensave/
 .claude/
 checkpoints/
+frontend/node_modules/
+src-tauri/target/
+*.log

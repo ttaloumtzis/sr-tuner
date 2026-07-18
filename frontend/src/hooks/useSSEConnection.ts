@@ -2,8 +2,8 @@ import { useState, useEffect, useCallback } from "react";
 import { useUiStore } from "../store/uiStore";
 import { getBaseUrl } from "../lib/api";
 
-const MAX_RETRIES = 5;
-const BASE_DELAY = 1000;
+const MAX_RETRIES = 8;
+const BASE_DELAY = 3000;
 
 export function useSSEConnection() {
   const isConnected = useUiStore((s) => s.isServerConnected);
@@ -29,8 +29,12 @@ export function useSSEConnection() {
   useEffect(() => {
     if (isConnected) return;
 
+    let checking = false;
     const interval = setInterval(async () => {
+      if (checking) return;
+      checking = true;
       const ok = await checkHealth();
+      checking = false;
       if (!ok) {
         setRetryCount((r) => {
           const next = r + 1;

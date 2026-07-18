@@ -2,18 +2,18 @@ import threading
 
 from fastapi import APIRouter, Depends
 
-from sr_engine.api.deps import get_workspace
+from sr_engine.api.deps import get_configs, get_workspace
 from sr_engine.api.schemas import TrainParams
 from sr_engine.data.dataset_validator import validate
+from sr_engine.utils.config import DefaultConfigs
 from sr_engine.workspace import Workspace
 
 router = APIRouter(prefix="/api/train", tags=["training"])
 
 
 @router.post("/start")
-async def train_start(params: TrainParams, ws: Workspace = Depends(get_workspace)):
+async def train_start(params: TrainParams, ws: Workspace = Depends(get_workspace), cfg: DefaultConfigs = Depends(get_configs)):
     from sr_engine.api.app import events, tasks
-    from sr_engine.api.deps import _configs
     from sr_engine.api.workers import run_training
 
     job_id = tasks.create_job("train")
@@ -27,7 +27,7 @@ async def train_start(params: TrainParams, ws: Workspace = Depends(get_workspace
             "config": params.config,
             "resume": params.resume,
             "overrides": overrides,
-        }, ws, _configs, tasks, events),
+        }, ws, cfg, tasks, events),
         daemon=True,
     )
     thread.start()

@@ -7,11 +7,9 @@ import { Btn } from "../../components/ui/Btn";
 import { Field } from "../../components/ui/Field";
 import { Toggle } from "../../components/ui/Toggle";
 import { PathInput } from "../../components/ui/PathInput";
-import { Dropdown } from "../../components/ui/Dropdown";
-import type { DropdownOption } from "../../components/ui/Dropdown";
+import { Dropdown, type DropdownOption } from "../../components/ui/Dropdown";
 import { useRunConfigStore } from "../../store/runConfigStore";
 import { useModelStore } from "../../store/modelStore";
-import { useDatasetStore } from "../../store/datasetStore";
 import { useProjectStore } from "../../store/projectStore";
 import type { Architecture } from "../../lib/srproj";
 import { estimateVram } from "../../lib/vramEstimate";
@@ -196,8 +194,6 @@ export function ScreenTrainingSetup() {
   // modelStore
   const architecture = useModelStore((s) => s.architecture);
   const hyperparameters = useModelStore((s) => s.hyperparameters);
-  const pretrainedPath = useModelStore((s) => s.pretrainedPath);
-  const augmentations = useModelStore((s) => s.augmentations);
   const setArchitecture = useModelStore((s) => s.setArchitecture);
   const setHyperparameters = useModelStore((s) => s.setHyperparameters);
 
@@ -206,23 +202,28 @@ export function ScreenTrainingSetup() {
   const savedModels = project?.models ?? [];
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
 
-  // datasetStore
-  const hrPath = useDatasetStore((s) => s.hrPath);
-  const validationPath = useDatasetStore((s) => s.validationPath);
-  const strategy = useDatasetStore((s) => s.strategy);
-  const setHrPath = useDatasetStore((s) => s.setHrPath);
-  const setValidationPath = useDatasetStore((s) => s.setValidationPath);
+  // dataset paths
+  const [trainingPath, setTrainingPath] = useState("");
+  const [validationPath, setValidationPath] = useState<string | null>(null);
 
   // §11.9 — local dataset validation state
   const [datasetValid, setDatasetValid] = useState<boolean | null>(null);
   const [datasetErrors, setDatasetErrors] = useState<string[]>([]);
 
   // §11.9 — send dataset.validate.request
-  const sendValidate = useCallback(() => {
+  const sendValidate = useCallback(async () => {
     setDatasetValid(null);
     setDatasetErrors([]);
-    // TODO: replace with api call
-  }, [hrPath, validationPath, strategy]);
+    try {
+      const { validateDatasetPath } = await import("../../lib/api");
+      const res = await validateDatasetPath({ path: trainingPath });
+      setDatasetValid(res.valid);
+      setDatasetErrors(res.problems);
+    } catch (e) {
+      setDatasetValid(false);
+      setDatasetErrors([String(e)]);
+    }
+  }, [trainingPath]);
 
 // §11.14 — GPU device dropdown options
   const deviceOptions: DropdownOption[] = [
@@ -251,8 +252,24 @@ export function ScreenTrainingSetup() {
 
   // §11.12 / §11.11 / §11.13 — build and send training.start
   const handleLaunch = useCallback(async () => {
-    // TODO: build payload and call startTraining()
-  }, [architecture, hyperparameters, pretrainedPath, schedule, fp16, compile, tensorboard, augmentations, hrPath, validationPath, strategy, checkpointDir, outputDir, resumeFrom]);
+    try {
+      const { startTraining } = await import("../../lib/api");
+      const res = await startTraining({
+        model_name: architecture,
+        instance: selectedModelId ?? "",
+        dataset: trainingPath,
+        device: "auto",
+        batch_size: hyperparameters.batchSize,
+        learning_rate: hyperparameters.learningRate,
+        max_epochs: schedule.totalEpochs,
+        patch_size: hyperparameters.patchSize,
+        fp16: fp16 || undefined,
+      });
+      console.log("Training started, job_id:", res.job_id);
+    } catch (e) {
+      console.error("Training launch failed:", e);
+    }
+  }, [architecture, selectedModelId, trainingPath, hyperparameters, schedule, fp16]);
 
   // §11.10 — save config as YAML (wired in §13)
   const handleSaveYaml = useCallback(() => {
@@ -456,14 +473,13 @@ export function ScreenTrainingSetup() {
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <Field label="Training Data">
               <PathInput
-                value={hrPath}
-                onChange={setHrPath}
+                value={trainingPath}
+                onChange={setTrainingPath}
                 browseTitle="Select training dataset folder"
                 placeholder="path/to/training/hr"
               />
             </Field>
-            {strategy !== "none" && (
-              <Field label="Validation Data">
+            <Field label="Validation Data">
                 <PathInput
                   value={validationPath ?? ""}
                   onChange={setValidationPath}
@@ -471,7 +487,6 @@ export function ScreenTrainingSetup() {
                   placeholder="path/to/validation/hr"
                 />
               </Field>
-            )}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <Field label="Workers">
                 <NumInput value={4} onChange={() => {}} min={0} max={16} />
@@ -501,10 +516,11 @@ export function ScreenTrainingSetup() {
             <Field label="Architecture">
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {savedModels.length > 0 && (
-                  <select
+                  <Dropdown
                     value={selectedModelId ?? ""}
-                    onChange={(e) => {
-                      const model = savedModels.find((m) => m.id === e.target.value);
+                    options={[{ value: "", label: "— Saved Models —" }, ...savedModels.map((m) => ({ value: m.id, label: `${m.name} (${m.architecture})` }))]}
+                    onChange={(v) => {
+                      const model = savedModels.find((m) => m.id === v);
                       if (model) {
                         setSelectedModelId(model.id);
                         setArchitecture(model.architecture);
@@ -518,13 +534,7 @@ export function ScreenTrainingSetup() {
                         });
                       }
                     }}
-                    style={{ background: "var(--bg3)", border: "1px solid var(--border)", color: "var(--text)", fontSize: 11, padding: "4px 6px", borderRadius: "var(--radius-sm)" }}
-                  >
-                    <option value="">— Saved Models —</option>
-                    {savedModels.map((m) => (
-                      <option key={m.id} value={m.id}>{m.name} ({m.architecture})</option>
-                    ))}
-                  </select>
+                  />
                 )}
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
                   {ARCH_OPTIONS.map((arch) => (

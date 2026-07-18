@@ -1,7 +1,6 @@
 import { useEffect } from "react";
 import { ToastProvider } from "./components/shell/ToastProvider";
-import { TitleBar } from "./components/shell/TitleBar";
-import { LandingTitleBar } from "./components/shell/LandingTitleBar";
+
 import { TabBar } from "./components/shell/TabBar";
 import { StatusBar } from "./components/shell/StatusBar";
 import { ErrorRouter } from "./components/shell/ErrorRouter";
@@ -9,7 +8,7 @@ import { ConnectionErrorDialog } from "./components/shell/ConnectionErrorDialog"
 import { useProjectStore } from "./store/projectStore";
 import { useUiStore } from "./store/uiStore";
 import { useSSEConnection } from "./hooks/useSSEConnection";
-import { initApiUrl } from "./lib/api";
+import { initApiUrl, initWorkspace } from "./lib/api";
 import { ProjectScreen } from "./screens/ProjectScreen";
 import { ScreenDatasetSetup } from "./screens/dataset/ScreenDatasetSetup";
 import { ScreenModelConfig } from "./screens/model/ScreenModelConfig";
@@ -51,7 +50,6 @@ function ProjectLayout() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", width: "100%", height: "100%", overflow: "hidden" }}>
-      <TitleBar />
       <TabBar />
       <TabContent />
       <StatusBar />
@@ -64,7 +62,6 @@ function ProjectLayout() {
 function LandingLayout() {
   return (
     <div style={{ display: "flex", flexDirection: "column", width: "100%", height: "100%", overflow: "hidden" }}>
-      <LandingTitleBar />
       <ProjectScreen />
     </div>
   );
@@ -79,11 +76,19 @@ export default function App() {
       try {
         const { invoke } = await import("@tauri-apps/api/core");
         await invoke("start_python_server");
-      } catch {
-        // running in browser or server already running
+      } catch (err) {
+        console.error("Python server failed to start:", err);
       }
     })();
   }, []);
+
+  useEffect(() => {
+    if (!project) return;
+    const projectDir = project.filePath.replace(/\/[^/]+\.srproj$/, "");
+    initWorkspace(projectDir).catch((err) => {
+      console.warn("Workspace init failed (non-fatal):", err);
+    });
+  }, [project]);
 
   return (
     <ToastProvider>

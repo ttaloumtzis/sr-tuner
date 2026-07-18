@@ -76,6 +76,7 @@ export interface DatasetBuildParams {
   out?: string;
   config?: string;
   degradations?: string;
+  config_overrides?: Record<string, unknown>;
 }
 
 export interface DatasetValidateParams {
@@ -93,6 +94,17 @@ export interface DatasetMergeParams {
   scale?: number;
   name?: string;
   keep_sources?: boolean;
+  input_datasets?: string[];
+}
+
+export interface DatasetManifest {
+  config: {
+    scale: number;
+    frame_rate?: number | null;
+    video_source?: string;
+    sources?: string[];
+  };
+  pairs: { hr: string; lr: string }[];
 }
 
 export interface CheckpointEntry {

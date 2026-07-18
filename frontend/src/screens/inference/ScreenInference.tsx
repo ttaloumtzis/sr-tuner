@@ -13,7 +13,7 @@ import { Field } from "../../components/ui/Field";
 import { Toggle } from "../../components/ui/Toggle";
 import { PathInput } from "../../components/ui/PathInput";
 import { Dropdown } from "../../components/ui/Dropdown";
-import { FilePicker } from "../../components/ui/FilePicker";
+import { open } from "@tauri-apps/plugin-dialog";
 import { PBar } from "../../components/ui/PBar";
 
 
@@ -46,7 +46,6 @@ interface DropZoneProps {
 
 function DropZone({ label, path, accent = "var(--border)", onSelect, onClear, browseTitle }: DropZoneProps) {
   const [dragOver, setDragOver] = useState(false);
-  const [pickerOpen, setPickerOpen] = useState(false);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -105,7 +104,16 @@ function DropZone({ label, path, accent = "var(--border)", onSelect, onClear, br
           <span style={{ fontSize: 10, color: "var(--dim)" }}>{label}</span>
         )}
         <div style={{ display: "flex", gap: 4 }}>
-          <Btn small onClick={() => setPickerOpen(true)}>
+          <Btn small onClick={async () => {
+            const selected = await open({
+              directory: false,
+              multiple: false,
+              title: browseTitle,
+              defaultPath: path ?? undefined,
+              filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "bmp", "tiff", "tif"] }],
+            });
+            if (selected) onSelect(selected);
+          }}>
             Browse…
           </Btn>
           {onClear && path && (
@@ -115,16 +123,6 @@ function DropZone({ label, path, accent = "var(--border)", onSelect, onClear, br
           )}
         </div>
       </div>
-      <FilePicker
-        isOpen={pickerOpen}
-        title={browseTitle}
-        defaultPath={path ?? ""}
-        onSelect={(p) => {
-          onSelect(p);
-          setPickerOpen(false);
-        }}
-        onClose={() => setPickerOpen(false)}
-      />
     </>
   );
 }

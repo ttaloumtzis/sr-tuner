@@ -2,7 +2,6 @@ export { Btn } from "./Btn";
 export { Dropdown } from "./Dropdown";
 export type { DropdownOption } from "./Dropdown";
 export { Field } from "./Field";
-export { FilePicker } from "./FilePicker";
 export { InfoRow } from "./InfoRow";
 export { Panel } from "./Panel";
 export { PathInput } from "./PathInput";

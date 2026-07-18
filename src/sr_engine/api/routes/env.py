@@ -1,5 +1,3 @@
-import torch
-
 from fastapi import APIRouter
 
 from sr_engine.api.schemas import EnvInfo
@@ -14,6 +12,19 @@ router = APIRouter(prefix="/api/env", tags=["environment"])
 
 @router.get("", response_model=EnvInfo)
 async def env_check():
+    try:
+        import torch
+    except ImportError:
+        return EnvInfo(
+            torch_version=None,
+            device="none",
+            cuda_available=False,
+            rocm=False,
+            bf16_supported=False,
+            flash_attn=False,
+            device_name=None,
+            vram_total_mb=None,
+        )
     device = get_device()
     is_cuda = torch.cuda.is_available()
     dev_name = None
