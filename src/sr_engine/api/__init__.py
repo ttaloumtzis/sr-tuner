@@ -1,0 +1,1 @@
+"""HTTP API — FastAPI server, SSE events, background task management."""

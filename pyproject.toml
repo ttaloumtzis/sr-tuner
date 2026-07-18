@@ -12,6 +12,8 @@ dependencies = [
     "opencv-python>=4.8",
     "pillow>=10.0",
     "tqdm>=4.66",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
 ]
 
 [project.scripts]

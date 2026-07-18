@@ -9,7 +9,6 @@ from torch.utils.data import DataLoader, Dataset, random_split
 
 from sr_engine.utils.progress import ProgressReporter
 from sr_engine.device.backend import autocast_dtype
-
 from sr_engine.data.datasets import PairedImageFolderDataset
 from sr_engine.data.transforms import CenterCrop, Compose, RandomCrop, RandomFlip, RandomRotate
 from sr_engine.engine.metrics import psnr, ssim
@@ -20,6 +19,10 @@ from sr_engine.models.registry import build_model
 from sr_engine.utils.logging import get_logger
 
 log = get_logger(__name__)
+
+
+class TrainingCancelled(Exception):
+    """Raised when training is cancelled via cancel_check()."""
 
 
 class _TransformSubset(Dataset):
@@ -419,8 +422,7 @@ class Trainer:
                 log.warning("Cancellation requested — saving checkpoint at epoch %d", epoch + 1)
                 self._save(epoch + 1)
                 self._emit("phase", phase="cancelled", epoch=epoch + 1)
-                import sys
-                sys.exit(130)
+                raise TrainingCancelled()
 
             self._progress.start(total=len(self.train_dataloader),
                                  desc=f"Epoch {epoch+1}/{self.max_epochs}")

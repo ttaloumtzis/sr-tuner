@@ -3,6 +3,7 @@
 import concurrent.futures
 from functools import partial
 import logging
+import multiprocessing
 import os
 import random
 from pathlib import Path
@@ -310,7 +311,10 @@ def batch_degrade(
     reporter = reporter or ProgressReporter()
     reporter.start(total=len(hr_paths), desc="Degrading Dataset Frames")
 
-    with concurrent.futures.ProcessPoolExecutor(initializer=_init_worker) as executor:
+    with concurrent.futures.ProcessPoolExecutor(
+        initializer=_init_worker,
+        mp_context=multiprocessing.get_context("spawn"),
+    ) as executor:
         results = executor.map(worker, hr_paths)
 
         for hr_path, lr_path in results:

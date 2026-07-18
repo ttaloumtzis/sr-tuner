@@ -1,0 +1,23 @@
+import { vi } from "vitest";
+
+export const apiGet = vi.fn();
+export const apiPost = vi.fn();
+export const initApiUrl = vi.fn().mockResolvedValue(undefined);
+export const getBaseUrl = vi.fn().mockReturnValue("http://localhost:8765");
+export const getWorkspace = vi.fn();
+export const initWorkspace = vi.fn();
+export const listModels = vi.fn();
+export const listInstances = vi.fn();
+export const getInstance = vi.fn();
+export const startTraining = vi.fn();
+export const startInference = vi.fn();
+export const buildDataset = vi.fn();
+export const validateDatasetPath = vi.fn();
+export const healthCheck = vi.fn();
+export const mergeDatasets = vi.fn();
+export const listJobs = vi.fn();
+export const getJobStatus = vi.fn();
+export const cancelJob = vi.fn();
+export const getEnv = vi.fn();
+export const exportModel = vi.fn();
+export const validateDataset = vi.fn();

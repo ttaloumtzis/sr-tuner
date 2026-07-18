@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"Default capabilities for SR Tuner","local":true,"windows":["main"],"permissions":["core:default","dialog:allow-open","dialog:allow-save","dialog:allow-message","dialog:allow-confirm","fs:allow-read","fs:allow-write","fs:allow-exists","fs:allow-mkdir","fs:allow-remove","fs:allow-read-dir","fs:allow-app-read","fs:allow-app-write"]}}

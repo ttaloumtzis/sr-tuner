@@ -15,7 +15,7 @@ from sr_engine.models.checkpoint import load_checkpoint
 from sr_engine.models.registry import build_model
 
 
-def _load_model(model_checkpoint: Path, device: str) -> tuple[torch.nn.Module, int]:
+def load_model(model_checkpoint: Path, device: str) -> tuple[torch.nn.Module, int]:
     """Load a checkpoint, rebuild the model architecture, and load its weights.
 
     Returns the model (in eval mode, moved to *device*) and its configured
@@ -35,6 +35,9 @@ def _load_model(model_checkpoint: Path, device: str) -> tuple[torch.nn.Module, i
 
     scale = int(config.get("scale", 4))
     return model, scale
+
+# Backward-compatible alias
+_load_model = load_model
 
 
 def _read_image_tensor(path: Path) -> torch.Tensor:
@@ -118,7 +121,7 @@ def infer_image(
         Path to the output image.
     """
     if model is None:
-        model, scale = _load_model(model_checkpoint, device)
+        model, scale = load_model(model_checkpoint, device)
     else:
         assert scale is not None, "scale is required when passing a pre-loaded model"
 
@@ -160,7 +163,7 @@ def infer_video(
         Path to the output video.
     """
     if model is None:
-        model, scale = _load_model(model_checkpoint, device)
+        model, scale = load_model(model_checkpoint, device)
     else:
         assert scale is not None, "scale is required when passing a pre-loaded model"
 

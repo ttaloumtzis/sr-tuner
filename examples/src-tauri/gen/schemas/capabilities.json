@@ -1,1 +1,0 @@
-{"default":{"identifier":"default","description":"Default capability — grants core IPC and filesystem directory listing for FilePicker","local":true,"windows":["main"],"permissions":["core:default","dialog:allow-open",{"identifier":"fs:allow-read-dir","allow":[{"path":"**"}]}]}}
