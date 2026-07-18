@@ -1,0 +1,51 @@
+name: CI - Python
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv and Python 3.11
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-suffix: "python"
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Install CPU PyTorch
+        run: uv pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
+
+      - name: Lint with ruff
+        run: uv run ruff check src/
+
+      - name: Test with pytest
+        run: uv run pytest tests/ -m "not gpu and not slow and not network" -v --tb=short
+
+      - name: Verify package build
+        run: uv build
