@@ -62,7 +62,7 @@ uv run pytest tests/ -m "gpu"     # GPU-required tests (skipped if no GPU)
 | `sample_video` | Small test video file |
 | `corrupt_image` | Intentionally broken image for error handling tests |
 | `mock_torch_cuda` | Mocks `torch.cuda.is_available()` for CPU CI |
-| `mock_socket` | Mock TCP socket for GUI bridge tests |
+| `mock_socket` | Mock TCP socket for API server tests |
 
 ## Code Quality
 

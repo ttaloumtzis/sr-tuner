@@ -23,7 +23,7 @@ The workspace system provides structured project organization, path auto-resolut
 │           └── run_<timestamp>/
 │               ├── train_config.yaml
 │               └── metrics.jsonl  # (optional, --machine mode)
-├── jobs/                          # Job manifests (GUI bridge)
+├── jobs/                          # Job manifests (API server async jobs)
 │   └── <job_id>.json
 ├── experiments/                   # Experiment data
 ├── configs/                       # User-overridable configs

@@ -1,6 +1,6 @@
 # sr-engine
 
-Super-resolution (SR) engine for training and running deep learning-based super-resolution models on images and video. Supports both NVIDIA (CUDA) and AMD (ROCm) GPUs with a unified CLI, configurable degradation pipelines, model versioning, and a GUI bridge for external frontends.
+Super-resolution (SR) engine for training and running deep learning-based super-resolution models on images and video. Supports both NVIDIA (CUDA) and AMD (ROCm) GPUs with a unified CLI, a FastAPI REST API, a configurable desktop GUI (React/Tauri), model versioning, and configurable degradation pipelines.
 
 ## Features
 
@@ -13,8 +13,9 @@ Super-resolution (SR) engine for training and running deep learning-based super-
 - **Model versioning** — Named model instances with versioned checkpoints and per-run metadata tracking
 - **Workspace management** — Structured project directories (`datasets/`, `models/`, `experiments/`, `configs/`) with auto-discovery via workspace marker file
 - **Device abstraction** — Unified CUDA/ROCm backend detection with autocast dtype selection and flash attention support
-- **GUI bridge** — TCP socket server for external GUI frontends with async job management and progress reporting
-- **CLI** — Full-featured Click-based command-line interface
+- **HTTP API server** — FastAPI-based REST API with real-time SSE progress streaming, background job management, and comprehensive endpoints for all operations
+- **Desktop GUI** — React/TypeScript frontend with Tauri 2 desktop shell, providing a native interface for project management, dataset operations, model training, inference, and checkpoint management
+- **CLI** — Full-featured Click-based command-line interface with standalone command aliases
 
 ## Requirements
 
@@ -151,11 +152,49 @@ srengine env check
 srengine env bench --model rrdb_esrgan --iterations 50
 ```
 
-### GUI server
+### API server
+
+Start the FastAPI-based HTTP server to enable the desktop GUI or third-party integrations:
 
 ```bash
-srengine serve start --port 8765
+# Start on default port (8765)
+srengine serve start
+
+# Custom port and host
+srengine serve start --host 0.0.0.0 --port 8080
 ```
+
+The server provides:
+- **RESTful endpoints** for all operations (workspace, datasets, models, training, inference)
+- **Server-Sent Events (SSE)** for real-time job progress
+- **Background job management** with cancellation and status tracking
+- **CORS-enabled** for cross-origin frontend access
+
+### Desktop GUI
+
+The project includes a native desktop application built with **Tauri 2** (Rust shell) and **React 18 + TypeScript**:
+
+```bash
+# Prerequisites: Rust toolchain, Node.js 18+
+cd frontend
+npm install
+
+# Development mode (requires API server running)
+npm run dev
+
+# Production build
+npm run build
+# Or build the Tauri desktop app
+npx tauri build
+```
+
+The GUI provides tab-based navigation for:
+- **Project management** — Create, open, and manage workspaces
+- **Dataset operations** — Build from video, browse, validate, merge, health check
+- **Model management** — Create instances, view version history, export checkpoints
+- **Training** — Configure hyperparameters, launch runs, live metrics dashboard
+- **Inference** — Drag-and-drop image input, before/after comparison with metrics
+- **Checkpoints** — Browse, sort, filter, and manage model checkpoints
 
 ### Python API
 
@@ -200,7 +239,24 @@ infer_image(
 │       │   ├── cmd_env.py       # env check, env bench
 │       │   ├── cmd_serve.py     # serve start
 │       │   ├── workspace_commands.py  # workspace init, info, check
-│       │   └── helpers.py       # Config loading, progress, GUI bridge integration
+│       │   └── helpers.py       # Config loading, progress, workspace resolution
+│       ├── api/                 # FastAPI REST API server
+│       │   ├── app.py           # FastAPI app, lifespan, CORS, SSE endpoint
+│       │   ├── schemas.py       # Pydantic request/response models
+│       │   ├── deps.py          # Dependency injection (workspace, configs)
+│       │   ├── task_manager.py  # Background task registry
+│       │   ├── event_manager.py # SSE event bus
+│       │   ├── callbacks.py     # SSECallback for trainer integration
+│       │   ├── progress.py      # SSEProgressReporter
+│       │   ├── workers.py       # Background worker threads
+│       │   └── routes/          # API route handlers
+│       │       ├── workspace.py
+│       │       ├── models.py
+│       │       ├── training.py
+│       │       ├── inference.py
+│       │       ├── datasets.py
+│       │       ├── jobs.py
+│       │       └── env.py
 │       ├── data/                # Data pipeline
 │       │   ├── dataset_builder.py  # build_from_video, build_from_preprocessed
 │       │   ├── dataset_validator.py# Dataset validation (ValidationReport, validate)
@@ -236,6 +292,20 @@ infer_image(
 │       │   ├── logging.py          # get_logger
 │       │   └── progress.py         # ProgressReporter, TqdmReporter
 │       └── workspace.py           # Workspace discovery/init, ModelInstance, versioning
+├── frontend/              # React/TypeScript desktop GUI
+│   ├── src/
+│   │   ├── App.tsx        # Root component with tab routing
+│   │   ├── screens/       # 6 tab screens (project, dataset, model, training, metrics, inference, checkpoints)
+│   │   ├── store/         # 9 Zustand state stores
+│   │   ├── hooks/         # Custom React hooks (SSE, etc.)
+│   │   ├── components/    # Reusable UI components
+│   │   └── lib/           # API client, types, utilities
+│   ├── package.json
+│   └── vite.config.ts
+├── src-tauri/             # Tauri 2 desktop shell (Rust)
+│   ├── src/lib.rs         # Tauri commands (Python server lifecycle, filesystem)
+│   ├── Cargo.toml
+│   └── tauri.conf.json
 ├── tests/                # Test suite (pytest)
 │   ├── conftest.py       # Shared fixtures and helpers
 │   ├── test_trainer.py   # Trainer tests
@@ -249,6 +319,9 @@ infer_image(
 ├── docs/                 # Documentation files
 │   ├── architecture.md
 │   ├── cli-reference.md
+│   ├── api-reference.md
+│   ├── frontend.md
+│   ├── desktop.md
 │   ├── training.md
 │   ├── data-pipeline.md
 │   ├── inference.md

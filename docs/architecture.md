@@ -2,59 +2,80 @@
 
 ## Layered Module Design
 
-sr-engine follows a **layered modular architecture** with strict one-directional dependencies. Each layer depends only on the layers below it.
+sr-engine follows a **layered modular architecture** with strict one-directional dependencies. Each layer depends only on the layers below it. The system is accessed through three interfaces: CLI, REST API, and Desktop GUI.
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                    CLI Layer (cli/)                           │
-│  main.py │ cmd_train.py │ cmd_infer.py │ cmd_dataset.py      │
-│  cmd_model.py │ cmd_env.py │ cmd_serve.py │ workspace_cmds   │
-│  helpers.py                                                   │
-├──────────────────────────────────────────────────────────────┤
-│                                                              │
-│  ┌────────────────────────────────────────────────────┐      │
-│  │           Config Layer (utils/config.py)            │      │
-│  │  4-level merge: builtin → module → file → CLI      │      │
-│  └────────────────────┬───────────────────────────────┘      │
-│                       │                                      │
-│  ┌────────────────────▼───────────────────────────────┐      │
-│  │            Workspace Layer (workspace.py)           │      │
-│  │  Auto-detect, project/model CRUD, dataset resolve  │      │
-│  └────────────────────┬───────────────────────────────┘      │
-│                       │                                      │
-├───────────────────────┼──────────────────────────────────────┤
-│                       │                                      │
-│  ┌────────────────────▼──────────┐  ┌────────────────────┐   │
-│  │     Data Pipeline (data/)     │  │  Engine (engine/)  │   │
-│  │                               │  │                    │   │
-│  │  video_extract.py             │  │  trainer.py        │   │
-│  │  degrade.py                   │  │  inference.py      │   │
-│  │  dataset_builder.py           │  │  tiling.py         │   │
-│  │  dataset_validator.py         │  │  metrics.py        │   │
-│  │  dataset_health.py            │  │  metrics_stream.py │   │
-│  │  datasets.py  (Dataset)       │  │                    │   │
-│  │  transforms.py                │  │                    │   │
-│  └───────────────────────────────┘  └────────────────────┘   │
-│                       │                                      │
-│  ┌────────────────────▼───────────────────────────────┐      │
-│  │            Models Layer (models/)                   │      │
-│  │  registry.py │ checkpoint.py │ losses.py            │      │
-│  │  archs/rrdbnet.py │ archs/swinir.py                │      │
-│  └────────────────────┬───────────────────────────────┘      │
-│                       │                                      │
-│  ┌────────────────────▼───────────────────────────────┐      │
-│  │       Device Layer (device/)                        │      │
-│  │  backend.py │ kernels.py                            │      │
-│  │  CUDA/ROCm detection, flash-attn, AMP               │      │
-│  └────────────────────────────────────────────────────┘      │
-│                                                              │
-└──────────────────────────────────────────────────────────────┘
+                          ┌──────────────────────────────────────┐
+                          │        Desktop GUI (frontend/)       │
+                          │  React 18 + TypeScript + Zustand     │
+                          │  7 tab screens, 9 stores, SSE hooks  │
+                          └──────────────┬───────────────────────┘
+                                         │ HTTP (localhost:8765)
+                          ┌──────────────▼───────────────────────┐
+                          │     Tauri 2 Shell (src-tauri/)       │
+                          │  Rust process manager, filesystem    │
+                          │  Spawns/kills Python server          │
+                          └──────────────┬───────────────────────┘
+                                         │ HTTP (localhost:8765)
+┌───────────────────────────────────────────────────────────────────┐
+│                    HTTP API Layer (api/)                          │
+│  FastAPI + Uvicorn │ Pydantic schemas │ SSE events              │
+│  Routes: workspace, models, datasets, train, infer, jobs, env   │
+│  Background workers │ Task manager │ Event bus                   │
+├───────────────────────────────────────────────────────────────────┤
+│                                                                   │
+│  ┌────────────────────────────────────────────────────┐          │
+│  │                CLI Layer (cli/)                     │          │
+│  │  main.py │ cmd_train.py │ cmd_infer.py │ cmd_dataset│          │
+│  │  cmd_model.py │ cmd_env.py │ cmd_serve.py │ workspace_cmds    │
+│  └────────────────────┬───────────────────────────────┘          │
+│                       │                                          │
+│  ┌────────────────────▼───────────────────────────────┐          │
+│  │           Config Layer (utils/config.py)            │          │
+│  │  4-level merge: builtin → module → file → CLI      │          │
+│  └────────────────────┬───────────────────────────────┘          │
+│                       │                                          │
+│  ┌────────────────────▼───────────────────────────────┐          │
+│  │            Workspace Layer (workspace.py)           │          │
+│  │  Auto-detect, project/model CRUD, dataset resolve  │          │
+│  └────────────────────┬───────────────────────────────┘          │
+│                       │                                          │
+├───────────────────────┼──────────────────────────────────────────┤
+│                       │                                          │
+│  ┌────────────────────▼──────────┐  ┌────────────────────┐       │
+│  │     Data Pipeline (data/)     │  │  Engine (engine/)  │       │
+│  │                               │  │                    │       │
+│  │  video_extract.py             │  │  trainer.py        │       │
+│  │  degrade.py                   │  │  inference.py      │       │
+│  │  dataset_builder.py           │  │  tiling.py         │       │
+│  │  dataset_validator.py         │  │  metrics.py        │       │
+│  │  dataset_health.py            │  │  metrics_stream.py │       │
+│  │  datasets.py  (Dataset)       │  │                    │       │
+│  │  transforms.py                │  │                    │       │
+│  └───────────────────────────────┘  └────────────────────┘       │
+│                       │                                          │
+│  ┌────────────────────▼───────────────────────────────┐          │
+│  │            Models Layer (models/)                   │          │
+│  │  registry.py │ checkpoint.py │ losses.py            │          │
+│  │  archs/rrdbnet.py │ archs/swinir.py                │          │
+│  └────────────────────┬───────────────────────────────┘          │
+│                       │                                          │
+│  ┌────────────────────▼───────────────────────────────┐          │
+│  │       Device Layer (device/)                        │          │
+│  │  backend.py │ kernels.py                            │          │
+│  │  CUDA/ROCm detection, flash-attn, AMP               │          │
+│  └────────────────────────────────────────────────────┘          │
+│                                                                   │
+└───────────────────────────────────────────────────────────────────┘
 ```
 
 ## Module Responsibilities
 
 | Module | Package | Responsibility |
 |--------|---------|----------------|
+| **Desktop GUI** | `frontend/` | React 18 + TypeScript UI with 7 tab screens, 9 Zustand stores, SSE-based real-time updates |
+| **Tauri Shell** | `src-tauri/` | Rust desktop process manager — spawns/kills Python server, exposes filesystem commands |
+| **HTTP API** | `api/` | FastAPI REST server: 20+ endpoints, Pydantic schemas, SSE event streaming, background workers |
 | **CLI** | `cli/` | Click command tree, argument parsing, terminal output |
 | **Config** | `utils/config.py` | YAML loading, 4-level merge, validation |
 | **Workspace** | `workspace.py` | Directory auto-discovery, path resolution, project/instance CRUD |
@@ -150,6 +171,76 @@ Input image/video
               │
               ▼
       Write output (image or encoded video)
+```
+
+### REST API Request Flow
+
+```
+Desktop GUI / curl / HTTP client
+       │
+       ▼
+  FastAPI (api/app.py)
+       │
+       ├── CORS middleware ──► validate origin
+       ├── Route handler (api/routes/*.py)
+       │       │
+       │       ├── Sync: validate → respond immediately
+       │       │     GET  /api/health
+       │       │     GET  /api/env
+       │       │     GET  /api/workspace
+       │       │     GET  /api/models
+       │       │     GET  /api/models/instances
+       │       │     GET  /api/datasets
+       │       │     POST /api/datasets/validate
+       │       │
+       │       └── Async: validate → spawn worker → respond {job_id}
+       │             POST /api/train/start
+       │             POST /api/infer/start
+       │             POST /api/datasets/build
+       │             POST /api/datasets/health
+       │             POST /api/datasets/merge
+       │             POST /api/datasets/prune
+       │             POST /api/datasets/validate-async
+       │
+       ├── Background worker (workers.py)
+       │       │
+       │       ├── thread: execute operation
+       │       ├── progress → SSE event (event_manager.py)
+       │       └── completion → job status update (task_manager.py)
+       │
+       └── SSE stream (GET /api/events?job_id=)
+               │
+               ├── event: progress_start
+               ├── event: progress_update
+               ├── event: phase / step / validate
+               ├── event: hardware (GPU/CPU/RAM stats)
+               ├── event: done
+               └── event: error
+```
+
+### GUI / Desktop Flow
+
+```
+User interaction (React app)
+       │
+       ├── Tab navigation (App.tsx)
+       │     ├── Project      → projectStore
+       │     ├── Dataset      → datasetStore
+       │     ├── Model        → modelStore + runConfigStore
+       │     ├── Training     → trainingStore
+       │     ├── Metrics      → trainingStore (live SSE)
+       │     ├── Checkpoints  → checkpointStore
+       │     └── Inference    → inferenceStore
+       │
+       ├── API calls (lib/api.ts) → fetch → REST API → update Zustand stores
+       │
+       ├── SSE hooks (useTrainingSSE.ts, useDatasetSSE.ts)
+       │     └── EventSource → /api/events?job_id= → dispatch to stores
+       │
+       └── Tauri commands (Rust lib.rs)
+             ├── start_python_server → spawn uvicorn child process
+             ├── stop_python_server  → kill child process on window close
+             └── Filesystem: list_dir, read/write files, create/delete dirs
 ```
 
 ## Design Patterns
@@ -274,8 +365,39 @@ src/sr_engine/
 │       ├── datasets/video_pairs.yaml
 │       ├── models/swinir.yaml
 │       └── models/rrdb_esrgan.yaml
-└── api/                           # FastAPI HTTP server (planned)
-    └── app.py                     # FastAPI application, routes, SSE events
+└── api/                           # FastAPI HTTP server
+    ├── app.py                     # FastAPI application, CORS, lifespan, SSE endpoint
+    ├── schemas.py                 # Pydantic request/response models
+    ├── deps.py                    # Dependency injection
+    ├── task_manager.py            # Background job registry
+    ├── event_manager.py           # SSE event bus
+    ├── callbacks.py               # SSECallback for trainer integration
+    ├── progress.py                # SSEProgressReporter
+    ├── workers.py                 # Background worker threads
+    └── routes/                    # Route handlers
+        ├── workspace.py
+        ├── models.py
+        ├── training.py
+        ├── inference.py
+        ├── datasets.py
+        ├── jobs.py
+        └── env.py
+
+frontend/                          # React/TypeScript desktop GUI
+├── src/
+│   ├── App.tsx                   # Root component with tab routing
+│   ├── screens/                  # 7 tab screens
+│   ├── store/                    # 9 Zustand state stores
+│   ├── hooks/                    # SSE hooks, custom React hooks
+│   ├── components/               # Reusable UI components
+│   └── lib/                      # API client, types, utilities
+├── package.json
+└── vite.config.ts
+
+src-tauri/                         # Tauri 2 desktop shell (Rust)
+├── src/lib.rs                    # Tauri commands (server lifecycle, filesystem)
+├── Cargo.toml
+└── tauri.conf.json
 ```
 
 ## Dependencies

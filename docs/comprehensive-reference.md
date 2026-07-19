@@ -4,7 +4,7 @@
 
 **sr-engine** is a modular, production-grade super-resolution (SR) training and inference toolkit for video and image data. It provides a complete pipeline: video frame extraction → synthetic degradation → dataset building → model training → inference → model export — all with first-class support for NVIDIA CUDA and AMD ROCm GPUs.
 
-**Why it matters:** Super-resolution is a critical enabler across video restoration, medical imaging, satellite imagery, surveillance, and media production. sr-engine reduces the gap between research frameworks (which prioritize experimentation over production readiness) and enterprise deployment by offering a unified, well-architected system with a CLI, a Godot GUI bridge, and a clear extension path.
+**Why it matters:** Super-resolution is a critical enabler across video restoration, medical imaging, satellite imagery, surveillance, and media production. sr-engine reduces the gap between research frameworks (which prioritize experimentation over production readiness) and enterprise deployment by offering a unified, well-architected system with a CLI, a comprehensive REST API, a desktop GUI (React/Tauri), and a clear extension path.
 
 **Key takeaways:**
 
@@ -12,7 +12,7 @@
 - **Configurable degradation pipeline:** 6 stages (color jitter, blur, downsample, noise, JPEG, JPEG2000) with per-stage probability gating, mutually exclusive sub-types, and CLI quick-select — no YAML editing needed for common variations.
 - **4-level config merge:** Builtin YAML defaults → workspace overrides → config file → CLI flags — every knob exposed at every level.
 - **GPU abstraction:** A single `get_device()` call returns the optimal backend. Mixed precision (bf16/fp16) and flash attention detection are automatic.
-- **GUI bridge:** TCP/NDJSON server with subprocess lifecycle management, real-time progress streaming, and a complete C# Godot client implementation.
+- **REST API + Desktop GUI:** FastAPI-based HTTP server with SSE streaming for real-time progress, background job management, and a React/TypeScript desktop GUI built with Tauri 2.
 - **No lock-in:** Models export to ONNX, SafeTensors, and TorchScript. The config system and model registry make adding new architectures a matter of one file + one decorator.
 
 **Target audience:** ML engineers, data engineers, systems integrators, researchers, and DevOps/SRE engineers building or operating super-resolution systems.
@@ -38,15 +38,16 @@
    - 6.9 [Loss Functions](#69-loss-functions)
    - 6.10 [Metrics System](#610-metrics-system)
    - 6.11 [Checkpointing and Export](#611-checkpointing-and-export)
-   - 6.12 [GUI Bridge](#612-gui-bridge)
-   - 6.13 [Progress Reporting](#613-progress-reporting)
-   - 6.14 [Tiling System](#614-tiling-system)
+- 6.12 [REST API Server](#612-rest-api-server)
+    - 6.13 [Desktop GUI (React/Tauri)](#613-desktop-gui-reacttauri)
+    - 6.14 [Progress Reporting](#614-progress-reporting)
+    - 6.15 [Tiling System](#615-tiling-system)
 7. [Internal Mechanics](#internal-mechanics)
    - 7.1 [Training Loop Lifecycle](#71-training-loop-lifecycle)
    - 7.2 [Degradation Pipeline Execution](#72-degradation-pipeline-execution)
    - 7.3 [Config Merge Resolution](#73-config-merge-resolution)
    - 7.4 [Device Detection Flow](#74-device-detection-flow)
-   - 7.5 [GUI Bridge Request Lifecycle](#75-gui-bridge-request-lifecycle)
+   - 7.5 [REST API Request and SSE Event Flow](#75-rest-api-request-and-sse-event-flow)
    - 7.6 [Tiled Inference Flow](#76-tiled-inference-flow)
 8. [Data Model](#data-model)
 9. [APIs / Interfaces](#apis--interfaces)
@@ -80,7 +81,7 @@ sr-engine provides a complete, production-ready platform for:
 2. **Training super-resolution models** (RRDB, SwinIR) with pixel, perceptual, and adversarial losses
 3. **Running inference** on images and video, with tiled inference for VRAM-limited GPUs
 4. **Exporting models** to ONNX, SafeTensors, and TorchScript for deployment
-5. **Integrating with GUI applications** via a TCP/NDJSON protocol and subprocess job management
+5. **Integrating with GUI and API clients** via a FastAPI REST API with SSE streaming and background job management
 
 ## Scope
 
@@ -151,7 +152,7 @@ sr-engine builds on the classic synthetic degradation model (BSRGAN/Real-ESRGAN)
 - **GPU-agnostic backend**: Runtime CUDA vs. ROCm detection without configuration changes
 - **Process-pool degradation**: Parallel CPU execution for high-throughput dataset building
 - **CLI-first design**: All functionality accessible from the command line
-- **GUI bridge as a first-class citizen**: TCP/NDJSON server with subprocess management for Godot integration
+- **REST API + Desktop GUI**: FastAPI-based HTTP server with SSE event streaming, background job management, and a React/TypeScript desktop GUI (Tauri 2)
 - **4-level config merge**: Builtin defaults → workspace overrides → file → CLI flags
 
 Previous solutions (MATLAB toolboxes, standalone Python scripts, research frameworks like BasicSR) required manual venv management, CUDA/ROCm awareness, and had no GUI integration path. sr-engine packages all of this into a single, well-architected system.
@@ -170,7 +171,7 @@ Previous solutions (MATLAB toolboxes, standalone Python scripts, research framew
 | **Blind SR** | Super-resolution where the degradation model is unknown — the model must generalize from diverse training degradations |
 | **Synthetic degradation** | Algorithmically generated LR from HR, used to create paired training data |
 | **ProcessPoolExecutor** | `concurrent.futures` mechanism for true parallel CPU execution across multiple processes |
-| **NDJSON** | Newline-Delimited JSON — one JSON object per line, used in the GUI bridge protocol |
+| **NDJSON** | Newline-Delimited JSON — one JSON object per line, used in metrics streaming and log output |
 | **Workspace** | A directory tree (marked by `.sr_workspace`) containing datasets, projects, configs, and job manifests |
 | **Project** | A named experiment directory within a workspace, with configs, checkpoints, and metrics |
 | **Model instance** | A named model configuration within a project, with checkpoint and run history |
@@ -512,7 +513,7 @@ Provides structured project organization, path auto-resolution, config layering,
 │       ├── checkpoints/           # Training checkpoints (epoch_*.pt)
 │       └── runs/                  # run_<timestamp>/ directories
 ├── experiments/                   # Experiment artifacts
-├── jobs/                          # GUI bridge job manifests
+├── jobs/                          # API async job manifests
 │   └── <job_id>.json              # Persisted job state
 ├── configs/                       # User-overridable configs
 │   ├── train/                     # Overrides builtin train config
@@ -1650,7 +1651,115 @@ elif format == "torchscript":
 
 ---
 
-## 6.13 Progress Reporting
+## 6.12 REST API Server
+
+**Location:** `src/sr_engine/api/`
+
+### Purpose
+
+Provide a FastAPI-based HTTP interface for all sr-engine operations, enabling the desktop GUI and third-party integrations. The server runs on port 8765 by default and is started via `srengine serve start`.
+
+### Components
+
+| Module | File | Responsibility |
+|--------|------|----------------|
+| `app.py` | `api/app.py` | FastAPI app, CORS, lifespan, health endpoint, SSE endpoint, route registration |
+| `schemas.py` | `api/schemas.py` | Pydantic v2 request/response models |
+| `deps.py` | `api/deps.py` | FastAPI dependency injection (workspace, configs) |
+| `task_manager.py` | `api/task_manager.py` | `BackgroundTaskManager` — job creation, status tracking, cancellation |
+| `event_manager.py` | `api/event_manager.py` | `SSEEventManager` — per-job async event queues |
+| `callbacks.py` | `api/callbacks.py` | `SSECallback` — `TrainerCallback` → SSE events |
+| `progress.py` | `api/progress.py` | `SSEProgressReporter` — `ProgressReporter` → SSE events |
+| `workers.py` | `api/workers.py` | Background worker functions (training, inference, dataset ops) |
+| `routes/` | `api/routes/` | Route handlers: workspace, models, training, inference, datasets, jobs, env |
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/health` | Health check |
+| GET | `/api/events` | SSE event stream |
+| GET | `/api/workspace` | Workspace info |
+| POST | `/api/workspace/init` | Initialize workspace |
+| GET | `/api/workspace/check` | Workspace health check |
+| GET | `/api/models` | List architectures |
+| GET | `/api/models/instances` | List instances |
+| GET | `/api/models/instances/{name}` | Instance details |
+| POST | `/api/models/instances` | Create instance |
+| POST | `/api/models/instances/{name}/export` | Export checkpoint |
+| GET | `/api/models/instances/{name}/versions` | List versions |
+| DELETE | `/api/models/instances/{name}` | Delete instance |
+| POST | `/api/train/start` | Start training job |
+| POST | `/api/train/validate-dataset` | Validate dataset |
+| POST | `/api/infer/start` | Start inference job |
+| GET | `/api/datasets` | List datasets |
+| POST | `/api/datasets/build` | Build dataset |
+| POST | `/api/datasets/validate` | Validate (sync) |
+| POST | `/api/datasets/validate-async` | Validate (async) |
+| POST | `/api/datasets/health` | Health check |
+| POST | `/api/datasets/merge` | Merge datasets |
+| POST | `/api/datasets/prune` | Prune black frames |
+| GET | `/api/jobs` | List jobs |
+| GET | `/api/jobs/{job_id}` | Job status |
+| POST | `/api/jobs/{job_id}/cancel` | Cancel job |
+| GET | `/api/env` | Environment diagnostics |
+
+See [API Reference](api-reference.md) for full documentation.
+
+---
+
+## 6.13 Desktop GUI (React/Tauri)
+
+**Location:** `frontend/` (React) + `src-tauri/` (Rust)
+
+### Purpose
+
+Provide a native desktop interface for all sr-engine operations, communicating with the Python backend via the FastAPI REST API.
+
+### Technology Stack
+
+| Layer | Technology |
+|-------|------------|
+| UI Framework | React 18 + TypeScript |
+| State Management | Zustand 5 |
+| Build Tool | Vite 5 |
+| Desktop Shell | Tauri 2 (Rust) |
+| API Client | fetch-based (`lib/api.ts`) |
+
+### Screens
+
+| Screen | File | Purpose |
+|--------|------|---------|
+| Project | `ProjectScreen.tsx` | Landing page, create/open workspace |
+| Dataset | `ScreenDatasetSetup.tsx` | Build, browse, validate, merge datasets |
+| Model | `ScreenModelConfig.tsx` | Create/view instances, export checkpoints |
+| Training | `ScreenTrainingSetup.tsx` | Configure and launch training runs |
+| Metrics | `ScreenMetrics.tsx` | Live training dashboard with SSE |
+| Checkpoints | `ScreenCheckpoints.tsx` | Browse and manage checkpoints |
+| Inference | `ScreenInference.tsx` | Run inference with before/after comparison |
+
+### State Stores
+
+9 Zustand stores manage application state: `projectStore`, `uiStore`, `datasetStore`, `modelStore`, `trainingStore`, `inferenceStore`, `runConfigStore`, `checkpointStore`.
+
+### Tauri Shell
+
+The Rust backend (`src-tauri/src/lib.rs`) manages the Python server lifecycle (spawn/kill on window open/close) and provides filesystem commands (list files, read/write, create directories) used by the frontend.
+
+### Architecture
+
+```
+React App (webview) ──HTTP──► FastAPI (localhost:8765)
+       │
+       ├── Tauri commands (Rust) ──► filesystem ops
+       └── EventSource (SSE) ──► /api/events?job_id=
+```
+
+See [Frontend Guide](frontend.md) and [Desktop Guide](desktop.md) for full documentation.
+
+---
+
+## 6.14 Progress Reporting
 
 **Location:** `src/sr_engine/utils/progress.py`
 
@@ -1693,7 +1802,7 @@ class TqdmReporter(ProgressReporter):
 
 ---
 
-## 6.14 Tiling System
+## 6.16 Tiling System
 
 **Location:** `src/sr_engine/engine/tiling.py`
 
@@ -2016,35 +2125,82 @@ autocast_dtype(device)
         └── (ROCm path also checks torch.version.hip)
 ```
 
-## 7.5 GUI Bridge Request Lifecycle
+## 7.5 REST API Request and SSE Event Flow
 
-### Synchronous Command
-
-```
-Client                          Server
-  │                               │
-  ├── connect() ─────TCP──────►   │
-  │                               ├── accept() → ClientHandler
-  │                               │
-  ├── send("hello") ──────────►   │
-  │                               ├── _handle_hello()
-  │                               ├── returns {"schema_version": 1, ...}
-  │   ◄──── result ────────────   │
-  │                               │
-```
-
-### Message Format
+### Synchronous Request
 
 ```
-Request:  {"id":"req_1","command":"train.start","params":{"model_name":"swinir",...}}\n
-          │     │        │                  │                              │
-          └─────┴────────┴──────────────────┴──────────────────────────────┘
-          Newline-delimited JSON over raw TCP
-
-Response: {"id":"req_1","type":"accepted","data":{"job_id":"train_1747000000_a1b2"}}\n
-
-Event:    {"type":"step","epoch":1,"batch":10,"total":0.05,"lr":0.0001,"job_id":"train_..."}\n
+Client (GUI / curl)              FastAPI Server
+       │                               │
+       ├── GET /api/health ────────►   │
+       │                               ├── Return {"status": "ok", ...}
+       │   ◄──── 200 OK ────────────   │
+       │                               │
+       ├── POST /api/datasets/validate ►
+       │   {"path": "/ws/data"}        │
+       │                               ├── Validate dataset
+       │   ◄──── {valid, problems} ──   │
 ```
+
+### Async Job with SSE
+
+```
+Client                              FastAPI Server
+  │                                       │
+  ├── POST /api/train/start ──────────►  │
+  │   {"model_name":"swinir",...}         │
+  │                                       ├── tasks.create_job() → "pending"
+  │                                       ├── Spawn daemon thread
+  │   ◄── {job_id, "status":"accepted"}  │
+  │                                       │
+  ├── GET /api/events?job_id=<id> ────►  │
+  │                                       ├── SSE stream opened
+  │   ◄── data: {"type":"progress_start"} │  (worker starts)
+  │   ◄── data: {"type":"phase",          │
+  │              "phase":"training"}      │
+  │   ◄── data: {"type":"step",           │
+  │              "epoch":1,"batch":10,...}│
+  │   ◄── data: {"type":"validate",       │
+  │              "epoch":1,"psnr":28.5}   │
+  │   ◄── data: {"type":"hardware",       │
+  │              "gpu_util":85,...}       │
+  │   ◄── data: {"type":"done",           │
+  │              "elapsed_seconds":3600}  │
+  │   ◄── [stream closed]                │
+  │                                       │
+  ├── GET /api/jobs/<id> ─────────────►  │
+  │   ◄── {status:"completed",...}       │
+```
+
+### SSE Event Types
+
+| Event | Fields | Source |
+|-------|--------|--------|
+| `progress_start` | `total`, `desc` | `SSEProgressReporter` |
+| `progress_update` | `n` | `SSEProgressReporter` |
+| `progress_end` | — | `SSEProgressReporter` |
+| `postfix` | `desc` or key-value | `SSEProgressReporter` |
+| `phase` | `phase` (training/validation/saving/complete) | `SSECallback` |
+| `step` | `epoch`, `batch`, `total_batches`, `loss_total`, `lr` | `SSECallback` |
+| `validate` | `epoch`, `psnr`, `ssim`, `frames` (optional) | `SSECallback` |
+| `done` | `elapsed_seconds` | `SSECallback`/worker |
+| `error` | `code`, `message` | Worker |
+| `hardware` | `gpu_util`, `vram_used`, `cpu_percent`, `ram_percent` | `HardwareMonitor` (3s interval) |
+
+### Job Lifecycle
+
+```
+tasks.create_job() → status: "pending"
+       │
+       ▼
+tasks.start_job() → status: "running"
+       │
+       ├── tasks.complete_job() → status: "completed"
+       ├── tasks.fail_job() → status: "failed"
+       └── tasks.cancel_job() → status: "cancelled"
+```
+
+The `BackgroundTaskManager` enforces a single-training mutex: only one training job can run at a time. Dataset and inference jobs can run concurrently.
 
 ## 7.6 Tiled Inference Flow
 
@@ -3039,7 +3195,7 @@ If training loss decreases and PSNR increases, the architecture learns. If not, 
 | Training without validation split | No signal for overfitting or convergence | Use `--validation-split 0.1` |
 | Running inference without tiling on large images | OOM on VRAM-limited GPUs | Use `--tile 512` |
 | Manually modifying `.pt` files | Corrupts checkpoint format | Use the provided export functions |
-| Running GUI bridge without a workspace | Server refuses to start | Initialize workspace first |
+| Running API server without a workspace | Server returns 503 | Initialize workspace first |
 
 ---
 
@@ -3058,7 +3214,7 @@ If training loss decreases and PSNR increases, the architecture learns. If not, 
 │  Attack surfaces:                                │
 │  1. Malicious YAML config files                  │
 │  2. Malicious checkpoint files (.pt)             │
-│  3. GUI bridge TCP connection (localhost only)   │
+│  3. API server HTTP (localhost only)           │
 │  4. Video/image files from untrusted sources    │
 │  5. Environment variable injection               │
 └────────────────────────────────────────────────┘
@@ -3120,9 +3276,9 @@ Not a vulnerability in sr-engine because PyYAML's `safe_load` is used (not `load
 ## Security Best Practices
 
 1. **Never load checkpoints from untrusted sources** without verifying with SafeTensors format first
-2. **Run GUI bridge on localhost only** (default and recommended)
+2. **Run API server on localhost only** (default and recommended)
 3. **Use OS file permissions** to restrict access to workspace directories
-4. **Use SSH tunnels** if remote access to GUI bridge is needed
+4. **Use SSH tunnels** if remote access to the API is needed
 5. **Regularly update OpenCV and PyTorch** for security patches
 6. **Validate input video files** before dataset building (corrupted media can cause crashes)
 7. **Do not run as root** — the system does not need elevated privileges
@@ -3271,8 +3427,8 @@ SwinIR is typically 2-4× slower than RRDB due to window attention overhead.
 | Training | NaN loss | Training diverges | No automatic recovery — inspect LR, model, data |
 | Training | SIGTERM (cancel) | Training stops mid-epoch | Last checkpoint is intact; resume from it |
 | Checkpoint save | Crash mid-write | `.tmp` file left on disk | `.pt` file is untouched (atomic write) |
-| GUI bridge | Subprocess crash | Job fails | Exit code recorded in manifest; `done` event broadcast |
-| GUI bridge | Client disconnect | Client stops receiving events | No impact on server or other clients |
+| API worker | Subprocess crash | Job fails | Exit code recorded in manifest; `done` event broadcast |
+| API client | Client disconnect | Client stops receiving events | No impact on server or other clients |
 | Config loading | Missing key | Validation error at startup | Descriptive error message shows expected keys |
 
 ## Recovery Strategies
@@ -3388,8 +3544,6 @@ sr-engine does not natively support distributed training (DDP/FSDP). For multi-G
 - Use PyTorch DDP wrapper for multi-GPU (requires code modification)
 - Leverage gradient checkpointing for memory efficiency on a single GPU
 
-### Multiple GUI Bridge Clients
-
 ## Caching
 
 - **Dataset caching**: `PairedImageFolderDataset` loads images on-the-fly. No RAM caching. For faster training, consider `torchdata` or pre-loading datasets into RAM for small datasets.
@@ -3423,12 +3577,12 @@ srengine project create production
 (crontab -l 2>/dev/null; echo "0 * * * * /usr/bin/df -h /data >> /var/log/sr_disk.log") | crontab -
 ```
 
-### GUI Bridge as System Service
+### API Server as System Service
 
 ```systemd
 # /etc/systemd/system/sr-engine.service
 [Unit]
-Description=sr-engine GUI Bridge Server
+Description=sr-engine API Server
 After=network.target
 
 [Service]
@@ -3603,7 +3757,7 @@ srengine train run ... 2>&1 | tee -a /var/log/sr_training.log
 | `RuntimeError: Dataset validation failed` | Dimension mismatch or corrupt files | Run `srengine dataset validate --path <dataset>` for details | Rebuild dataset with correct scale factor |
 | Checkpoint load fails | Architecture mismatch | Compare checkpoint config with current model config | Train with the same model config as the checkpoint |
 | `env check` shows CPU when GPU exists | Wrong PyTorch build | `python -c "import torch; print(torch.cuda.is_available())"` | Reinstall PyTorch with CUDA/ROCm: `./envs/build.sh --backend cuda` |
-| GUI Bridge connection refused | Server not running | `srengine serve start --port 8765` | Start the server in another terminal or as a systemd service |
+| API server connection refused | Server not running | `srengine serve start --port 8765` | Start the server in another terminal or as a systemd service |
 | Subprocess never connects control socket | Subprocess crashed before handshake | Check `<ws>/jobs/<job_id>.json` for exit code | Inspect subprocess stdout/stderr for errors |
 | Events arrive on one client but not another | Client connected mid-stream | Events are broadcast to currently-connected clients only | Missed events are not replayed; implement client-side reconnection |
 | Very slow dataset build | Large video, all stages enabled | Time individual stages | Disable JPEG2000, reduce motion blur kernel size, increase frame skip |
@@ -3698,30 +3852,32 @@ Step 4: Health check
 └── Prune if needed: srengine dataset health --path <dataset> --yes
 ```
 
-### Procedure 4: GUI Bridge Troubleshooting
+### Procedure 4: API Server Troubleshooting
 
 ```
 Step 1: Start server
 ├── srengine serve start --port 8765
-├── Check: "Server started on port 8765"
+├── Check: "Uvicorn running on http://127.0.0.1:8765"
 └── Error: "Workspace not found"? → Initialize workspace
 
-Step 2: Test connection
-├── echo '{"id":"1","command":"hello"}' | nc 127.0.0.1 8765
-├── Expected: {"id":"1","type":"result","data":{"schema_version":1,...}}
-├── No response? → Wrong port or firewall
-└── Malformed response? → Check nc version or use Python socket test
+Step 2: Test health endpoint
+├── curl http://127.0.0.1:8765/api/health
+├── Expected: {"status":"ok","workspace":"..."}
+├── No response? → Wrong port, server not running, or firewall
+└── Connection refused? → Server not started
 
 Step 3: Test async command
-├── echo '{"id":"2","command":"train.start","params":{"model_name":"rrdb_esrgan","dataset":"...","max_epochs":2}}' | nc 127.0.0.1 8765
-├── Expected: {"id":"2","type":"accepted","data":{"job_id":"train_...","status":"accepted"}}
-├── No accepted? → Check params match CLI requirements
-└── Job fails? → Check <ws>/jobs/<job_id>.json for exit code
+├── curl -X POST http://127.0.0.1:8765/api/train/start \
+│      -H "Content-Type: application/json" \
+│      -d '{"model_name":"rrdb_esrgan","instance":"my_model","dataset":"my_set","max_epochs":2}'
+├── Expected: {"job_id":"train_...","status":"accepted"}
+├── Error 503? → Workspace not initialised
+└── Error 404? → Model instance or dataset missing
 
-Step 4: Monitor job
-├── curl http://127.0.0.1:8765 (not HTTP — TCP only)
-├── Use Python: socket.connect(host, port); socket.send(json + "\n"); socket.recv(65536)
-└── Implement client reconnection: exponential backoff, 5 attempts
+Step 4: Monitor via SSE
+├── curl -N http://127.0.0.1:8765/api/events?job_id=train_...
+├── Expected: SSE stream with progress/step/done events
+└── No events? → Check server logs for worker errors
 ```
 
 ## Error Reference
@@ -3894,9 +4050,9 @@ srengine model export \
   --out safe_model.safetensors
 ```
 
-### Mistake 13: Exposing GUI Bridge to Network
+### Mistake 13: Exposing API Server to Network
 
-**Problem:** Starting `srengine serve start --host 0.0.0.0` allows any network client to control training jobs.
+**Problem:** Starting `srengine serve start --host 0.0.0.0` allows any network client to control training jobs and access the API without authentication.
 
 **Solution:** Always bind to localhost (default). Use SSH tunneling for remote access:
 ```bash
@@ -4016,7 +4172,7 @@ srengine train run ... --machine
 |---------|-----------|---------|-------------|-------------------|
 | **CLI** | Full (Click) | Minimal (Python API) | Script-based | Script-based |
 | **Config system** | 4-level merge | YAML config files | YAML config files | Hard-coded params |
-| **GUI bridge** | Built-in (TCP/NDJSON) | None | None | None |
+| **REST API** | Built-in (FastAPI, 20+ endpoints) | None | None | None |
 | **CUDA** | Full | Full | Full | Full |
 | **ROCm** | Full | Partial | None | None |
 | **Model registry** | Decorator-based | Manual registration | Single model | Single model |
@@ -4037,7 +4193,8 @@ srengine train run ... --machine
 **Strengths:**
 - Production-ready CLI with all functionality exposed
 - GPU-agnostic (CUDA + ROCm) without config changes
-- Built-in GUI bridge for Godot integration
+- Built-in REST API for all operations (FastAPI-based HTTP server)
+- Built-in desktop GUI (React/Tauri 2) for visual workflow management
 - 4-level config merge (flexible and powerful)
 - Extensible model registry
 - Process-pool accelerated dataset building
@@ -4050,7 +4207,7 @@ srengine train run ... --machine
 - No high-order degradation (Real-ESRGAN style 2-stage)
 - Single-node only (no cluster support)
 - No built-in experiment tracking (MLflow, W&B integration)
-- No REST API for inference (must use GUI bridge or CLI)
+- No authentication on the REST API (use network isolation instead)
 
 #### BasicSR
 
@@ -4104,7 +4261,7 @@ srengine train run ... --machine
 | Research on new architectures | **sr-engine** — decorator registry, extensible |
 | Real-world blind SR | **Real-ESRGAN** (better degradation) or **sr-engine** + custom degradation |
 | ROCm/AMD deployment | **sr-engine** (only option with native support) |
-| GUI application integration | **sr-engine** (only option with built-in bridge) |
+| GUI application integration | **sr-engine** (only option with built-in REST API + desktop GUI) |
 | Multi-GPU training | **BasicSR** (DDP support) |
 | Quick academic comparison | **BasicSR** (more architectures) |
 | Video SR pipeline | **sr-engine** (dataset building, tiling, video inference) |
@@ -4455,7 +4612,6 @@ As dataset sizes and model capacities grow, distributed training support (DDP, F
 
 ### Medium-Term (6-12 months)
 
-- **REST API** for inference (FastAPI-based HTTP server)
 - **Experiment tracking** integration (MLflow, W&B)
 - **Distributed dataset building** across multiple machines
 - **Support for non-PNG formats** (WebP, JPEG XL)
@@ -4479,6 +4635,9 @@ As dataset sizes and model capacities grow, distributed training support (DDP, F
 | sr-engine README | [README.md](../README.md) |
 | Architecture Guide | [docs/architecture.md](architecture.md) |
 | CLI Reference | [docs/cli-reference.md](cli-reference.md) |
+| API Reference | [docs/api-reference.md](api-reference.md) |
+| Frontend Guide | [docs/frontend.md](frontend.md) |
+| Desktop Guide | [docs/desktop.md](desktop.md) |
 | Training Guide | [docs/training.md](training.md) |
 | Data Pipeline Guide | [docs/data-pipeline.md](data-pipeline.md) |
 | Degradation Pipeline Guide | [docs/degradation-pipeline.md](degradation-pipeline.md) |

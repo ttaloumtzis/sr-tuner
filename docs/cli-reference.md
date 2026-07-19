@@ -49,7 +49,7 @@ srengine
 │   ├── info                   Show workspace summary
 │   └── check                  Validate workspace health
 └── serve
-    └── start                  Start GUI socket server
+    └── start                  Start FastAPI HTTP server for desktop GUI / API access
 ```
 
 ## dataset
@@ -328,15 +328,42 @@ srengine workspace check
 
 ## serve
 
+### serve start
+
+Start the FastAPI-based HTTP server, which powers the desktop GUI and provides a REST API for third-party integrations.
+
 ```bash
-# Start GUI socket server
-srengine serve start --port 8765
+# Default: localhost:8765
+srengine serve start
+
+# Custom host and port
+srengine serve start --host 0.0.0.0 --port 8080
+
+# Run in foreground with log level
+srengine serve start --host 127.0.0.1 --port 8765 --log-level info
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--port N` | 8765 | TCP port for GUI clients |
-| `--host TEXT` | 127.0.0.1 | Bind address |
+| `--host TEXT` | `127.0.0.1` | Bind address (`0.0.0.0` for external access) |
+| `--port N` | `8765` | TCP port |
+| `--log-level TEXT` | `info` | Uvicorn log level (`debug`, `info`, `warning`, `error`) |
+
+The server exposes the following API groups (see [API Reference](api-reference.md) for full details):
+
+| Prefix | Routes | Description |
+|--------|--------|-------------|
+| `GET /api/health` | — | Health check + workspace status |
+| `GET /api/events` | SSE | Real-time job progress stream |
+| `/api/workspace` | 3 routes | Workspace info, init, check |
+| `/api/models` | 7 routes | Architecture list, instance CRUD, export, versions |
+| `/api/train` | 2 routes | Start training, validate dataset |
+| `/api/infer` | 1 route | Start inference job |
+| `/api/datasets` | 6 routes | List, build, validate, health, merge, prune |
+| `/api/jobs` | 3 routes | List, status, cancel background jobs |
+| `/api/env` | 1 route | Environment diagnostics |
+
+All async operations return `{job_id, status: "accepted"}` and stream progress via SSE on `/api/events?job_id=<id>`.
 
 ## Config Dump
 
