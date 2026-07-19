@@ -10,12 +10,21 @@ export interface ModelInstance {
   architecture: string | null;
   scale: number | null;
   checkpoints: string[];
+  latest_version?: string | null;
+  config?: Record<string, unknown>;
 }
 
 export interface ExportParams {
   instance: string;
   format: "pth" | "onnx" | "torchscript" | "safetensors";
   output?: string;
+}
+
+export interface DatasetInfo {
+  name: string;
+  path: string;
+  scale: number;
+  num_pairs: number;
 }
 
 export interface TrainParams {
@@ -31,6 +40,16 @@ export interface TrainParams {
   patch_size?: number;
   fp16?: boolean;
   seed?: number;
+  weight_decay?: number;
+  betas?: [number, number];
+  num_workers?: number;
+  save_per_epoch?: number;
+  validation_enabled?: boolean;
+  validation_split?: number;
+  validation_dataset?: string;
+  metrics_frequency?: number;
+  perceptual_weight?: number;
+  warmup_steps?: number;
 }
 
 export interface InferParams {
@@ -107,6 +126,12 @@ export interface DatasetManifest {
   pairs: { hr: string; lr: string }[];
 }
 
+export interface ModelVersion {
+  tag: string;
+  path: string;
+  metadata?: Record<string, unknown>;
+}
+
 export interface CheckpointEntry {
   epoch: number;
   filename: string;
@@ -140,7 +165,7 @@ export type SSEEvent =
   | { type: "postfix"; desc?: string; [key: string]: unknown }
   | { type: "phase"; phase: string; [key: string]: unknown }
   | { type: "step"; epoch: number; batch: number; total_batches: number; [key: string]: unknown }
-  | { type: "validate"; epoch: number; [key: string]: unknown }
+  | { type: "validate"; epoch: number; frames?: { lrPath: string; srPath: string; gtPath: string; diffPath: string } | null; [key: string]: unknown }
   | { type: "done"; elapsed_seconds: number }
   | { type: "error"; code: string; message: string; context?: Record<string, unknown> };
 

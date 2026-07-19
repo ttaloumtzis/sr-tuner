@@ -374,6 +374,41 @@ class Workspace:
             reverse=True,
         )
 
+    def list_model_versions(self, instance_name: str) -> list[dict]:
+        """List all version directories for an instance, sorted ascending.
+
+        Returns a list of ``{tag, path, metadata}`` dicts.
+        """
+        versions_dir = self.path / "models" / instance_name / "versions"
+        if not versions_dir.is_dir():
+            return []
+        versions: list[dict] = []
+        for d in sorted(versions_dir.iterdir()):
+            m = re.fullmatch(r"v(\d+)", d.name)
+            if d.is_dir() and m:
+                meta: dict = {}
+                meta_path = d / "version.json"
+                if meta_path.is_file():
+                    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                versions.append({
+                    "tag": d.name,
+                    "path": str(d),
+                    "metadata": meta,
+                })
+        versions.sort(key=lambda x: int(x["tag"][1:]))
+        return versions
+
+    def delete_model_instance(self, name: str) -> None:
+        """Remove a model instance directory and all its contents.
+
+        Raises:
+            FileNotFoundError: If the instance does not exist.
+        """
+        inst_path = self.path / "models" / name
+        if not inst_path.is_dir():
+            raise FileNotFoundError(f"Model instance '{name}' not found")
+        shutil.rmtree(inst_path)
+
     def get_run_path(self, instance: str) -> Path:
         """Return a new timestamp-based run directory (creates it).
 

@@ -51,7 +51,7 @@ export function StatusBar() {
         {arch && <span style={{ color: "var(--muted)" }}>{arch}</span>}
         {resumeFrom && (
           <span style={{ color: "var(--amber)", fontSize: 10 }}>
-            resume from ep{resumeFrom.resume_epoch} queued
+            resume from {resumeFrom} queued
           </span>
         )}
         {isRunning && (

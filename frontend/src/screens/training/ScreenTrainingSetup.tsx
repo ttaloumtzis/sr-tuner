@@ -1,82 +1,21 @@
-// §11 Training Setup Screen
-// Tasks: 11.1–11.14
-
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Panel } from "../../components/ui/Panel";
 import { Btn } from "../../components/ui/Btn";
 import { Field } from "../../components/ui/Field";
 import { Toggle } from "../../components/ui/Toggle";
-import { PathInput } from "../../components/ui/PathInput";
 import { Dropdown, type DropdownOption } from "../../components/ui/Dropdown";
 import { useRunConfigStore } from "../../store/runConfigStore";
-import { useModelStore } from "../../store/modelStore";
-import { useProjectStore } from "../../store/projectStore";
-import type { Architecture } from "../../lib/srproj";
+import { useTrainingStore } from "../../store/trainingStore";
+import { useUiStore } from "../../store/uiStore";
 import { estimateVram } from "../../lib/vramEstimate";
-
-// ── §24.3 — filename from path ────────────────────────────────────────────
-
-function basename(filePath: string): string {
-  return filePath.split(/[\\/]/).pop() ?? filePath;
-}
-
-// ── §11.5a Architecture pill selector ────────────────────────────────────
-
-const ARCH_OPTIONS: Architecture[] = ["rrdb_esrgan", "swinir"];
-
-interface ArchPillProps {
-  id: Architecture;
-  selected: boolean;
-  onSelect: (id: Architecture) => void;
-}
-
-function ArchPill({ id, selected, onSelect }: ArchPillProps) {
-  return (
-    <div
-      onClick={() => onSelect(id)}
-      style={{
-        padding: "5px 10px",
-        borderRadius: "var(--radius-sm)",
-        border: `1px solid ${selected ? "var(--green)" : "var(--border)"}`,
-        background: selected ? "var(--green-dim)" : "var(--bg3)",
-        color: selected ? "var(--green)" : "var(--muted)",
-        fontSize: 11,
-        fontWeight: selected ? 600 : 400,
-        cursor: "pointer",
-        textAlign: "center" as const,
-        transition: "var(--transition-fast)",
-        userSelect: "none" as const,
-      }}
-    >
-      {id}
-    </div>
-  );
-}
-
-// ── §11.9 Inline dataset validation status dot ────────────────────────────
 
 interface ValidationDotProps {
   valid: boolean | null;
 }
-
 function ValidationDot({ valid }: ValidationDotProps) {
-  const color =
-    valid === null ? "var(--dim)" : valid ? "var(--green)" : "var(--red, #ef4444)";
-  return (
-    <span
-      style={{
-        display: "inline-block",
-        width: 8,
-        height: 8,
-        borderRadius: "50%",
-        background: color,
-        flexShrink: 0,
-      }}
-    />
-  );
+  const color = valid === null ? "var(--dim)" : valid ? "var(--green)" : "var(--red, #ef4444)";
+  return <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: color, flexShrink: 0 }} />;
 }
-
-// ── Numeric input helper ──────────────────────────────────────────────────
 
 interface NumInputProps {
   value: number;
@@ -85,7 +24,6 @@ interface NumInputProps {
   max?: number;
   step?: number;
 }
-
 function NumInput({ value, onChange, min, max, step = 1 }: NumInputProps) {
   return (
     <input
@@ -96,592 +34,399 @@ function NumInput({ value, onChange, min, max, step = 1 }: NumInputProps) {
       step={step}
       onChange={(e) => onChange(Number(e.target.value))}
       style={{
-        background: "var(--bg3)",
-        border: "1px solid var(--border)",
-        borderRadius: "var(--radius-sm)",
-        padding: "5px 8px",
-        fontSize: 12,
-        color: "var(--text)",
-        fontFamily: "var(--font-mono)",
-        width: "100%",
-        outline: "none",
-        boxSizing: "border-box" as const,
+        background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)",
+        padding: "5px 8px", fontSize: 12, color: "var(--text)", fontFamily: "var(--font-mono)",
+        width: "100%", outline: "none", boxSizing: "border-box" as const,
       }}
     />
   );
 }
-
-// ── Text input helper ─────────────────────────────────────────────────────
 
 interface TextInputProps {
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
 }
-
 function TextInput({ value, onChange, placeholder }: TextInputProps) {
   return (
     <input
-      type="text"
-      value={value}
-      placeholder={placeholder}
+      type="text" value={value} placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
       style={{
-        background: "var(--bg3)",
-        border: "1px solid var(--border)",
-        borderRadius: "var(--radius-sm)",
-        padding: "5px 8px",
-        fontSize: 12,
-        color: "var(--text)",
-        fontFamily: "var(--font-sans)",
-        width: "100%",
-        outline: "none",
-        boxSizing: "border-box" as const,
+        background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)",
+        padding: "5px 8px", fontSize: 12, color: "var(--text)", fontFamily: "var(--font-sans)",
+        width: "100%", outline: "none", boxSizing: "border-box" as const,
       }}
     />
   );
 }
-
-// ── EstimateRow helper ────────────────────────────────────────────────────
 
 interface EstimateRowProps {
   label: string;
   value: string;
   color?: string;
 }
-
 function EstimateRow({ label, value, color }: EstimateRowProps) {
   return (
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
       <span style={{ fontSize: 10, color: "var(--muted)" }}>{label}</span>
-      <span
-        style={{
-          fontSize: 12,
-          fontFamily: "var(--font-mono)",
-          color: color ?? "var(--text)",
-          fontWeight: 500,
-        }}
-      >
-        {value}
-      </span>
+      <span style={{ fontSize: 12, fontFamily: "var(--font-mono)", color: color ?? "var(--text)", fontWeight: 500 }}>{value}</span>
     </div>
   );
 }
 
-// ── Main screen ───────────────────────────────────────────────────────────
-
 export function ScreenTrainingSetup() {
-  // runConfigStore
-  const runName = useRunConfigStore((s) => s.runName);
-  const outputDir = useRunConfigStore((s) => s.outputDir);
-  const checkpointDir = useRunConfigStore((s) => s.checkpointDir);
-  const device = useRunConfigStore((s) => s.device);
-  const schedule = useRunConfigStore((s) => s.schedule);
-  const tensorboard = useRunConfigStore((s) => s.tensorboard);
-  const fp16 = useRunConfigStore((s) => s.fp16);
-  const compile = useRunConfigStore((s) => s.compile);
-  const resumeFrom = useRunConfigStore((s) => s.resumeFrom);
-  const setRunName = useRunConfigStore((s) => s.setRunName);
-  const setOutputDir = useRunConfigStore((s) => s.setOutputDir);
-  const setCheckpointDir = useRunConfigStore((s) => s.setCheckpointDir);
-  const setDevice = useRunConfigStore((s) => s.setDevice);
-  const setSchedule = useRunConfigStore((s) => s.setSchedule);
-  const setTensorboard = useRunConfigStore((s) => s.setTensorboard);
-  const setFp16 = useRunConfigStore((s) => s.setFp16);
-  const setCompile = useRunConfigStore((s) => s.setCompile);
-  const setResumeFrom = useRunConfigStore((s) => s.setResumeFrom);
+  const s = useRunConfigStore();
 
-  // modelStore
-  const architecture = useModelStore((s) => s.architecture);
-  const hyperparameters = useModelStore((s) => s.hyperparameters);
-  const setArchitecture = useModelStore((s) => s.setArchitecture);
-  const setHyperparameters = useModelStore((s) => s.setHyperparameters);
-
-  // projectStore - saved models
-  const project = useProjectStore((s) => s.project);
-  const savedModels = project?.models ?? [];
-  const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
-
-  // dataset paths
-  const [trainingPath, setTrainingPath] = useState("");
-  const [validationPath, setValidationPath] = useState<string | null>(null);
-
-  // §11.9 — local dataset validation state
+  const [instances, setInstances] = useState<{ value: string; label: string }[]>([]);
+  const [datasets, setDatasets] = useState<{ value: string; label: string; path: string; pairs: number; scale: number }[]>([]);
   const [datasetValid, setDatasetValid] = useState<boolean | null>(null);
   const [datasetErrors, setDatasetErrors] = useState<string[]>([]);
+  const [customConfigPath, setCustomConfigPath] = useState("");
+  const [machineMode, setMachineMode] = useState(false);
+  const [scaleMismatch, setScaleMismatch] = useState(false);
 
-  // §11.9 — send dataset.validate.request
-  const sendValidate = useCallback(async () => {
+  useEffect(() => {
+    (async () => {
+      try {
+        const { listInstances } = await import("../../lib/api");
+        const list = await listInstances();
+        setInstances(list.map((i: { name: string; architecture: string | null }) => ({
+          value: i.name,
+          label: `${i.name}${i.architecture ? ` (${i.architecture})` : ""}`,
+        })));
+      } catch { /* not critical */ }
+    })();
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { listDatasets } = await import("../../lib/api");
+        const list = await listDatasets();
+        setDatasets(list.map((d: { name: string; path: string; num_pairs: number; scale: number }) => ({
+          value: d.name,
+          label: `${d.name} (${d.scale}× · ${d.num_pairs} pairs)`,
+          path: d.path,
+          pairs: d.num_pairs,
+          scale: d.scale,
+        })));
+      } catch { /* not critical */ }
+    })();
+  }, []);
+
+  const handleInstanceSelect = useCallback(async (name: string) => {
+    s.setSelectedInstance(name);
+    s.setResumeFrom(null);
+    s.setInstanceVersions([]);
+    s.setSelectedDataset(null);
+    s.setSelectedDatasetPath(null);
+    s.setSelectedDatasetPairs(null);
+    s.setSelectedValidationDataset(null);
+    setDatasetValid(null);
+    setDatasetErrors([]);
+    setScaleMismatch(false);
+    if (!name) {
+      s.setInstanceArchitecture(null);
+      s.setInstanceScale(null);
+      return;
+    }
+    try {
+      const { getInstance, getInstanceVersions } = await import("../../lib/api");
+      const inst = await getInstance(name);
+      s.setInstanceArchitecture(inst.architecture);
+      s.setInstanceScale(inst.scale ?? null);
+      const versions = await getInstanceVersions(name);
+      const versionList = versions.map((v: { tag: string }) => ({ tag: v.tag, path: "" }));
+      s.setInstanceVersions(versionList);
+      if (versionList.length > 0) {
+        s.setResumeFrom("latest");
+      }
+    } catch { /* not critical */ }
+  }, [s]);
+
+  const handleDatasetSelect = useCallback((name: string) => {
+    s.setSelectedDataset(name);
+    setDatasetValid(null);
+    setDatasetErrors([]);
+    const ds = datasets.find((d) => d.value === name);
+    if (ds) {
+      s.setSelectedDatasetPath(ds.path);
+      s.setSelectedDatasetPairs(ds.pairs);
+      setScaleMismatch(s.instanceScale !== null && ds.scale !== s.instanceScale);
+    } else {
+      setScaleMismatch(false);
+    }
+  }, [s, datasets]);
+
+  const handleValidate = useCallback(async () => {
+    if (!s.selectedDatasetPath) return;
     setDatasetValid(null);
     setDatasetErrors([]);
     try {
       const { validateDatasetPath } = await import("../../lib/api");
-      const res = await validateDatasetPath({ path: trainingPath });
+      const res = await validateDatasetPath({ path: s.selectedDatasetPath });
       setDatasetValid(res.valid);
       setDatasetErrors(res.problems);
     } catch (e) {
       setDatasetValid(false);
       setDatasetErrors([String(e)]);
     }
-  }, [trainingPath]);
+  }, [s.selectedDatasetPath]);
 
-// §11.14 — GPU device dropdown options
-  const deviceOptions: DropdownOption[] = [
-    { value: "cuda:0", label: "cuda:0" },
-    { value: "cpu", label: "cpu" },
-  ];
-
-  // §11.7 — iter/epoch counts
-  const itersPerEpoch = schedule.totalEpochs > 0
-    ? Math.round(hyperparameters.totalIter / schedule.totalEpochs)
+  const itersPerEpoch = s.selectedDatasetPairs && s.batchSize > 0
+    ? Math.ceil(s.selectedDatasetPairs / s.batchSize)
     : 0;
-
-  // §11.6 / §11.7 — VRAM estimate using formula
-  const vramEst = estimateVram(
-    architecture,
-    hyperparameters.batchSize,
-    hyperparameters.patchSize,
-    fp16
-  );
-
-  // §11.8 — OOM check
+  const totalIters = itersPerEpoch * s.schedule.totalEpochs;
+  const vramEst = s.instanceArchitecture
+    ? estimateVram(s.instanceArchitecture as any, s.batchSize, s.patchSize, s.fp16)
+    : 0;
   const isOom = false;
 
-  // §11.10 / §11.9 — launch gate
-  const canLaunch = datasetValid === true && runName.trim().length > 0;
+  const canLaunch = s.selectedInstance && s.selectedDataset;
 
-  // §11.12 / §11.11 / §11.13 — build and send training.start
   const handleLaunch = useCallback(async () => {
     try {
       const { startTraining } = await import("../../lib/api");
       const res = await startTraining({
-        model_name: architecture,
-        instance: selectedModelId ?? "",
-        dataset: trainingPath,
-        device: "auto",
-        batch_size: hyperparameters.batchSize,
-        learning_rate: hyperparameters.learningRate,
-        max_epochs: schedule.totalEpochs,
-        patch_size: hyperparameters.patchSize,
-        fp16: fp16 || undefined,
+        model_name: s.instanceArchitecture ?? "",
+        instance: s.selectedInstance ?? "",
+        dataset: s.selectedDataset ?? "",
+        resume: s.resumeFrom ?? undefined,
+        config: customConfigPath || undefined,
+        device: s.device === "auto" ? undefined : s.device,
+        batch_size: s.batchSize,
+        learning_rate: s.learningRate,
+        max_epochs: s.schedule.totalEpochs,
+        patch_size: s.patchSize,
+        fp16: s.fp16 || undefined,
+        seed: s.seed,
+        weight_decay: s.weightDecay,
+        betas: s.betas,
+        num_workers: s.numWorkers,
+        save_per_epoch: s.schedule.saveEvery,
+        validation_enabled: s.validationEnabled,
+        validation_split: s.validationSplit,
+        validation_dataset: s.selectedValidationDataset ?? undefined,
+        metrics_frequency: s.metricsFrequency,
+        perceptual_weight: s.perceptualWeight,
+        warmup_steps: s.schedule.warmupSteps,
       });
-      console.log("Training started, job_id:", res.job_id);
+
+      useTrainingStore.getState().setActiveRun(res.job_id);
+      useTrainingStore.getState().setStatus("running");
+      useUiStore.getState().setActiveTab("metrics");
     } catch (e) {
       console.error("Training launch failed:", e);
     }
-  }, [architecture, selectedModelId, trainingPath, hyperparameters, schedule, fp16]);
+  }, [s, customConfigPath]);
 
-  // §11.10 — save config as YAML (wired in §13)
-  const handleSaveYaml = useCallback(() => {
-    // YAML export implemented in checkpoint manager (§13)
-  }, []);
+  const valDatasetOptions: DropdownOption[] = [
+    { value: "", label: "none (use split ratio)" },
+    ...datasets
+      .filter((d) => d.value !== s.selectedDataset)
+      .map((d) => ({ value: d.value, label: d.label })),
+  ];
+
+  const deviceOptions: DropdownOption[] = [
+    { value: "cuda:0", label: "cuda:0" },
+    { value: "cpu", label: "cpu" },
+    { value: "auto", label: "auto" },
+  ];
+
+  const versionOptions: DropdownOption[] = [
+    { value: "latest", label: "latest" },
+    ...s.instanceVersions.map((v) => ({ value: v.tag, label: v.tag })),
+  ];
 
   return (
-    // §11.1 — flex-1 main + 220px right panel
-    <div
-      style={{
-        display: "flex",
-        flex: 1,
-        gap: 12,
-        padding: 12,
-        overflow: "hidden",
-        minHeight: 0,
-      }}
-    >
-      {/* ── Left: scrollable main column ── */}
-      <div
-        style={{
-          flex: 1,
-          display: "flex",
-          flexDirection: "column",
-          gap: 10,
-          overflowY: "auto",
-          minWidth: 0,
-        }}
-      >
-        {/* §11.2 — Run configuration panel */}
+    <div style={{ display: "flex", flex: 1, gap: 12, padding: 12, overflow: "hidden", minHeight: 0 }}>
+      <div style={{ flex: 3, display: "flex", flexDirection: "column", gap: 10, overflowY: "auto", minWidth: 0 }}>
+        {/* Run Configuration */}
         <Panel title="Run Configuration">
-          {/* 3-col grid: run name, output dir, checkpoint dir */}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr 1fr",
-              gap: 10,
-              marginBottom: 10,
-            }}
-          >
-            <Field label="Run Name">
-              <TextInput
-                value={runName}
-                onChange={setRunName}
-                placeholder="my-run-001"
-              />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+            <Field label="Device">
+              <Dropdown value={s.device} options={deviceOptions} onChange={s.setDevice} />
             </Field>
-            <Field label="Output Dir">
-              <PathInput
-                value={outputDir}
-                onChange={setOutputDir}
-                browseTitle="Select output directory"
-                placeholder="outputs/"
-                compact
-              />
-            </Field>
-            <Field label="Checkpoint Dir">
-              <PathInput
-                value={checkpointDir}
-                onChange={setCheckpointDir}
-                browseTitle="Select checkpoint directory"
-                placeholder="checkpoints/"
-                compact
-              />
-            </Field>
+            <div style={{ display: "flex", alignItems: "flex-end", gap: 8, paddingBottom: 6 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <Toggle on={s.fp16} onChange={() => s.setFp16(!s.fp16)} />
+                <span style={{ fontSize: 11, color: "var(--muted)" }}>BF16</span>
+              </div>
+              <div style={{ marginLeft: "auto", padding: "3px 8px", borderRadius: "var(--radius-sm)", background: s.resumeFrom ? "var(--green-dim)" : "transparent", border: `1px solid ${s.resumeFrom ? "var(--green)" : "var(--border)"}`, color: s.resumeFrom ? "var(--green)" : "var(--dim)", fontSize: 10, fontWeight: s.resumeFrom ? 600 : 400, display: "flex", alignItems: "center", gap: 6 }}>
+                {s.resumeFrom ? `Resume: ${s.resumeFrom}` : "fresh run"}
+                {s.resumeFrom && (
+                  <button onClick={() => s.setResumeFrom(null)} title="Start fresh" style={{ background: "none", border: "none", color: "var(--green)", cursor: "pointer", fontSize: 12, lineHeight: 1, padding: 0 }}>
+                    ✕
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
-          {/* Toggle row: tensorboard / fp16 / compile + resume badge */}
-          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <Toggle on={tensorboard} onChange={() => setTensorboard(!tensorboard)} />
-              <span style={{ fontSize: 11, color: "var(--muted)" }}>TensorBoard</span>
+        </Panel>
+
+        {/* Model Instance */}
+        <Panel title="Model Instance">
+          {instances.length === 0 ? (
+            <div style={{ color: "var(--amber)", fontSize: 11, padding: "4px 0" }}>
+              No model instances found. Create one in the Model Config tab first.
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <Toggle on={fp16} onChange={() => setFp16(!fp16)} />
-              <span style={{ fontSize: 11, color: "var(--muted)" }}>FP16</span>
-            </div>
-            <div
-              style={{ display: "flex", alignItems: "center", gap: 6 }}
-              title={undefined}
-            >
-              <Toggle on={compile} onChange={() => setCompile(!compile)} disabled={false} />
-              <span style={{ fontSize: 11, color: "var(--muted)" }}>
-                torch.compile
-              </span>
-            </div>
-            {/* §24.3 — Resume badge: filename (green) or "fresh run" (dim) + ✕ clear */}
-            <div
-              style={{
-                marginLeft: "auto",
-                padding: "3px 8px",
-                borderRadius: "var(--radius-sm)",
-                background: resumeFrom ? "var(--green-dim)" : "transparent",
-                border: `1px solid ${resumeFrom ? "var(--green)" : "var(--border)"}`,
-                color: resumeFrom ? "var(--green)" : "var(--dim)",
-                fontSize: 10,
-                fontWeight: resumeFrom ? 600 : 400,
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-              }}
-            >
-              {resumeFrom ? basename(resumeFrom.checkpoint_path) : "fresh run"}
-              {resumeFrom && (
-                <button
-                  onClick={() => setResumeFrom(null)}
-                  title="Clear resume checkpoint"
-                  style={{
-                    background: "none",
-                    border: "none",
-                    color: "var(--green)",
-                    cursor: "pointer",
-                    fontSize: 12,
-                    lineHeight: 1,
-                    padding: 0,
-                  }}
-                >
-                  ✕
-                </button>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <Field label="Instance">
+                <Dropdown
+                  value={s.selectedInstance ?? ""}
+                  options={[{ value: "", label: "— Select Instance —" }, ...instances]}
+                  onChange={handleInstanceSelect}
+                />
+              </Field>
+              {s.instanceArchitecture && (
+                <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                  {s.instanceArchitecture} · {s.instanceScale ?? "?"}× · {s.instanceVersions.length} version(s)
+                </div>
+              )}
+              {s.instanceVersions.length > 0 && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 11, color: "var(--muted)" }}>Resume from</span>
+                  <div style={{ width: 120 }}>
+                    <Dropdown
+                      value={s.resumeFrom ?? "latest"}
+                      options={versionOptions}
+                      onChange={(v) => s.setResumeFrom(v)}
+                    />
+                  </div>
+                  <button onClick={() => s.setResumeFrom(null)} style={{ background: "none", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", color: "var(--muted)", cursor: "pointer", fontSize: 10, padding: "3px 8px" }}>
+                    Start fresh
+                  </button>
+                </div>
+              )}
+              {s.instanceVersions.length === 0 && s.selectedInstance && (
+                <div style={{ fontSize: 10, color: "var(--dim)", padding: "2px 0" }}>
+                  No prior training — fresh start
+                </div>
               )}
             </div>
-          </div>
+          )}
         </Panel>
 
-        {/* §11.3 — Schedule panel: 6-col single row */}
-        <Panel title="Training Schedule">
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(6, 1fr)",
-              gap: 10,
-            }}
-          >
-            <Field label="Total Epochs">
-              <NumInput
-                value={schedule.totalEpochs}
-                onChange={(v) => setSchedule({ totalEpochs: v })}
-                min={1}
-              />
-            </Field>
-            <Field label="Save Every">
-              <NumInput
-                value={schedule.saveEvery}
-                onChange={(v) => setSchedule({ saveEvery: v })}
-                min={1}
-              />
-            </Field>
-            <Field label="Validate Every">
-              <NumInput
-                value={schedule.validateEvery}
-                onChange={(v) => setSchedule({ validateEvery: v })}
-                min={1}
-              />
-            </Field>
-            <Field label="Warmup Iters">
-              <NumInput
-                value={schedule.warmupIter}
-                onChange={(v) => setSchedule({ warmupIter: v })}
-                min={0}
-              />
-            </Field>
-            <Field label="LR Decay At">
-              <NumInput
-                value={parseInt(schedule.lrDecay, 10) || 0}
-                onChange={(v) => setSchedule({ lrDecay: String(v) })}
-                min={0}
-              />
-            </Field>
-            <Field label="Decay Factor">
-              <NumInput
-                value={0.5}
-                onChange={() => { /* decay factor stored separately in future */ }}
-                min={0.01}
-                max={1}
-                step={0.01}
-              />
-            </Field>
-          </div>
-        </Panel>
-
-        {/* §11.4 — Dataset panel */}
+        {/* Dataset */}
         <Panel
           title="Dataset"
           actions={
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              {/* §11.9 — inline validation status dot + label */}
-              <ValidationDot valid={datasetValid} />
-              <span style={{ fontSize: 10, color: "var(--muted)" }}>
-                {datasetValid === null
-                  ? "Not validated"
-                  : datasetValid
-                  ? "Dataset paths validated"
-                  : "Dataset validation failed — fix paths before launch"}
-              </span>
-              {/* §11.9 — Re-validate ghost button */}
-              <Btn small onClick={sendValidate}>
-                Re-validate
-              </Btn>
-            </div>
+            s.selectedDatasetPath ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <ValidationDot valid={datasetValid} />
+                <span style={{ fontSize: 10, color: "var(--muted)" }}>
+                  {datasetValid === null ? "Not validated" : datasetValid ? "Valid" : "Invalid"}
+                </span>
+                <Btn small onClick={handleValidate}>Validate</Btn>
+              </div>
+            ) : undefined
           }
         >
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <Field label="Training Data">
-              <PathInput
-                value={trainingPath}
-                onChange={setTrainingPath}
-                browseTitle="Select training dataset folder"
-                placeholder="path/to/training/hr"
+              <Dropdown
+                value={s.selectedDataset ?? ""}
+                options={[{ value: "", label: "— Select Dataset —" }, ...datasets.map((d) => ({ value: d.value, label: d.label }))]}
+                onChange={handleDatasetSelect}
               />
             </Field>
             <Field label="Validation Data">
-                <PathInput
-                  value={validationPath ?? ""}
-                  onChange={setValidationPath}
-                  browseTitle="Select validation dataset folder"
-                  placeholder="path/to/validation/hr"
-                />
+              <Dropdown
+                value={s.selectedValidationDataset ?? ""}
+                options={valDatasetOptions}
+                onChange={(v) => s.setSelectedValidationDataset(v || null)}
+              />
+            </Field>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <Toggle on={s.validationEnabled} onChange={() => s.setValidationEnabled(!s.validationEnabled)} />
+                <span style={{ fontSize: 11, color: "var(--muted)" }}>Val enabled</span>
+              </div>
+              <Field label="Val split">
+                <NumInput value={s.validationSplit} onChange={s.setValidationSplit} min={0} max={1} step={0.05} />
               </Field>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <Field label="Workers">
-                <NumInput value={4} onChange={() => {}} min={0} max={16} />
-              </Field>
-              <Field label="Prefetch Queue">
-                <NumInput value={2} onChange={() => {}} min={1} max={8} />
+                <NumInput value={s.numWorkers} onChange={s.setNumWorkers} min={0} max={16} />
               </Field>
             </div>
+            {scaleMismatch && (
+              <div style={{ padding: "6px 8px", background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.4)", borderRadius: "var(--radius-sm)", fontSize: 10, color: "#f59e0b", lineHeight: 1.4 }}>
+                ⚠ Dataset scale does not match model scale ({s.instanceScale}×)
+              </div>
+            )}
           </div>
         </Panel>
 
-        {/* §11.5 — Hardware panel */}
-        <Panel title="Hardware">
-          <Field label="GPU Device">
-            <Dropdown
-              value={device}
-              options={deviceOptions}
-              onChange={setDevice}
-            />
+        {/* Hyperparameters */}
+        <Panel title="Hyperparameters">
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginBottom: 10 }}>
+            <Field label="Total Epochs"><NumInput value={s.schedule.totalEpochs} onChange={(v) => s.setSchedule({ totalEpochs: v })} min={1} /></Field>
+            <Field label="Batch Size"><NumInput value={s.batchSize} onChange={s.setBatchSize} min={1} max={128} /></Field>
+            <Field label="Patch Size"><NumInput value={s.patchSize} onChange={s.setPatchSize} min={16} max={512} step={8} /></Field>
+            <Field label="Save Every"><NumInput value={s.schedule.saveEvery} onChange={(v) => s.setSchedule({ saveEvery: v })} min={1} /></Field>
+            <Field label="Warmup Steps"><NumInput value={s.schedule.warmupSteps} onChange={(v) => s.setSchedule({ warmupSteps: v })} min={0} /></Field>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginBottom: 10 }}>
+            <Field label="Seed"><NumInput value={s.seed} onChange={s.setSeed} min={0} /></Field>
+            <Field label="Learning Rate"><NumInput value={s.learningRate} onChange={s.setLearningRate} min={0} step={1e-5} /></Field>
+            <Field label="Weight Decay"><NumInput value={s.weightDecay} onChange={s.setWeightDecay} min={0} step={0.01} /></Field>
+            <Field label="β₁"><NumInput value={s.betas[0]} onChange={(v) => s.setBetas([v, s.betas[1]])} min={0} max={1} step={0.01} /></Field>
+            <Field label="β₂"><NumInput value={s.betas[1]} onChange={(v) => s.setBetas([s.betas[0], v])} min={0} max={1} step={0.001} /></Field>
+          </div>
+          <Field label="Perceptual Weight (0 = disabled)">
+            <NumInput value={s.perceptualWeight} onChange={s.setPerceptualWeight} min={0} step={0.01} />
           </Field>
         </Panel>
 
-        {/* §11.5a — Architecture & Batch Config panel */}
-        <Panel title="Architecture & Batch Config">
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {/* 4-col arch pill selector */}
-            <Field label="Architecture">
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {savedModels.length > 0 && (
-                  <Dropdown
-                    value={selectedModelId ?? ""}
-                    options={[{ value: "", label: "— Saved Models —" }, ...savedModels.map((m) => ({ value: m.id, label: `${m.name} (${m.architecture})` }))]}
-                    onChange={(v) => {
-                      const model = savedModels.find((m) => m.id === v);
-                      if (model) {
-                        setSelectedModelId(model.id);
-                        setArchitecture(model.architecture);
-                        setHyperparameters({
-                          batchSize: model.hyperparameters.batch_size,
-                          patchSize: model.hyperparameters.patch_size,
-                          learningRate: model.hyperparameters.learning_rate,
-                          optimizer: model.hyperparameters.optimizer,
-                          lrScheduler: model.hyperparameters.lr_scheduler,
-                          totalIter: model.hyperparameters.total_iter,
-                        });
-                      }
-                    }}
-                  />
-                )}
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
-                  {ARCH_OPTIONS.map((arch) => (
-                    <ArchPill
-                      key={arch}
-                      id={arch}
-                      selected={architecture === arch}
-                      onSelect={setArchitecture}
-                    />
-                  ))}
-                </div>
-              </div>
+        {/* Advanced */}
+        <Panel title="Advanced">
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <Field label="Metrics Frequency">
+              <NumInput value={s.metricsFrequency} onChange={s.setMetricsFrequency} min={1} />
             </Field>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <Field label="Batch Size">
-                <NumInput
-                  value={hyperparameters.batchSize}
-                  onChange={(v) => setHyperparameters({ batchSize: v })}
-                  min={1}
-                  max={64}
-                />
-              </Field>
-              <Field label="Patch Size (px)">
-                <NumInput
-                  value={hyperparameters.patchSize}
-                  onChange={(v) => setHyperparameters({ patchSize: v })}
-                  min={32}
-                  max={512}
-                  step={8}
-                />
-              </Field>
-            </div>
+            <Field label="Custom Config YAML">
+              <TextInput value={customConfigPath} onChange={setCustomConfigPath} placeholder="path/to/config.yaml" />
+            </Field>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
+            <Toggle on={machineMode} onChange={() => setMachineMode(!machineMode)} />
+            <span style={{ fontSize: 11, color: "var(--muted)" }}>Machine Mode (JSONL metrics)</span>
           </div>
         </Panel>
       </div>
 
-      {/* ── Right: 220px estimate + launch panel ── */}
-      <div
-        style={{
-          width: 220,
-          flexShrink: 0,
-          display: "flex",
-          flexDirection: "column",
-          gap: 10,
-        }}
-      >
-        {/* §11.7 — Estimate panel */}
+      {/* Sidebar */}
+      <div style={{ flex: 1, minWidth: 200, maxWidth: 320, display: "flex", flexDirection: "column", gap: 10 }}>
         <Panel title="Estimate" style={{ flex: 1 }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <EstimateRow label="Iters / epoch" value={itersPerEpoch.toLocaleString()} />
-            <EstimateRow label="Total iters" value={hyperparameters.totalIter.toLocaleString()} />
-            <EstimateRow
-              label="Est. time"
-              value="—"
-              color="var(--amber, #f59e0b)"
-            />
-            {/* §11.7 / §11.8 — VRAM estimate, red when OOM */}
-            <EstimateRow
-              label="VRAM est."
-              value={`${vramEst.toFixed(1)} GB`}
-              color={isOom ? "var(--red, #ef4444)" : undefined}
-            />
-            {false && (
-              <EstimateRow
-                label="GPU VRAM"
-                value={`? GB`}
-              />
-            )}
-
-            {/* §11.8 — OOM warning */}
+            <EstimateRow label="Total iters" value={totalIters.toLocaleString()} />
+            <EstimateRow label="Est. time" value="—" color="var(--amber, #f59e0b)" />
+            <EstimateRow label="VRAM est." value={`${vramEst.toFixed(1)} GB`} color={isOom ? "var(--red, #ef4444)" : undefined} />
             {isOom && (
-              <div
-                style={{
-                  padding: "6px 8px",
-                  background: "rgba(239,68,68,0.1)",
-                  border: "1px solid rgba(239,68,68,0.4)",
-                  borderRadius: "var(--radius-sm)",
-                  fontSize: 10,
-                  color: "#f87171",
-                  lineHeight: 1.4,
-                }}
-              >
+              <div style={{ padding: "6px 8px", background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.4)", borderRadius: "var(--radius-sm)", fontSize: 10, color: "#f87171", lineHeight: 1.4 }}>
                 ⚠ Estimated VRAM exceeds GPU capacity — may OOM
               </div>
             )}
-
-            {/* §11.9 — Validation errors */}
             {datasetErrors.length > 0 && (
-              <div
-                style={{
-                  padding: "6px 8px",
-                  background: "rgba(239,68,68,0.08)",
-                  border: "1px solid rgba(239,68,68,0.3)",
-                  borderRadius: "var(--radius-sm)",
-                  fontSize: 10,
-                  color: "#f87171",
-                  lineHeight: 1.5,
-                }}
-              >
-                {datasetErrors.map((err, i) => (
-                  <div key={i}>{err}</div>
-                ))}
+              <div style={{ padding: "6px 8px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: "var(--radius-sm)", fontSize: 10, color: "#f87171", lineHeight: 1.5 }}>
+                {datasetErrors.map((err, i) => <div key={i}>{err}</div>)}
               </div>
             )}
 
-            {/* Config validation hint */}
-            {!runName.trim() && (
-              <div
-                style={{
-                  fontSize: 10,
-                  color: "var(--amber, #f59e0b)",
-                  lineHeight: 1.4,
-                }}
-              >
-                ⚠ Run name required
-              </div>
-            )}
           </div>
         </Panel>
-
-        {/* §11.10 — Launch + Save YAML buttons */}
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {/* §11.8 — OOM changes button to amber "Launch Anyway" */}
-          {isOom ? (
-            <Btn
-              variant="solid"
-              color="var(--amber, #f59e0b)"
-              full
-              onClick={handleLaunch}
-              disabled={!runName.trim() || datasetValid !== true}
-            >
-              ⚠ Launch Anyway (may OOM)
-            </Btn>
-          ) : (
-            <Btn
-              variant="solid"
-              color="var(--green)"
-              full
-              onClick={handleLaunch}
-              // §11.9 / §11.10 — gated by dataset validation + run name
-              disabled={!canLaunch}
-            >
-              Launch Training
-            </Btn>
-          )}
-          <Btn full onClick={handleSaveYaml}>
-            Save Config as YAML
+          <Btn
+            variant="solid"
+            color={isOom ? "var(--amber, #f59e0b)" : "var(--green)"}
+            full
+            onClick={handleLaunch}
+            disabled={!canLaunch}
+          >
+            {isOom ? "⚠ Launch Anyway (may OOM)" : "Launch Training"}
           </Btn>
         </div>
       </div>

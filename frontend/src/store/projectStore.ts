@@ -11,6 +11,7 @@ interface ProjectState {
   project: SRProject | null;
   openProject: (filePath: string) => Promise<void>;
   closeProject: () => void;
+  setProject: (project: SRProject) => void;
 }
 
 export const useProjectStore = create<ProjectState>((set) => ({
@@ -33,4 +34,5 @@ export const useProjectStore = create<ProjectState>((set) => ({
     SRProjManager.close();
     set({ project: null });
   },
+  setProject: (project) => set({ project }),
 }));

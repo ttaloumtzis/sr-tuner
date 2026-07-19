@@ -543,7 +543,7 @@ export function ProjectScreen() {
       <div
         style={{
           width: "100%",
-          maxWidth: 720,
+          maxWidth: "min(960px, 90vw)",
           display: "flex",
           flexDirection: "column",
           gap: 28,

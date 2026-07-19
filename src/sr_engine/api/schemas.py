@@ -35,6 +35,18 @@ class ModelInstance(BaseModel):
     architecture: str | None = None
     scale: int | None = None
     checkpoints: list[str] = []
+    latest_version: str | None = None
+    config: dict = {}
+
+class CreateInstanceParams(BaseModel):
+    name: str
+    architecture: str
+    config: dict
+
+class ModelVersion(BaseModel):
+    tag: str
+    path: str
+    metadata: dict | None = None
 
 class ExportParams(BaseModel):
     instance: str
@@ -84,23 +96,40 @@ class TrainParams(BaseModel):
     patch_size: int | None = None
     fp16: bool | None = None
     seed: int | None = None
+    weight_decay: float | None = None
+    betas: list[float] | None = None
+    num_workers: int | None = None
+    save_per_epoch: int | None = None
+    validation_enabled: bool | None = None
+    validation_split: float | None = None
+    validation_dataset: str | None = None
+    metrics_frequency: int | None = None
+    perceptual_weight: float | None = None
+    warmup_steps: int | None = None
 
     def to_overrides(self) -> dict:
         d: dict[str, Any] = {}
-        if self.batch_size is not None:
-            d["train.batch_size"] = self.batch_size
-        if self.learning_rate is not None:
-            d["train.learning_rate"] = self.learning_rate
-        if self.max_epochs is not None:
-            d["train.max_epochs"] = self.max_epochs
-        if self.patch_size is not None:
-            d["train.patch_size"] = self.patch_size
+        for key in ("batch_size", "learning_rate", "max_epochs", "patch_size",
+                     "seed", "weight_decay", "num_workers", "save_per_epoch",
+                     "metrics_frequency", "warmup_steps"):
+            val = getattr(self, key, None)
+            if val is not None:
+                d[key] = val
+        if self.betas is not None:
+            d["betas"] = self.betas
         if self.fp16 is not None:
-            d["train.dtype"] = "bf16" if self.fp16 else "float32"
+            d["dtype"] = "bf16" if self.fp16 else "float32"
         if self.device and self.device != "auto":
-            d["train.device"] = self.device
-        if self.seed is not None:
-            d["train.seed"] = self.seed
+            d["device"] = self.device
+        if any(v is not None for v in (self.validation_enabled, self.validation_split, self.validation_dataset)):
+            d.setdefault("validation", {})
+            for k, v in (("enabled", self.validation_enabled),
+                          ("split", self.validation_split),
+                          ("dataset", self.validation_dataset)):
+                if v is not None:
+                    d["validation"][k] = v
+        if self.perceptual_weight is not None:
+            d.setdefault("losses", {})["perceptual_weight"] = self.perceptual_weight
         return d
 
 # ── Inference ───────────────────────────────────────────────────────────

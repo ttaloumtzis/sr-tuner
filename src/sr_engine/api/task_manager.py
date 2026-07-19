@@ -78,7 +78,7 @@ class BackgroundTaskManager:
             if not rec:
                 return False
             if rec.status in ("completed", "failed", "cancelled"):
-                return False
+                return True
             rec.cancel_event.set()
             rec.status = "cancelled"
             rec.completed_at = time.time()

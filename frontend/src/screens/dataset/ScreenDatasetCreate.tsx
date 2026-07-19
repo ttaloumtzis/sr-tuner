@@ -357,7 +357,7 @@ function SummaryPanel() {
   }
 
   return (
-    <div style={{ width: 220, flexShrink: 0 }}>
+    <div style={{ flex: 1, minWidth: 180, maxWidth: 300 }}>
       <Panel title="Dataset Summary">
         <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
           {rows.map(({ label, value }) => (

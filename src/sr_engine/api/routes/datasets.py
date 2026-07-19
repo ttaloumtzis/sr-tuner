@@ -1,3 +1,4 @@
+import json
 import threading
 from pathlib import Path
 
@@ -122,3 +123,34 @@ async def prune_dataset(params: DatasetPruneParams, ws: Workspace = Depends(get_
     )
     thread.start()
     return {"job_id": job_id, "status": "accepted"}
+
+
+@router.get("")
+async def list_datasets(
+    scale: int | None = None,
+    ws: Workspace = Depends(get_workspace),
+):
+    datasets_dir = ws.path / "datasets"
+    if not datasets_dir.is_dir():
+        return []
+    result = []
+    for d in sorted(datasets_dir.iterdir()):
+        if not d.is_dir():
+            continue
+        manifest_path = d / "manifest.json"
+        if not manifest_path.is_file():
+            continue
+        try:
+            data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        ds_scale = int(data.get("config", {}).get("scale", 4))
+        if scale is not None and ds_scale != scale:
+            continue
+        result.append({
+            "name": d.name,
+            "path": str(d),
+            "scale": ds_scale,
+            "num_pairs": len(data.get("pairs", [])),
+        })
+    return result

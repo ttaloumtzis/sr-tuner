@@ -12,7 +12,9 @@ from sr_engine.api.task_manager import (
     release_training_slot,
 )
 from sr_engine.data.dataset_builder import build_from_preprocessed, build_from_video
+from sr_engine.monitoring.hardware import HardwareMonitor
 from sr_engine.engine.inference import infer_image, infer_video, load_model
+from sr_engine.engine.metrics_stream import MetricsStream
 from sr_engine.engine.trainer import Trainer, TrainingCancelled
 from sr_engine.models.registry import build_model
 from sr_engine.utils.config import DefaultConfigs, load_config, merge_overrides
@@ -53,30 +55,77 @@ def run_training(
         else:
             dataset_path = Path(dataset)
 
-        train_cfg = cfg_loader.get_train_config()
+        custom_config = params.get("config")
+        if custom_config:
+            train_cfg = load_config(Path(custom_config))
+        else:
+            train_cfg = cfg_loader.get_train_config()
+
         overrides = params.get("overrides", {})
         if overrides:
             train_cfg = merge_overrides(train_cfg, overrides)
 
         run_dir = ws.get_run_path(instance) if ws else None
 
+        val_cfg = train_cfg.get("validation", {})
+        val_enabled = bool(val_cfg.get("enabled", True))
+        val_split = float(val_cfg.get("split", 0.1))
+        val_dataset_dir = Path(val_cfg["dataset"]) if val_cfg.get("dataset") else None
+        if val_dataset_dir and ws:
+            val_dataset_dir = ws.resolve_dataset(val_dataset_dir)
+
+        load_weights_from = None
+        resume_from = None
+        resume_spec = params.get("resume")
+        if resume_spec and ws and instance:
+            version_path = ws.resolve_version(instance, resume_spec)
+            if version_path:
+                load_weights_from = version_path
+            else:
+                path = Path(resume_spec)
+                if path.exists():
+                    resume_from = path
+
         sse_reporter = SSEProgressReporter(events, job_id)
         sse_callback = SSECallback(events, job_id)
+
+        metrics_stream: MetricsStream | None = None
+        validation_frame_dir: Path | None = None
+        if run_dir is not None:
+            metrics_path = run_dir / "metrics.jsonl"
+            metrics_stream = MetricsStream(metrics_path, metadata={
+                "job_id": job_id,
+                "model": model_name,
+                "instance": instance,
+                "dataset": dataset,
+            })
+            validation_frame_dir = run_dir / "validation"
+            validation_frame_dir.mkdir(parents=True, exist_ok=True)
 
         def _cancel_check() -> bool:
             rec = tasks.get_job(job_id)
             return rec is not None and rec.cancel_event.is_set()
 
+        hw_monitor = HardwareMonitor(events, job_id)
         trainer = Trainer(
             model_cfg=model_cfg,
             train_cfg=train_cfg,
             dataset_dir=dataset_path,
+            load_weights_from=load_weights_from,
+            resume_from=resume_from,
             checkpoint_dir=run_dir,
             device=train_cfg.get("device", "cuda"),
+            validation_enabled=val_enabled,
+            validation_split=val_split,
+            val_dataset_dir=val_dataset_dir,
+            metrics_stream=metrics_stream,
+            metrics_frequency=int(train_cfg.get("metrics_frequency", 1)),
+            validation_frame_dir=validation_frame_dir,
             progress_reporter=sse_reporter,
             callbacks=[sse_callback],
             cancel_check=_cancel_check,
         )
+        hw_monitor.start()
         trainer.train()
 
         if ws:
@@ -99,6 +148,7 @@ def run_training(
         log.exception("Training job %s failed", job_id)
         tasks.fail_job(job_id, str(e))
     finally:
+        hw_monitor.stop()
         events.publish(job_id, None)
         release_training_slot()
 

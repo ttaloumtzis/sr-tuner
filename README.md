@@ -17,21 +17,14 @@ Super-resolution (SR) engine for training and running deep learning-based super-
 - **Desktop GUI** — React/TypeScript frontend with Tauri 2 desktop shell, providing a native interface for project management, dataset operations, model training, inference, and checkpoint management
 - **CLI** — Full-featured Click-based command-line interface with standalone command aliases
 
-## Requirements
+## Dependencies
 
-- Python 3.11 (strictly pinned in `pyproject.toml`)
-- [uv](https://docs.astral.sh/uv/) (Python package manager)
-- Linux recommended (ROCm/CUDA); Windows works for CUDA/CPU
-- GPU optional — CPU-only mode works everywhere
+### Python (CLI + API Server)
 
-## Installation
+The project requires **Python >=3.11, <3.13** and uses [uv](https://docs.astral.sh/uv/) as the package manager.
 
 ```bash
-# Clone the repository
-git clone https://github.com/ttaloumtzis/sr-tuner.git
-cd sr-tuner
-
-# CPU-only (no GPU)
+# CPU-only
 ./envs/build.sh --backend cpu
 
 # NVIDIA CUDA
@@ -41,297 +34,125 @@ cd sr-tuner
 ./envs/build.sh --backend rocm
 ```
 
-The build script creates a `.venv`, installs dependencies via `uv sync`, pins the correct PyTorch index, and runs `envs/verify_env.py` to confirm the setup.
+The build script creates a `.venv`, runs `uv sync --no-dev`, installs the correct PyTorch wheel for the chosen backend (`cpu`, `cu121`, or `rocm6.2`), and runs `envs/verify_env.py` to confirm the setup.
 
-Manual alternative:
+| Package | Purpose |
+|---|---|
+| PyTorch + torchvision | Deep learning engine |
+| click | CLI framework |
+| fastapi + uvicorn | REST API server |
+| opencv-python | Video frame extraction |
+| pillow | Image I/O |
+| numpy | Array operations |
+| pyyaml | Configuration files |
+| psutil | System monitoring |
+| tqdm | Progress bars |
+
+### GUI Frontend (Node.js / React)
+
+Requires **Node.js >=18**. Dependencies are managed via npm:
+
 ```bash
-uv venv
-uv sync
-uv pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
+cd frontend
+npm install         # installs everything in package.json
+npm run dev         # Vite dev server (requires API on :8765)
+npm run build       # production build
 ```
 
-## Usage
+| Package | Purpose |
+|---|---|
+| react + react-dom | UI framework |
+| zustand | State management |
+| @tauri-apps/api | Desktop integration |
+| @tauri-apps/plugin-dialog | Native file dialogs |
+| @tauri-apps/plugin-fs | Native filesystem access |
+| @tauri-apps/plugin-shell | Subprocess management |
+| typescript | Type safety |
+| vite | Dev server & bundler |
 
-### CLI entry point
+### GUI Shell (Rust / Tauri)
 
-All commands are accessible via the `srengine` CLI:
+Requires the **Rust toolchain** (edition 2021). Dependencies are fetched by Cargo during the Tauri build:
 
 ```bash
-srengine --help
+npx tauri build     # also compiles the Rust shell
 ```
 
-### Workspace management
+| Crate | Purpose |
+|---|---|
+| tauri | Desktop shell |
+| tauri-plugin-dialog | Native file dialogs |
+| tauri-plugin-fs | Native filesystem access |
+| ureq | Python server health checks |
+| serde + serde_json | Serialization |
+
+## Quick Start
+
+First, set up the environment (see [Dependencies](#dependencies) above), then:
 
 ```bash
-# Initialize a workspace tree
+# Initialize a workspace
 srengine workspace init
 
-# Show workspace summary
-srengine workspace info
-
-# Validate workspace structure
-srengine workspace check
-```
-
-### Dataset operations
-
-```bash
-# Build a dataset from a video file (extract frames + apply degradations)
+# Build a dataset from a video
 srengine dataset build --input video.mp4 --out ./datasets/my_set
 
-# Validate an existing dataset directory
-srengine dataset validate --path ./datasets/my_set
-
-# Run a health check (detect black frames, resolution distribution, etc.)
-srengine dataset health --path ./datasets/my_set
-
-# Merge multiple datasets grouped by scale
-srengine dataset merge --input ./datasets/sources --out ./datasets/merged
-```
-
-### Model management
-
-```bash
-# Create a named model instance (stores arch config, checkpoints, runs)
-srengine model create-instance my_model --model rrdb_esrgan
-
-# List instances
-srengine model list-instances
-
-# View instance details
-srengine model info --instance my_model
-
-# Export a trained model
-srengine model export --instance my_model --format onnx --out model.onnx
-```
-
-### Training
-
-```bash
-# Train with default config
+# Train a model
 srengine train run --model rrdb_esrgan --dataset ./datasets/my_set
 
-# Train with a custom config and mixed precision
-srengine train run --config my_config.yaml --dataset ./datasets/my_set \
-    --model swinir --bf16
+# Run inference
+srengine infer run --model checkpoints/model.pth --input input.png --output output.png
 
-# Train with a model instance (auto-versioning and checkpoints)
-srengine train run --instance my_model --dataset ./datasets/my_set
-
-# Resume from a checkpoint
-srengine train run --instance my_model --dataset ./datasets/my_set --resume v3
-
-# Emit metrics as JSONL (for programmatic consumption)
-srengine train run --instance my_model --dataset ./datasets/my_set --machine
-```
-
-### Inference
-
-```bash
-# Super-resolve an image
-srengine infer run --model checkpoints/model.pth \
-    --input input.png --output output.png
-
-# Use a model instance (auto-resolves latest version)
-srengine infer run --instance my_model \
-    --input input.png --output output.png
-
-# Super-resolve a video
-srengine infer run --model checkpoints/model.pth \
-    --input video.mp4 --output output.mp4
-
-# Tiled inference (VRAM-safe for large images)
-srengine infer run --model checkpoints/model.pth \
-    --input large.png --output output.png --tile 512 --overlap 64
-```
-
-### Environment diagnostics
-
-```bash
-srengine env check
-srengine env bench --model rrdb_esrgan --iterations 50
-```
-
-### API server
-
-Start the FastAPI-based HTTP server to enable the desktop GUI or third-party integrations:
-
-```bash
-# Start on default port (8765)
+# Start the API server (required for the GUI)
 srengine serve start
-
-# Custom port and host
-srengine serve start --host 0.0.0.0 --port 8080
 ```
 
-The server provides:
-- **RESTful endpoints** for all operations (workspace, datasets, models, training, inference)
-- **Server-Sent Events (SSE)** for real-time job progress
-- **Background job management** with cancellation and status tracking
-- **CORS-enabled** for cross-origin frontend access
+Full CLI reference is available in [`docs/cli-reference.md`](docs/cli-reference.md) and all commands support `--help`.
 
 ### Desktop GUI
 
-The project includes a native desktop application built with **Tauri 2** (Rust shell) and **React 18 + TypeScript**:
-
 ```bash
-# Prerequisites: Rust toolchain, Node.js 18+
 cd frontend
 npm install
-
-# Development mode (requires API server running)
-npm run dev
-
-# Production build
-npm run build
-# Or build the Tauri desktop app
-npx tauri build
+npm run dev         # development (requires API server on :8765)
+npm run build       # production build
+npx tauri build     # standalone desktop binary
 ```
 
-The GUI provides tab-based navigation for:
-- **Project management** — Create, open, and manage workspaces
-- **Dataset operations** — Build from video, browse, validate, merge, health check
-- **Model management** — Create instances, view version history, export checkpoints
-- **Training** — Configure hyperparameters, launch runs, live metrics dashboard
-- **Inference** — Drag-and-drop image input, before/after comparison with metrics
-- **Checkpoints** — Browse, sort, filter, and manage model checkpoints
+The GUI provides tab-based navigation for project management, dataset operations, model management, training (with live metrics), inference (drag-and-drop), and checkpoint browsing.
 
 ### Python API
-
-The engine modules can also be used directly from Python:
 
 ```python
 from sr_engine.models.registry import build_model
 from sr_engine.data.datasets import PairedImageFolderDataset
-from sr_engine.engine.trainer import Trainer
-
-# Build a model
-model = build_model("swinir", {"name": "swinir", "scale": 4, "embed_dim": 180})
-
-# Load a dataset
-dataset = PairedImageFolderDataset("datasets/my_set")
-
-# Run inference on an image
 from sr_engine.engine.inference import infer_image
-infer_image(
-    model_checkpoint="checkpoints/model.pth",
-    input_path="input.png",
-    output_path="output.png",
-    device="cuda",
-)
+
+model = build_model("swinir", {"name": "swinir", "scale": 4, "embed_dim": 180})
+dataset = PairedImageFolderDataset("datasets/my_set")
+infer_image(model_checkpoint="checkpoints/model.pth", input_path="input.png",
+            output_path="output.png", device="cuda")
 ```
 
 ## Project Structure
 
 ```
-├── envs/
-│   ├── build.sh                 # Environment builder (uv + PyTorch backend)
-│   ├── verify_env.py            # Post-install verification script
-│   └── docker/                  # Dockerfiles (if any)
-├── src/
-│   └── sr_engine/
-│       ├── cli/                 # Click CLI commands
-│       │   ├── main.py          # CLI entry point (srengine)
-│       │   ├── cmd_dataset.py   # dataset build, validate, health, merge
-│       │   ├── cmd_train.py     # train run
-│       │   ├── cmd_infer.py     # infer run
-│       │   ├── cmd_model.py     # model create-instance, list-instances, export, info
-│       │   ├── cmd_env.py       # env check, env bench
-│       │   ├── cmd_serve.py     # serve start
-│       │   ├── workspace_commands.py  # workspace init, info, check
-│       │   └── helpers.py       # Config loading, progress, workspace resolution
-│       ├── api/                 # FastAPI REST API server
-│       │   ├── app.py           # FastAPI app, lifespan, CORS, SSE endpoint
-│       │   ├── schemas.py       # Pydantic request/response models
-│       │   ├── deps.py          # Dependency injection (workspace, configs)
-│       │   ├── task_manager.py  # Background task registry
-│       │   ├── event_manager.py # SSE event bus
-│       │   ├── callbacks.py     # SSECallback for trainer integration
-│       │   ├── progress.py      # SSEProgressReporter
-│       │   ├── workers.py       # Background worker threads
-│       │   └── routes/          # API route handlers
-│       │       ├── workspace.py
-│       │       ├── models.py
-│       │       ├── training.py
-│       │       ├── inference.py
-│       │       ├── datasets.py
-│       │       ├── jobs.py
-│       │       └── env.py
-│       ├── data/                # Data pipeline
-│       │   ├── dataset_builder.py  # build_from_video, build_from_preprocessed
-│       │   ├── dataset_validator.py# Dataset validation (ValidationReport, validate)
-│       │   ├── dataset_health.py   # Health checks, black frame detection/pruning
-│       │   ├── dataset_merge.py    # Multi-dataset merging by scale
-│       │   ├── datasets.py         # PairedImageFolderDataset (PyTorch Dataset)
-│       │   ├── degrade.py          # HR→LR degradation pipeline
-│       │   ├── transforms.py       # RandomCrop, RandomFlip, RandomRotate, CenterCrop
-│       │   └── video_extract.py    # Video frame extraction
-│       ├── device/                  # Hardware abstraction
-│       │   ├── backend.py          # CUDA/ROCm detection, autocast, flash attention
-│       │   └── kernels.py          # Backend-aware op dispatchers (SDPA, Conv2d)
-│       ├── engine/                  # Training & inference engine
-│       │   ├── trainer.py          # Trainer, TrainerCallback, _MetricsStreamCallback
-│       │   ├── inference.py        # infer_image, infer_video
-│       │   ├── metrics.py          # psnr, ssim, lpips
-│       │   ├── metrics_stream.py   # MetricsStream (JSONL output)
-│       │   └── tiling.py           # tile_image, stitch_tiles
-│       ├── models/                  # Model architectures
-│       │   ├── archs/
-│       │   │   ├── rrdbnet.py      # RRDB-ESRGAN (registered as "rrdb_esrgan")
-│       │   │   └── swinir.py       # SwinIR (registered as "swinir")
-│       │   ├── registry.py         # Model registry (register, build_model)
-│       │   ├── checkpoint.py       # Save/load checkpoints, export to ONNX/TorchScript/SafeTensors
-│       │   └── losses.py           # L1Loss (Charbonnier), PerceptualLoss, GANLoss
-│       ├── utils/                   # Utilities
-│       │   ├── config.py           # YAML config loader/merger (DefaultConfigs)
-│       │   ├── configs/            # Built-in YAML config files
-│       │   │   ├── train/base.yaml
-│       │   │   ├── datasets/video_pairs.yaml
-│       │   │   └── models/{swinir,rrdb_esrgan}.yaml
-│       │   ├── io.py               # Image read/write utilities
-│       │   ├── logging.py          # get_logger
-│       │   └── progress.py         # ProgressReporter, TqdmReporter
-│       └── workspace.py           # Workspace discovery/init, ModelInstance, versioning
-├── frontend/              # React/TypeScript desktop GUI
-│   ├── src/
-│   │   ├── App.tsx        # Root component with tab routing
-│   │   ├── screens/       # 6 tab screens (project, dataset, model, training, metrics, inference, checkpoints)
-│   │   ├── store/         # 9 Zustand state stores
-│   │   ├── hooks/         # Custom React hooks (SSE, etc.)
-│   │   ├── components/    # Reusable UI components
-│   │   └── lib/           # API client, types, utilities
-│   ├── package.json
-│   └── vite.config.ts
-├── src-tauri/             # Tauri 2 desktop shell (Rust)
-│   ├── src/lib.rs         # Tauri commands (Python server lifecycle, filesystem)
-│   ├── Cargo.toml
-│   └── tauri.conf.json
-├── tests/                # Test suite (pytest)
-│   ├── conftest.py       # Shared fixtures and helpers
-│   ├── test_trainer.py   # Trainer tests
-│   ├── test_inference.py # Inference tests
-│   ├── test_backend.py   # Device backend tests
-│   ├── test_datasets.py  # Dataset tests
-│   ├── test_degrade.py   # Degradation tests
-│   ├── test_models.py    # Model architecture tests
-│   ├── test_cli_*.py     # CLI command tests
-│   └── ...               # Additional test modules
-├── docs/                 # Documentation files
-│   ├── architecture.md
-│   ├── cli-reference.md
-│   ├── api-reference.md
-│   ├── frontend.md
-│   ├── desktop.md
-│   ├── training.md
-│   ├── data-pipeline.md
-│   ├── inference.md
-│   ├── workspace.md
-│   ├── device-backend.md
-│   └── ...
-├── pyproject.toml        # Project metadata and build configuration
-├── LICENSE               # MIT License
-└── README.md
+├── envs/               # Environment builder & verification scripts
+├── src/sr_engine/
+│   ├── cli/            # Click CLI commands
+│   ├── api/            # FastAPI REST API (routes, schemas, SSE, task mgmt)
+│   ├── data/           # Dataset pipeline (build, validate, degrade, merge)
+│   ├── device/         # CUDA/ROCm abstraction layer
+│   ├── engine/         # Training loop, inference, metrics
+│   ├── models/         # Model architectures (RRDB, SwinIR), checkpointing
+│   └── utils/          # Config loading, I/O, logging, progress reporting
+├── frontend/           # React/TypeScript desktop GUI
+├── src-tauri/          # Tauri 2 Rust shell
+├── tests/              # pytest test suite
+└── docs/               # Documentation
 ```
+
+Detailed architecture is documented in [`docs/architecture.md`](docs/architecture.md).
 
 ## Configuration
 
@@ -354,29 +175,15 @@ Default configuration files are bundled in `src/sr_engine/utils/configs/` and ar
 ## Development
 
 ```bash
-# Install dev dependencies (testing, linting)
+# Install dev dependencies
 uv sync --group dev
 
 # Run tests
 uv run pytest tests/
 
-# Run tests with coverage
-uv run pytest tests/ --cov=sr_engine
-
 # Lint
 uv run ruff check src/
 ```
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/my-feature`)
-3. Make your changes and add tests
-4. Run the test suite (`uv run pytest tests/`)
-5. Run the linter (`uv run ruff check src/`)
-6. Submit a pull request
-
-Issues and feature requests can be filed at [https://github.com/ttaloumtzis/sr-tuner/issues](https://github.com/ttaloumtzis/sr-tuner/issues).
 
 ## License
 

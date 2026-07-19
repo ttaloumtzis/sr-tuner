@@ -1,11 +1,11 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Panel } from "../../components/ui/Panel";
 import { Btn } from "../../components/ui/Btn";
 import { useModelStore } from "../../store/modelStore";
-import { useProjectStore } from "../../store/projectStore";
-import { useUiStore } from "../../store/uiStore";
-import { SRProjManager } from "../../lib/SRProjManager";
+import { listInstances, createInstance, getInstanceVersions, deleteInstance } from "../../lib/api";
+import { useToast } from "../../components/shell/ToastProvider";
 import type { Architecture } from "../../lib/srproj";
+import type { ModelInstance, ModelVersion } from "../../lib/api-types";
 
 // ── Config field descriptors ─────────────────────────────────────────
 
@@ -182,20 +182,347 @@ export function ScreenModelConfig() {
         <SubTabPill label="Create Model" active={subTab === "create"} onClick={() => setSubTab("create")} />
         <SubTabPill label="Model View" active={subTab === "view"} onClick={() => setSubTab("view")} />
       </div>
-      {subTab === "create" && <ScreenModelCreate />}
-      {subTab === "view" && <ScreenModelView />}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, paddingTop: 16 }}>
+        {subTab === "create" && <ScreenModelCreate />}
+        {subTab === "view" && <ScreenModelView />}
+      </div>
     </div>
   );
 }
 
-// ── ScreenModelView (stub) ────────────────────────────────────────────
+// ── ScreenModelView ────────────────────────────────────────────────────
 
 function ScreenModelView() {
+  const setSubTab = useModelStore((s) => s.setSubTab);
+  const { show } = useToast();
+
+  const [instances, setInstances] = useState<ModelInstance[]>([]);
+  const [selectedName, setSelectedName] = useState<string | null>(null);
+  const [versions, setVersions] = useState<ModelVersion[]>([]);
+  const [loadingVersions, setLoadingVersions] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [deletingName, setDeletingName] = useState<string | null>(null);
+
+  const selectedModel = instances.find((m) => m.name === selectedName) ?? null;
+
+  const fetchInstances = useCallback(async () => {
+    try {
+      const list = await listInstances();
+      setInstances(list);
+      if (selectedName && !list.find((i) => i.name === selectedName)) {
+        setSelectedName(null);
+        setVersions([]);
+      }
+    } catch {
+      if (!loading) setInstances([]);
+    }
+    setLoading(false);
+  }, [selectedName, loading]);
+
+  const fetchVersions = useCallback(async (name: string) => {
+    setLoadingVersions(true);
+    try {
+      const v = await getInstanceVersions(name);
+      setVersions(v);
+    } catch {
+      setVersions([]);
+    }
+    setLoadingVersions(false);
+  }, []);
+
+  useEffect(() => {
+    fetchInstances();
+    const interval = setInterval(fetchInstances, 5000);
+    return () => clearInterval(interval);
+  }, [fetchInstances]);
+
+  useEffect(() => {
+    if (selectedModel) {
+      fetchVersions(selectedModel.name);
+    } else {
+      setVersions([]);
+    }
+  }, [selectedModel, fetchVersions]);
+
+  const handleDeleteConfirm = async () => {
+    if (!deletingName) return;
+    await deleteInstance(deletingName).catch(() => {});
+    show("success", `Model "${deletingName}" deleted`);
+    if (selectedName === deletingName) setSelectedName(null);
+    setDeletingName(null);
+    fetchInstances();
+  };
+
+  const scaleLabel = (m: ModelInstance): string => (m.scale ? `${m.scale}x` : "—");
+
   return (
-    <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <span style={{ color: "var(--dim)", fontSize: 12 }}>
-        Model instances and management coming soon
+    <div style={{ flex: 1, display: "flex", minHeight: 0, overflow: "hidden", position: "relative" }}>
+      <ModelListPanel
+        instances={instances}
+        loading={loading}
+        selectedName={selectedName}
+        onSelect={setSelectedName}
+        onCreateClick={() => setSubTab("create")}
+        scaleLabel={scaleLabel}
+      />
+      <ModelDetailPanel
+        model={selectedModel}
+        versions={versions}
+        loadingVersions={loadingVersions}
+        scaleLabel={scaleLabel}
+        onRefresh={() => selectedModel && fetchVersions(selectedModel.name)}
+        onDeleteRequest={(name) => setDeletingName(name)}
+      />
+      {deletingName && (
+        <DeleteConfirmScrim
+          name={deletingName}
+          onConfirm={handleDeleteConfirm}
+          onCancel={() => setDeletingName(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── ModelListPanel ──────────────────────────────────────────────────────
+
+interface ModelListPanelProps {
+  instances: ModelInstance[];
+  loading: boolean;
+  selectedName: string | null;
+  onSelect: (name: string) => void;
+  onCreateClick: () => void;
+  scaleLabel: (m: ModelInstance) => string;
+}
+
+function ModelListPanel({ instances, loading, selectedName, onSelect, onCreateClick, scaleLabel }: ModelListPanelProps) {
+  if (loading) {
+    return (
+      <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "center", borderRight: "1px solid var(--border)" }}>
+        <span style={{ fontSize: 11, color: "var(--dim)", fontFamily: "var(--font-mono)" }}>Loading...</span>
+      </div>
+    );
+  }
+
+  if (instances.length === 0) {
+    return (
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, borderRight: "1px solid var(--border)" }}>
+        <span style={{ fontSize: 12, color: "var(--dim)", fontFamily: "var(--font-mono)" }}>
+          No model instances yet
+        </span>
+        <Btn variant="solid" small onClick={onCreateClick}>
+          Create Model →
+        </Btn>
+      </div>
+    );
+  }
+
+  const COL = "3fr 2fr 1fr";
+
+  return (
+    <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden", borderRight: "1px solid var(--border)" }}>
+      <div style={{ display: "grid", gridTemplateColumns: COL, gap: 8, padding: "6px 10px", borderBottom: "1px solid var(--border)", background: "var(--bg2)", flexShrink: 0, fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--muted)" }}>
+        <span>NAME</span>
+        <span>ARCH</span>
+        <span>VER</span>
+      </div>
+      <div style={{ flex: 1, overflow: "auto" }}>
+        {instances.map((m) => (
+          <div
+            key={m.name}
+            onClick={() => onSelect(m.name)}
+            style={{
+              display: "grid", gridTemplateColumns: COL, gap: 8, padding: "5px 10px",
+              borderBottom: "1px solid var(--border)",
+              background: m.name === selectedName ? "var(--bg2)" : "transparent",
+              cursor: "pointer", alignItems: "center", transition: "var(--transition-fast)",
+            }}
+          >
+            <span style={{ fontSize: 11, color: "var(--text)", fontFamily: "var(--font-mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {m.name}
+            </span>
+            <span style={{ fontSize: 10, color: "var(--muted)", fontFamily: "var(--font-mono)" }}>
+              {m.architecture ?? scaleLabel(m)}
+            </span>
+            <span style={{ fontSize: 10, color: "var(--green)", fontFamily: "var(--font-mono)", fontWeight: 600 }}>
+              {m.latest_version ?? "—"}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── ModelDetailPanel ────────────────────────────────────────────────────
+
+interface ModelDetailPanelProps {
+  model: ModelInstance | null;
+  versions: ModelVersion[];
+  loadingVersions: boolean;
+  scaleLabel: (m: ModelInstance) => string;
+  onRefresh: () => void;
+  onDeleteRequest: (name: string) => void;
+}
+
+function ModelDetailPanel({ model, versions, loadingVersions, scaleLabel, onRefresh, onDeleteRequest }: ModelDetailPanelProps) {
+  const fmtTimestamp = (ts: number): string => {
+    try { return new Date(ts * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }); }
+    catch { return String(ts); }
+  };
+
+  const paramsM = useMemo(() => {
+    if (!model?.config || !model?.architecture) return 0;
+    return estimateParams(model.architecture as Architecture, model.config);
+  }, [model]);
+
+  if (!model) {
+    return (
+      <div style={{ flex: 1, background: "var(--bg1)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <span style={{ fontSize: 11, color: "var(--dim)", fontFamily: "var(--font-mono)" }}>Select a model</span>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ flex: 1, background: "var(--bg1)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div style={{ fontSize: 10, color: "var(--muted)", fontFamily: "var(--font-mono)", padding: "10px 12px 6px", borderBottom: "1px solid var(--border)", flexShrink: 0, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+        Model Detail
+      </div>
+
+      <div style={{ flex: 1, overflow: "auto" }}>
+        <div style={{ padding: "10px 12px", display: "flex", flexDirection: "column", gap: 6 }}>
+          <DetailRow label="Name" value={model.name} />
+          <DetailRow label="Arch" value={model.architecture ?? "—"} />
+          <DetailRow label="Scale" value={scaleLabel(model)} />
+          {model.latest_version && <DetailRow label="Latest" value={model.latest_version} />}
+        </div>
+
+        {/* Model Size */}
+        {paramsM > 0 && (
+          <>
+            <div style={{ borderTop: "1px solid var(--border)" }} />
+            <div style={{ padding: "10px 12px", display: "flex", flexDirection: "column", gap: 3 }}>
+              <div style={{ fontSize: 10, color: "var(--muted)", fontFamily: "var(--font-mono)", fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 2 }}>
+                Model Size
+              </div>
+              <SizeRow label="Params" value={formatParamCount(paramsM)} />
+              <SizeRow label="Weights f32" value={`${formatWeightMB(paramsM)} MB`} />
+              <SizeRow label="Weights f16" value={`${((paramsM * 2) / 1024).toFixed(1)} MB`} />
+            </div>
+          </>
+        )}
+
+        {/* Versions */}
+        <div style={{ borderTop: "1px solid var(--border)" }} />
+        <div style={{ padding: "10px 12px", display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span style={{ fontSize: 10, color: "var(--muted)", fontFamily: "var(--font-mono)", fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.05em" }}>Versions</span>
+            <Btn small variant="ghost" onClick={onRefresh} disabled={loadingVersions}>
+              ↻
+            </Btn>
+          </div>
+          {loadingVersions ? (
+            <span style={{ fontSize: 10, color: "var(--dim)", fontFamily: "var(--font-mono)" }}>Loading...</span>
+          ) : versions.length === 0 ? (
+            <span style={{ fontSize: 10, color: "var(--dim)", fontFamily: "var(--font-mono)" }}>No trained versions yet</span>
+          ) : (
+            versions.map((v) => (
+              <VersionCard key={v.tag} version={v} fmtTimestamp={fmtTimestamp} />
+            ))
+          )}
+        </div>
+
+        {/* Delete */}
+        <div style={{ borderTop: "1px solid var(--border)" }} />
+        <div style={{ padding: "10px 12px", display: "flex", flexDirection: "column", gap: 6 }}>
+          <Btn variant="ghost" color="var(--red)" full onClick={() => onDeleteRequest(model.name)}>
+            Delete Model
+          </Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DetailRow({ label, value, mono = true }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+      <span style={{ fontSize: 10, color: "var(--muted)", fontFamily: "var(--font-mono)", minWidth: 64, flexShrink: 0 }}>{label}</span>
+      <span style={{ fontSize: 11, color: "var(--text)", fontFamily: mono ? "var(--font-mono)" : "var(--font-sans)" }}>
+        {value}
       </span>
+    </div>
+  );
+}
+
+// ── VersionCard ─────────────────────────────────────────────────────────
+
+interface VersionCardProps {
+  version: ModelVersion;
+  fmtTimestamp: (ts: number) => string;
+}
+
+function VersionCard({ version, fmtTimestamp }: VersionCardProps) {
+  const meta = version.metadata;
+  const ts = meta?.timestamp as number | undefined;
+  const run = meta?.run as string | undefined;
+  const trainCfg = meta?.train_cfg as Record<string, unknown> | undefined;
+
+  return (
+    <div style={{ background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "8px 10px", display: "flex", flexDirection: "column", gap: 4 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: "var(--green)", fontFamily: "var(--font-mono)" }}>
+          {version.tag}
+        </span>
+        {ts && <span style={{ fontSize: 10, color: "var(--dim)", fontFamily: "var(--font-mono)" }}>{fmtTimestamp(ts)}</span>}
+      </div>
+      {run && <span style={{ fontSize: 9, color: "var(--muted)", fontFamily: "var(--font-mono)" }}>{run}</span>}
+      {trainCfg && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 8px", marginTop: 2 }}>
+          {trainCfg.max_epochs != null && <CfgChip label="epochs" value={String(trainCfg.max_epochs)} />}
+          {trainCfg.batch_size != null && <CfgChip label="bs" value={String(trainCfg.batch_size)} />}
+          {trainCfg.learning_rate != null && <CfgChip label="lr" value={String(trainCfg.learning_rate)} />}
+          {trainCfg.patch_size != null && <CfgChip label="patch" value={String(trainCfg.patch_size)} />}
+          {trainCfg.dtype != null && <CfgChip label="dtype" value={String(trainCfg.dtype)} />}
+          {trainCfg.seed != null && <CfgChip label="seed" value={String(trainCfg.seed)} />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CfgChip({ label, value }: { label: string; value: string }) {
+  return (
+    <span style={{ fontSize: 9, color: "var(--dim)", fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }}>
+      {label}:{value}
+    </span>
+  );
+}
+
+// ── DeleteConfirmScrim ──────────────────────────────────────────────────
+
+interface DeleteConfirmScrimProps {
+  name: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+
+function DeleteConfirmScrim({ name, onConfirm, onCancel }: DeleteConfirmScrimProps) {
+  return (
+    <div style={{ position: "absolute", inset: 0, background: "rgba(13,15,17,0.72)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
+      <div style={{ background: "var(--bg1)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: "20px 24px", width: 320, display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ fontSize: 13, color: "var(--text)", fontFamily: "var(--font-sans)", fontWeight: 600 }}>
+          Delete model "{name}"?
+        </div>
+        <div style={{ fontSize: 11, color: "var(--dim)", fontFamily: "var(--font-mono)", lineHeight: 1.8 }}>
+          This will permanently remove the model and all its trained versions from the workspace.
+        </div>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <Btn onClick={onCancel}>Cancel</Btn>
+          <Btn variant="solid" color="var(--red)" onClick={onConfirm}>Delete</Btn>
+        </div>
+      </div>
     </div>
   );
 }
@@ -205,7 +532,8 @@ function ScreenModelView() {
 function ScreenModelCreate() {
   const arch = useModelStore((s) => s.architecture);
   const setArchitecture = useModelStore((s) => s.setArchitecture);
-  const addToast = useUiStore((s) => s.addToast);
+  const setSubTab = useModelStore((s) => s.setSubTab);
+  const { show } = useToast();
 
   const def = ARCH_DEFS.find((d) => d.id === arch) ?? ARCH_DEFS[0];
   const [configValues, setConfigValues] = useState<Record<string, unknown>>({ ...FIELD_DEFAULTS[arch] });
@@ -264,11 +592,6 @@ function ScreenModelCreate() {
   const handleCreateInstance = async () => {
     const name = modelNameInput.trim();
     if (!name) return;
-    const proj = useProjectStore.getState().project;
-    if (!proj) {
-      addToast("No project open", "error");
-      return;
-    }
 
     const defs = ARCH_DEFS.find((d) => d.id === arch)?.fields ?? [];
     const config: Record<string, unknown> = {};
@@ -281,38 +604,14 @@ function ScreenModelCreate() {
       }
     }
 
-    const newModel = {
-      id: crypto.randomUUID(),
-      name,
-      architecture: arch,
-      config,
-      hyperparameters: {
-        scale: (configValues.scale as number) ?? 4,
-        batch_size: 8,
-        patch_size: 64,
-        learning_rate: 2e-4,
-        optimizer: "Adam",
-        lr_scheduler: "cosine",
-        total_iter: 300000,
-        augmentations: {
-          horizontal_flip: true,
-          vertical_flip: false,
-          rotation_90: false,
-          mixup: false,
-          color_jitter: false,
-          random_degradation: false,
-          gaussian_blur: false,
-          noise_injection: false,
-        },
-      },
-      created_at: new Date().toISOString(),
-    };
-
-    const updated = { ...proj, models: [...(proj.models || []), newModel] };
-    useProjectStore.setState({ project: updated });
-    await SRProjManager.save().catch(() => {});
-    addToast(`Model "${name}" created`, "success");
-    setModelNameInput("");
+    try {
+      await createInstance(name, arch, config);
+      show("success", `Model "${name}" created`);
+      setModelNameInput("");
+      setSubTab("view");
+    } catch (err) {
+      show("error", `Failed to create model: ${err}`);
+    }
   };
 
   const paramsM = estimateParams(arch, configValues);
@@ -322,10 +621,10 @@ function ScreenModelCreate() {
   return (
     <div style={{ display: "flex", flex: 1, minHeight: 0, overflow: "hidden", background: "var(--bg0)" }}>
       <ArchSelector selected={arch} onSelect={handleArchSelect} />
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, padding: "10px 8px", overflow: "auto", minWidth: 0 }}>
+      <div style={{ flex: 3, display: "flex", flexDirection: "column", gap: 8, padding: "10px 8px", overflow: "auto", minWidth: 0 }}>
         <ConfigPanel fields={def.fields} values={configValues} onChange={handleChange} />
       </div>
-      <div style={{ width: 240, flexShrink: 0, borderLeft: "1px solid var(--border)", display: "flex", flexDirection: "column", padding: "0 8px", gap: 0, overflow: "hidden" }}>
+      <div style={{ flex: 2, minWidth: 240, maxWidth: 480, borderLeft: "1px solid var(--border)", display: "flex", flexDirection: "column", padding: "0 8px", gap: 0, overflow: "hidden" }}>
         <div style={{ display: "flex", gap: 6, alignItems: "center", paddingTop: 10, paddingBottom: 8 }}>
           <input
             value={modelNameInput}
@@ -414,7 +713,7 @@ function ConfigFieldRow({ field, value, onChange }: ConfigFieldRowProps) {
     return (
       <div style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 28 }}>
         <span style={{ fontSize: 10, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 500, minWidth: 130, flexShrink: 0 }}>{field.label}</span>
-        <div style={{ display: "flex", gap: 4 }}>
+            <div style={{ display: "flex", gap: 4 }}>
           {field.options.map((opt) => (
             <button
               key={String(opt)}
@@ -424,8 +723,9 @@ function ConfigFieldRow({ field, value, onChange }: ConfigFieldRowProps) {
                 border: `1px solid ${strValue === String(opt) ? "var(--green)" : "var(--border)"}`,
                 color: strValue === String(opt) ? "#0d0f11" : "var(--muted)",
                 fontSize: 11, fontWeight: strValue === String(opt) ? 600 : 400,
-                padding: "2px 9px", borderRadius: "var(--radius-sm)",
+                padding: "4px 6px", borderRadius: "var(--radius-sm)",
                 cursor: "pointer", transition: "var(--transition-fast)",
+                flex: 1, textAlign: "center",
               }}
             >
               {String(opt)}
@@ -450,7 +750,7 @@ function ConfigFieldRow({ field, value, onChange }: ConfigFieldRowProps) {
             step={field.step}
             value={numVal}
             onChange={(e) => onChange(field.kind === "int" ? parseInt(e.target.value, 10) : parseFloat(e.target.value))}
-            style={{ flex: 1, accentColor: "var(--green)", height: 4, cursor: "pointer" }}
+            style={{ flex: 1, width: "100%", accentColor: "var(--green)", height: 4, cursor: "pointer" }}
           />
           <span style={{ fontSize: 9, color: "var(--dim)", fontFamily: "var(--font-mono)" }}>
             {field.min} – {field.max}
@@ -472,7 +772,7 @@ interface ArchSelectorProps {
 
 function ArchSelector({ selected, onSelect }: ArchSelectorProps) {
   return (
-    <div style={{ width: 230, flexShrink: 0, borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 0, overflow: "auto", background: "var(--bg1)" }}>
+    <div style={{ flex: 1, minWidth: 180, maxWidth: 280, borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 0, overflow: "auto", background: "var(--bg1)" }}>
       <div style={{ padding: "8px 12px 6px", borderBottom: "1px solid var(--border)", fontSize: 11, color: "var(--text)", fontWeight: 500, flexShrink: 0 }}>
         Architecture
       </div>

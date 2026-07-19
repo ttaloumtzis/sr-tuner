@@ -256,7 +256,7 @@ class TestTrainerValidateAmp:
                 torch.randn(1, 3, 16, 16),
                 torch.randn(1, 3, 64, 64),
             )]):
-                trainer._validate()
+                trainer._validate(epoch=1)
 
         mock_autocast.assert_called_with(
             device_type="cpu",

@@ -176,7 +176,7 @@ export function ScreenMergeDatasets() {
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         <label style={{ fontSize: 10, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 1, fontWeight: 600 }}>Custom name (optional)</label>
         <input value={s.mergeCustomName} onChange={(e) => s.setMergeCustomName(e.target.value)} placeholder="Leave empty for auto-naming (scale_N)"
-          style={{ width: "100%", maxWidth: 300, background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", color: "var(--text)", fontSize: 11, padding: "5px 10px", fontFamily: "var(--font-mono)", outline: "none" }} />
+          style={{ width: "100%", maxWidth: 480, background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", color: "var(--text)", fontSize: 11, padding: "5px 10px", fontFamily: "var(--font-mono)", outline: "none" }} />
         {showNameWarning && (
           <span style={{ fontSize: 10, color: "var(--amber)", fontStyle: "italic" }}>
             Custom name with multiple scale groups will raise an error. Use the scale filter or leave name empty.

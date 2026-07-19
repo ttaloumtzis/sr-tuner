@@ -1,71 +1,123 @@
 import { create } from "zustand";
 
-export interface ResumeFrom {
-  checkpoint_path: string;
-  resume_epoch: number;
-  resume_optimizer_state: boolean;
-  resume_lr_scheduler_state: boolean;
-}
-
 export interface TrainingSchedule {
   totalEpochs: number;
   saveEvery: number;
-  validateEvery: number;
-  warmupIter: number;
-  lrDecay: string;
+  warmupSteps: number;
 }
 
 const DEFAULT_SCHEDULE: TrainingSchedule = {
   totalEpochs: 100,
   saveEvery: 5,
-  validateEvery: 1,
-  warmupIter: 1000,
-  lrDecay: "cosine",
+  warmupSteps: 2000,
 };
 
 interface RunConfigState {
   runName: string;
-  outputDir: string;
-  checkpointDir: string;
-  logDir: string;
   device: string;
-  schedule: TrainingSchedule;
-  tensorboard: boolean;
   fp16: boolean;
-  compile: boolean;
-  resumeFrom: ResumeFrom | null;
-  setRunName: (name: string) => void;
-  setOutputDir: (dir: string) => void;
-  setCheckpointDir: (dir: string) => void;
-  setLogDir: (dir: string) => void;
-  setDevice: (device: string) => void;
-  setSchedule: (schedule: Partial<TrainingSchedule>) => void;
-  setTensorboard: (enabled: boolean) => void;
-  setFp16: (enabled: boolean) => void;
-  setCompile: (enabled: boolean) => void;
-  setResumeFrom: (r: ResumeFrom | null) => void;
+  schedule: TrainingSchedule;
+  batchSize: number;
+  patchSize: number;
+  learningRate: number;
+  seed: number;
+  weightDecay: number;
+  betas: [number, number];
+  numWorkers: number;
+  metricsFrequency: number;
+  validationEnabled: boolean;
+  validationSplit: number;
+  perceptualWeight: number;
+
+  selectedInstance: string | null;
+  instanceArchitecture: string | null;
+  instanceScale: number | null;
+
+  selectedDataset: string | null;
+  selectedDatasetPath: string | null;
+  selectedDatasetPairs: number | null;
+  selectedValidationDataset: string | null;
+
+  resumeFrom: string | null;
+  instanceVersions: { tag: string; path: string }[];
+
+  setRunName: (v: string) => void;
+  setDevice: (v: string) => void;
+  setFp16: (v: boolean) => void;
+  setSchedule: (v: Partial<TrainingSchedule>) => void;
+  setBatchSize: (v: number) => void;
+  setPatchSize: (v: number) => void;
+  setLearningRate: (v: number) => void;
+  setSeed: (v: number) => void;
+  setWeightDecay: (v: number) => void;
+  setBetas: (v: [number, number]) => void;
+  setNumWorkers: (v: number) => void;
+  setMetricsFrequency: (v: number) => void;
+  setValidationEnabled: (v: boolean) => void;
+  setValidationSplit: (v: number) => void;
+  setPerceptualWeight: (v: number) => void;
+  setSelectedInstance: (v: string | null) => void;
+  setInstanceArchitecture: (v: string | null) => void;
+  setInstanceScale: (v: number | null) => void;
+  setSelectedDataset: (v: string | null) => void;
+  setSelectedDatasetPath: (v: string | null) => void;
+  setSelectedDatasetPairs: (v: number | null) => void;
+  setSelectedValidationDataset: (v: string | null) => void;
+  setResumeFrom: (v: string | null) => void;
+  setInstanceVersions: (v: { tag: string; path: string }[]) => void;
 }
 
 export const useRunConfigStore = create<RunConfigState>((set) => ({
   runName: "",
-  outputDir: "",
-  checkpointDir: "",
-  logDir: "",
-  device: "cpu",
-  schedule: DEFAULT_SCHEDULE,
-  tensorboard: false,
+  device: "auto",
   fp16: false,
-  compile: false,
+  schedule: DEFAULT_SCHEDULE,
+  batchSize: 16,
+  patchSize: 64,
+  learningRate: 2e-4,
+  seed: 42,
+  weightDecay: 0.0,
+  betas: [0.9, 0.99] as [number, number],
+  numWorkers: 4,
+  metricsFrequency: 1,
+  validationEnabled: true,
+  validationSplit: 0.1,
+  perceptualWeight: 0.1,
+
+  selectedInstance: null,
+  instanceArchitecture: null,
+  instanceScale: null,
+
+  selectedDataset: null,
+  selectedDatasetPath: null,
+  selectedDatasetPairs: null,
+  selectedValidationDataset: null,
+
   resumeFrom: null,
-  setRunName: (name) => set({ runName: name }),
-  setOutputDir: (dir) => set({ outputDir: dir }),
-  setCheckpointDir: (dir) => set({ checkpointDir: dir }),
-  setLogDir: (dir) => set({ logDir: dir }),
-  setDevice: (device) => set({ device }),
-  setSchedule: (schedule) =>
-    set((s) => ({ schedule: { ...s.schedule, ...schedule } })),
-  setTensorboard: (enabled) => set({ tensorboard: enabled }),
-  setFp16: (enabled) => set({ fp16: enabled }),
-  setCompile: (enabled) => set({ compile: enabled }),
-  setResumeFrom: (r) => set({ resumeFrom: r }),
+  instanceVersions: [],
+
+  setRunName: (v) => set({ runName: v }),
+  setDevice: (v) => set({ device: v }),
+  setFp16: (v) => set({ fp16: v }),
+  setSchedule: (v) => set((s) => ({ schedule: { ...s.schedule, ...v } })),
+  setBatchSize: (v) => set({ batchSize: v }),
+  setPatchSize: (v) => set({ patchSize: v }),
+  setLearningRate: (v) => set({ learningRate: v }),
+  setSeed: (v) => set({ seed: v }),
+  setWeightDecay: (v) => set({ weightDecay: v }),
+  setBetas: (v) => set({ betas: v }),
+  setNumWorkers: (v) => set({ numWorkers: v }),
+  setMetricsFrequency: (v) => set({ metricsFrequency: v }),
+  setValidationEnabled: (v) => set({ validationEnabled: v }),
+  setValidationSplit: (v) => set({ validationSplit: v }),
+  setPerceptualWeight: (v) => set({ perceptualWeight: v }),
+  setSelectedInstance: (v) => set({ selectedInstance: v }),
+  setInstanceArchitecture: (v) => set({ instanceArchitecture: v }),
+  setInstanceScale: (v) => set({ instanceScale: v }),
+  setSelectedDataset: (v) => set({ selectedDataset: v }),
+  setSelectedDatasetPath: (v) => set({ selectedDatasetPath: v }),
+  setSelectedDatasetPairs: (v) => set({ selectedDatasetPairs: v }),
+  setSelectedValidationDataset: (v) => set({ selectedValidationDataset: v }),
+  setResumeFrom: (v) => set({ resumeFrom: v }),
+  setInstanceVersions: (v) => set({ instanceVersions: v }),
 }));

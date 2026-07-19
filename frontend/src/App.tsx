@@ -8,6 +8,7 @@ import { ConnectionErrorDialog } from "./components/shell/ConnectionErrorDialog"
 import { useProjectStore } from "./store/projectStore";
 import { useUiStore } from "./store/uiStore";
 import { useSSEConnection } from "./hooks/useSSEConnection";
+import { useTrainingSSE } from "./hooks/useTrainingSSE";
 import { initApiUrl, initWorkspace } from "./lib/api";
 import { ProjectScreen } from "./screens/ProjectScreen";
 import { ScreenDatasetSetup } from "./screens/dataset/ScreenDatasetSetup";
@@ -39,6 +40,7 @@ function TabContent() {
 
 function ProjectLayout() {
   const { isConnected: _, showDialog, retry } = useSSEConnection();
+  useTrainingSSE();
 
   const handleExit = () => {
     try {

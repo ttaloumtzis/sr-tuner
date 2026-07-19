@@ -191,7 +191,7 @@ export function ScreenBrowseDatasets() {
 
   return (
     <div style={{ display: "flex", gap: 0, height: "100%", overflow: "hidden" }}>
-      <div style={{ width: 220, flexShrink: 0, display: "flex", flexDirection: "column", borderRight: "1px solid var(--border)", overflow: "hidden" }}>
+      <div style={{ flex: 1, minWidth: 180, maxWidth: 280, display: "flex", flexDirection: "column", borderRight: "1px solid var(--border)", overflow: "hidden" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 10px", borderBottom: "1px solid var(--border)" }}>
           <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text)" }}>Datasets</span>
           <Btn small onClick={refresh} title="Refresh">↻</Btn>

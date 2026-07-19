@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import torch
+import torchvision.utils as vutils
 from torch.utils.data import DataLoader, Dataset, random_split
 
 from sr_engine.utils.progress import ProgressReporter
@@ -13,12 +14,15 @@ from sr_engine.data.datasets import PairedImageFolderDataset
 from sr_engine.data.transforms import CenterCrop, Compose, RandomCrop, RandomFlip, RandomRotate
 from sr_engine.engine.metrics import psnr, ssim
 from sr_engine.engine.metrics_stream import MetricsStream
+from sr_engine.engine.inference import _super_resolve_tensor
 from sr_engine.models.checkpoint import load_checkpoint, save_checkpoint
 from sr_engine.models.losses import L1Loss, PerceptualLoss
 from sr_engine.models.registry import build_model
 from sr_engine.utils.logging import get_logger
 
 log = get_logger(__name__)
+
+MAX_VALIDATION_FRAMES = 1
 
 
 class TrainingCancelled(Exception):
@@ -72,7 +76,7 @@ class TrainerCallback:
     def on_step(self, epoch: int, batch: int, total_batches: int, **losses: float) -> None:
         """Called every ``metrics_frequency`` batches with current loss values."""
 
-    def on_validate(self, epoch: int, **metrics: float) -> None:
+    def on_validate(self, epoch: int, frames: dict | None = None, **metrics: Any) -> None:
         """Called after each validation pass with PSNR, SSIM, etc."""
 
     def on_done(self, elapsed_seconds: float) -> None:
@@ -101,9 +105,12 @@ class _MetricsStreamCallback(TrainerCallback):
             "total_batches": total_batches, **losses,
         })
 
-    def on_validate(self, epoch: int, **metrics: float) -> None:
+    def on_validate(self, epoch: int, frames: dict | None = None, **metrics: Any) -> None:
         """Write a validation event to the metrics stream."""
-        self._stream.write({"type": "validate", "epoch": epoch, **metrics})
+        event: dict[str, Any] = {"type": "validate", "epoch": epoch, **metrics}
+        if frames:
+            event["frames"] = frames
+        self._stream.write(event)
 
     def on_done(self, elapsed_seconds: float) -> None:
         """Write a done event and close the metrics stream."""
@@ -125,8 +132,10 @@ class Trainer:
         device: str = "cuda",
         validation_enabled: bool = True,
         validation_split: float = 0.1,
+        val_dataset_dir: Path | None = None,
         metrics_stream: MetricsStream | None = None,
         metrics_frequency: int = 1,
+        validation_frame_dir: Path | None = None,
         progress_reporter: ProgressReporter | None = None,
         callbacks: list[TrainerCallback] | None = None,
         cancel_check: Callable[[], bool] | None = None,
@@ -152,6 +161,7 @@ class Trainer:
         self.train_cfg = train_cfg
         self.metrics_stream = metrics_stream
         self.metrics_frequency = metrics_frequency
+        self.validation_frame_dir = validation_frame_dir
         self._progress = progress_reporter or ProgressReporter()
         self._callbacks: list[TrainerCallback] = callbacks or []
         self._cancel_check = cancel_check or (lambda: False)
@@ -228,7 +238,19 @@ class Trainer:
 
         full_dataset = PairedImageFolderDataset(dataset_dir, transform=None)
 
-        if validation_enabled and validation_split > 0 and len(full_dataset) > 1:
+        if val_dataset_dir:
+            val_dataset = PairedImageFolderDataset(val_dataset_dir, transform=None)
+            self.val_dataset = val_dataset
+            self.val_dataloader = DataLoader(
+                val_dataset, batch_size=1, shuffle=False,
+                num_workers=num_workers, pin_memory=pin,
+            )
+            self.train_dataset = _TransformSubset(
+                full_dataset, list(range(len(full_dataset))), transform,
+            )
+            log.info("Using separate validation dataset (full-image): %s (all %d pairs)",
+                     val_dataset_dir, len(val_dataset))
+        elif validation_enabled and validation_split > 0 and len(full_dataset) > 1:
             val_size = max(1, int(len(full_dataset) * validation_split))
             train_size = len(full_dataset) - val_size
             generator = torch.Generator().manual_seed(seed)
@@ -382,11 +404,14 @@ class Trainer:
         comp["lr"] = self.optimizer.param_groups[0]["lr"]
         return comp
 
-    def _validate(self) -> dict[str, float]:
+    def _validate(self, epoch: int) -> dict[str, Any]:
         """Run validation: compute average PSNR and SSIM over the validation set.
 
+        Args:
+            epoch: Current epoch number (1-indexed), used for frame directory naming.
+
         Returns:
-            Dict with ``"psnr"`` and ``"ssim"`` keys.
+            Dict with ``"psnr"``, ``"ssim"``, and optionally ``"frames"`` keys.
         """
         self.model.eval()
         total_psnr = 0.0
@@ -408,7 +433,49 @@ class Trainer:
         self.model.train()
         avg_psnr = total_psnr / num if num > 0 else 0.0
         avg_ssim = total_ssim / num if num > 0 else 0.0
-        return {"psnr": avg_psnr, "ssim": avg_ssim}
+
+        frames: dict[str, str] = {}
+        full_psnr: float | None = None
+        full_ssim: float | None = None
+        if self.validation_frame_dir is not None and self.val_dataset is not None and len(self.val_dataset) > 0:
+            frame_dir = self.validation_frame_dir / f"epoch_{epoch:03d}"
+            frame_dir.mkdir(parents=True, exist_ok=True)
+            idx = torch.randint(0, len(self.val_dataset), (1,)).item()
+            if isinstance(self.val_dataset, _TransformSubset):
+                lr_t, hr_t = self.val_dataset.dataset[self.val_dataset.indices[idx]]
+            else:
+                lr_t, hr_t = self.val_dataset[idx]
+            patch_size = int(self.train_cfg.get("patch_size", 128))
+            scale = int(self.model_cfg.get("scale", 4))
+            overlap = max(1, patch_size // 4)
+            self.model.eval()
+            full_sr = _super_resolve_tensor(
+                model=self.model,
+                lr_tensor=lr_t,
+                scale=scale,
+                tile_size=patch_size,
+                tile_overlap=overlap,
+                device=str(self.device),
+            )
+            full_sr = full_sr.clamp(0.0, 1.0)
+            hr_t = hr_t.to(full_sr.device)
+            full_psnr = psnr(full_sr, hr_t).item()
+            full_ssim = ssim(full_sr, hr_t).item()
+            vutils.save_image(lr_t, frame_dir / "lr.png")
+            vutils.save_image(hr_t, frame_dir / "gt.png")
+            vutils.save_image(full_sr, frame_dir / "sr.png")
+            diff = (full_sr - hr_t).abs()
+            diff = (diff - diff.min()) / (diff.max() - diff.min() + 1e-8)
+            vutils.save_image(diff, frame_dir / "diff.png")
+            frames = {
+                "lrPath": str((frame_dir / "lr.png").resolve()),
+                "srPath": str((frame_dir / "sr.png").resolve()),
+                "gtPath": str((frame_dir / "gt.png").resolve()),
+                "diffPath": str((frame_dir / "diff.png").resolve()),
+            }
+            self.model.train()
+
+        return {"psnr": avg_psnr, "ssim": avg_ssim, "full_psnr": full_psnr, "full_ssim": full_ssim, "frames": frames}
 
     def train(self) -> None:
         """Run the training loop per epoch."""
@@ -438,12 +505,19 @@ class Trainer:
 
             self._progress.finish()
 
+            if self._cancel_check():
+                log.warning("Cancellation requested at end of epoch %d — saving checkpoint", epoch + 1)
+                self._save(epoch + 1)
+                self._emit("phase", phase="cancelled", epoch=epoch + 1)
+                raise TrainingCancelled()
+
             should_save = (
                 (epoch + 1) % self.save_per_epoch == 0
                 or (epoch + 1) == self.max_epochs
             )
             if should_save:
-                val_metrics = self._validate() if self.val_dataloader is not None else {}
+                self._emit("phase", phase="validating", epoch=epoch + 1)
+                val_metrics = self._validate(epoch=epoch + 1) if self.val_dataloader is not None else {}
                 if val_metrics:
                     log.info(
                         "Epoch %d/%d — PSNR: %.2f, SSIM: %.4f",

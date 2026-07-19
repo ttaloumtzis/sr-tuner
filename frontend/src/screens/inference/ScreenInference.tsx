@@ -191,8 +191,7 @@ function SettingsPanel({ onRun }: { onRun: () => void }) {
   return (
     <div
       style={{
-        width: 210,
-        flexShrink: 0,
+        flex: 1, minWidth: 180, maxWidth: 300,
         display: "flex",
         flexDirection: "column",
         gap: 8,
@@ -595,7 +594,7 @@ function ComparisonPanel({ splitterPct, onSplitterPctChange }: ComparisonPanelPr
           bottom: 6,
           left: "50%",
           transform: "translateX(-50%)",
-          width: 120,
+          width: "clamp(120px, 15vw, 250px)",
           opacity: 0.5,
           accentColor: "var(--green)",
           zIndex: 12,
@@ -726,8 +725,7 @@ function RightColumn() {
   return (
     <div
       style={{
-        width: 180,
-        flexShrink: 0,
+        flex: 1, minWidth: 160, maxWidth: 260,
         display: "flex",
         flexDirection: "column",
         gap: 8,

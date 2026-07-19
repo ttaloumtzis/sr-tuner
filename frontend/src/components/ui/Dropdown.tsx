@@ -43,7 +43,7 @@ export function Dropdown({
   }, [controlledValue]);
 
   useEffect(() => {
-    const handleMouseDown = (e: MouseEvent) => {
+    const handleClick = (e: MouseEvent) => {
       if (triggerRef.current && !triggerRef.current.contains(e.target as Node)) {
         setOpen(false);
       }
@@ -51,10 +51,10 @@ export function Dropdown({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
     };
-    document.addEventListener("mousedown", handleMouseDown);
+    document.addEventListener("click", handleClick);
     document.addEventListener("keydown", handleKeyDown);
     return () => {
-      document.removeEventListener("mousedown", handleMouseDown);
+      document.removeEventListener("click", handleClick);
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, []);

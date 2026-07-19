@@ -1,4 +1,4 @@
-import type { JobAccepted, JobStatus, WorkspaceInfo, TrainParams, InferParams, EnvInfo, DatasetBuildParams, DatasetValidateParams, DatasetHealthParams, DatasetMergeParams, ExportParams, ModelInstance } from "./api-types";
+import type { DatasetInfo, JobAccepted, JobStatus, WorkspaceInfo, TrainParams, InferParams, EnvInfo, DatasetBuildParams, DatasetValidateParams, DatasetHealthParams, DatasetMergeParams, ExportParams, ModelInstance, ModelVersion } from "./api-types";
 
 let BASE_URL = "http://127.0.0.1:8765";
 
@@ -39,11 +39,19 @@ export const listModels = () => request<{ name: string }[]>("GET", "/api/models"
 export const listInstances = () => request<ModelInstance[]>("GET", "/api/models/instances");
 export const getInstance = (name: string) => request<ModelInstance>("GET", `/api/models/instances/${name}`);
 export const exportModel = (name: string, params: ExportParams) => request<{ output: string }>("POST", `/api/models/instances/${name}/export`, params);
+export const getInstanceVersions = (name: string) => request<ModelVersion[]>("GET", `/api/models/instances/${encodeURIComponent(name)}/versions`);
+export const deleteInstance = (name: string) => request<{ deleted: string }>("DELETE", `/api/models/instances/${encodeURIComponent(name)}`);
+export const createInstance = (name: string, architecture: string, config: Record<string, unknown>) =>
+  request<ModelInstance>("POST", "/api/models/instances", { name, architecture, config });
 
 // ── Training ────────────────────────────────────────────────────────────
 
 export const startTraining = (params: TrainParams) => request<JobAccepted>("POST", "/api/train/start", params);
 export const validateDataset = (params: { dataset: string }) => request<{ valid: boolean; problems: string[] }>("POST", "/api/train/validate-dataset", params);
+export const listDatasets = (scale?: number) => {
+  const qs = scale !== undefined ? `?scale=${scale}` : "";
+  return request<DatasetInfo[]>("GET", `/api/datasets${qs}`);
+};
 
 // ── Inference ───────────────────────────────────────────────────────────
 
