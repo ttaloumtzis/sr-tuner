@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Panel } from "../../components/ui/Panel";
 import { Btn } from "../../components/ui/Btn";
 import { PathInput } from "../../components/ui/PathInput";
@@ -23,7 +23,7 @@ function TypeCard({ id: _id, label, description, active, onClick }: {
 
 function ScaleNamingBar() {
   const s = useDatasetStore();
-  const presets = [2, 4, 8];
+  const presets = [1, 2, 4, 8];
   const [customVal, setCustomVal] = useState(presets.includes(s.scale) ? "" : String(s.scale));
   const [customActive, setCustomActive] = useState(!presets.includes(s.scale));
   const patternError = validateNamingPattern(s.namingPattern);
@@ -41,7 +41,7 @@ function ScaleNamingBar() {
       ))}
       <input value={customVal} onChange={(e) => { setCustomActive(true); const n = parseInt(e.target.value, 10); if (!isNaN(n) && n > 0) s.setScale(n); setCustomVal(e.target.value); }}
         onFocus={() => setCustomActive(true)} placeholder="custom"
-        style={{ width: 52, background: customActive ? "var(--greenDim)" : "var(--bg3)", border: `1px solid ${customActive ? "var(--green)" : "var(--border)"}`, color: "var(--text)", fontSize: 11, padding: "2px 7px", borderRadius: "var(--radius-sm)", outline: "none", fontFamily: "var(--font-mono)" }} />
+        style={{ width: 68, background: customActive ? "var(--greenDim)" : "var(--bg3)", border: `1px solid ${customActive ? "var(--green)" : "var(--border)"}`, color: "var(--text)", fontSize: 11, padding: "2px 7px", borderRadius: "var(--radius-sm)", outline: "none", fontFamily: "var(--font-mono)" }} />
       <div style={{ width: 1, height: 16, background: "var(--border)" }} />
       <span style={{ fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: 1 }}>Naming</span>
       <input value={s.namingPattern} onChange={(e) => s.setNamingPattern(e.target.value)} placeholder="%06d"
@@ -147,6 +147,30 @@ function VideoExtractMode() {
   const [dragOver, setDragOver] = useState(false);
   const [starting, setStarting] = useState(false);
   const [extractError, setExtractError] = useState<string | null>(null);
+
+  const handleBrowse = useCallback(async () => {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const selected = await open({
+        multiple: true,
+        filters: [{ name: "Video", extensions: ["mkv", "mp4", "avi", "mov"] }],
+      });
+      if (selected) {
+        const paths = Array.isArray(selected) ? selected : [selected];
+        s.addVideoFiles(paths.filter(Boolean));
+      }
+    } catch {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = ".mkv,.mp4,.avi,.mov";
+      input.multiple = true;
+      input.onchange = () => {
+        const paths = Array.from(input.files ?? []).map((f) => (f as File & { path?: string }).path || f.name).filter(Boolean);
+        if (paths.length > 0) s.addVideoFiles(paths);
+      };
+      input.click();
+    }
+  }, [s.addVideoFiles]);
 
   useEffect(() => {
     if (s_status === "error" && s_error) setExtractError(s_error);
@@ -264,6 +288,9 @@ function VideoExtractMode() {
         style={{ border: `2px dashed ${dragOver ? "var(--green)" : "var(--border)"}`, borderRadius: "var(--radius-md)", padding: "20px", display: "flex", flexDirection: "column", alignItems: "center", gap: 6, background: dragOver ? "var(--greenDim)" : "var(--bg2)", transition: "var(--transition-fast)", cursor: "pointer" }}>
         <span style={{ fontSize: 12, color: "var(--muted)" }}>Drop video files here</span>
         <span style={{ fontSize: 10, color: "var(--dim)" }}>Supported: MKV, MP4, AVI, MOV</span>
+        <Btn small variant="ghost" onClick={() => handleBrowse()} style={{ marginTop: 4 }}>
+          Browse Files
+        </Btn>
       </div>
 
       {s.videoFiles.length > 0 && (

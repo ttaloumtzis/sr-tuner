@@ -81,6 +81,7 @@ export interface SRProjFile {
     id: string;
     name: string;
     architecture: Architecture;
+    config?: Record<string, unknown>;
     hyperparameters: {
       scale: number;
       batch_size: number;

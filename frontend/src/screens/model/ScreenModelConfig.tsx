@@ -1,19 +1,40 @@
-// §10 Model Config Screen
-// Tasks: 10.1–10.9
-
 import { useState, useEffect, useCallback } from "react";
 import { Panel } from "../../components/ui/Panel";
 import { Btn } from "../../components/ui/Btn";
-import { Toggle } from "../../components/ui/Toggle";
-import { PathInput } from "../../components/ui/PathInput";
-import { Dropdown } from "../../components/ui/Dropdown";
 import { useModelStore } from "../../store/modelStore";
 import { useProjectStore } from "../../store/projectStore";
 import { useUiStore } from "../../store/uiStore";
-import type { Architecture, AugmentationConfig } from "../../lib/srproj";
-import type { Hyperparameters, LossWeights } from "../../store/modelStore";
+import { SRProjManager } from "../../lib/SRProjManager";
+import type { Architecture } from "../../lib/srproj";
 
-// ── Architecture definitions ──────────────────────────────────────────────
+// ── Config field descriptors ─────────────────────────────────────────
+
+interface SliderField {
+  type: "slider";
+  kind: "int" | "float";
+  key: string;
+  label: string;
+  min: number;
+  max: number;
+  step: number;
+  default: number;
+}
+
+interface DropdownField {
+  type: "dropdown";
+  key: string;
+  label: string;
+  options: (number | string)[];
+  default: number | string;
+}
+
+interface TextField {
+  type: "text";
+  key: string;
+  label: string;
+}
+
+type ConfigField = SliderField | DropdownField | TextField;
 
 interface ArchDef {
   id: Architecture;
@@ -21,8 +42,33 @@ interface ArchDef {
   description: string;
   vram: string;
   params: string;
-  defaults: Hyperparameters;
+  fields: ConfigField[];
 }
+
+// ── Architecture definitions ──────────────────────────────────────────
+
+const RRDB_FIELDS: ConfigField[] = [
+  { type: "dropdown", key: "scale", label: "Scale Factor", options: [1, 2, 4, 8], default: 4 },
+  { type: "slider", kind: "int", key: "num_feat", label: "Base Features", min: 32, max: 256, step: 8, default: 64 },
+  { type: "slider", kind: "int", key: "num_block", label: "RRDB Blocks", min: 4, max: 48, step: 1, default: 23 },
+  { type: "slider", kind: "int", key: "num_grow_ch", label: "Growth Channels", min: 16, max: 128, step: 8, default: 32 },
+  { type: "dropdown", key: "num_in_ch", label: "Input Channels", options: [1, 3], default: 3 },
+  { type: "dropdown", key: "num_out_ch", label: "Output Channels", options: [1, 3], default: 3 },
+];
+
+const SWINIR_FIELDS: ConfigField[] = [
+  { type: "dropdown", key: "scale", label: "Scale Factor", options: [1, 2, 4, 8], default: 4 },
+  { type: "slider", kind: "int", key: "embed_dim", label: "Embedding Dim", min: 60, max: 384, step: 12, default: 180 },
+  { type: "slider", kind: "int", key: "window_size", label: "Window Size", min: 4, max: 16, step: 2, default: 8 },
+  { type: "slider", kind: "float", key: "mlp_ratio", label: "MLP Ratio", min: 1.0, max: 4.0, step: 0.1, default: 2.0 },
+  { type: "text", key: "depths", label: "Depths" },
+  { type: "text", key: "num_heads", label: "Num Heads" },
+  { type: "dropdown", key: "upsampler", label: "Upsampler", options: ["pixelshuffle", "nearest+conv"], default: "pixelshuffle" },
+  { type: "slider", kind: "float", key: "img_range", label: "Image Range", min: 0.5, max: 2.0, step: 0.1, default: 1.0 },
+  { type: "dropdown", key: "num_in_ch", label: "Input Channels", options: [1, 3], default: 3 },
+  { type: "dropdown", key: "num_out_ch", label: "Output Channels", options: [1, 3], default: 3 },
+  { type: "text", key: "rgb_mean", label: "RGB Mean" },
+];
 
 const ARCH_DEFS: ArchDef[] = [
   {
@@ -31,15 +77,7 @@ const ARCH_DEFS: ArchDef[] = [
     description: "Best visual quality for textures and fine detail. Uses a discriminator network.",
     vram: "~8 GB",
     params: "~16M",
-    defaults: {
-      scale: 4,
-      lrScheduler: "cosine",
-      optimizer: "Adam",
-      learningRate: 1e-4,
-      batchSize: 4,
-      patchSize: 192,
-      totalIter: 300000,
-    },
+    fields: RRDB_FIELDS,
   },
   {
     id: "swinir",
@@ -47,62 +85,166 @@ const ARCH_DEFS: ArchDef[] = [
     description: "Swin Transformer backbone. Best PSNR/SSIM scores, no adversarial training.",
     vram: "~6 GB",
     params: "~11M",
-    defaults: {
-      scale: 4,
-      lrScheduler: "cosine",
-      optimizer: "AdamW",
-      learningRate: 2e-4,
-      batchSize: 8,
-      patchSize: 64,
-      totalIter: 500000,
-    },
+    fields: SWINIR_FIELDS,
   },
 ];
 
-const AUG_DEFS: { key: keyof AugmentationConfig; label: string; hint: string }[] = [
-  { key: "horizontal_flip", label: "Horizontal Flip", hint: "Mirror images left/right" },
-  { key: "vertical_flip", label: "Vertical Flip", hint: "Mirror images top/bottom" },
-  { key: "rotation_90", label: "Rotation 90°", hint: "Rotate by multiples of 90°" },
-  { key: "mixup", label: "MixUp", hint: "Blend pairs of training samples" },
-  { key: "color_jitter", label: "Color Jitter", hint: "Random brightness/contrast/saturation" },
-  { key: "random_degradation", label: "Random Degradation", hint: "Simulate varied compression artifacts" },
-  { key: "gaussian_blur", label: "Gaussian Blur", hint: "Apply random blur kernel" },
-  { key: "noise_injection", label: "Noise Injection", hint: "Add Gaussian or Poisson noise" },
-];
+const FIELD_DEFAULTS: Record<Architecture, Record<string, unknown>> = {
+  rrdb_esrgan: {
+    scale: 4, num_feat: 64, num_block: 23, num_grow_ch: 32,
+    num_in_ch: 3, num_out_ch: 3,
+  },
+  swinir: {
+    scale: 4, embed_dim: 180, window_size: 8, mlp_ratio: 2.0,
+    depths: "6,6,6,6,6,6", num_heads: "6,6,6,6,6,6",
+    upsampler: "pixelshuffle", img_range: 1.0,
+    num_in_ch: 3, num_out_ch: 3, rgb_mean: "0.4488, 0.4371, 0.4040",
+  },
+};
 
-// ── §10.1 Layout ──────────────────────────────────────────────────────────
+// ── Param estimation ──────────────────────────────────────────────────
+
+function parseCSV(s: string): number[] {
+  return s.split(",").map((v) => parseFloat(v.trim())).filter((n) => !isNaN(n));
+}
+
+function formatWeightMB(paramsM: number): string {
+  return ((paramsM * 4) / 1024).toFixed(1);
+}
+
+function estimateParams(arch: Architecture, values: Record<string, unknown>): number {
+  if (arch === "rrdb_esrgan") {
+    const nf = (values.num_feat as number) ?? 64;
+    const nb = (values.num_block as number) ?? 23;
+    const ng = (values.num_grow_ch as number) ?? 32;
+    return 16.7 * (nf / 64) ** 2 * (nb / 23) * Math.sqrt(ng / 32);
+  }
+  if (arch === "swinir") {
+    const ed = (values.embed_dim as number) ?? 180;
+    const depths = parseCSV(String(values.depths ?? "6,6,6,6,6,6"));
+    const avgDepth = depths.length > 0 ? depths.reduce((a, b) => a + b, 0) / depths.length : 6;
+    return 11.8 * (ed / 180) ** 2 * (avgDepth / 6);
+  }
+  return 0;
+}
+
+function formatParamCount(paramsM: number): string {
+  if (paramsM >= 1000) return `${(paramsM / 1000).toFixed(1)} B`;
+  if (paramsM >= 1) return `${paramsM.toFixed(1)} M`;
+  return `${(paramsM * 1000).toFixed(0)} K`;
+}
+
+// ── Config value → YAML value serialization ──────────────────────────
+
+function serializeConfigValue(field: ConfigField, raw: unknown): unknown {
+  if (field.type === "text") {
+    const s = String(raw ?? "").trim();
+    if (field.key === "rgb_mean") {
+      if (!s || s.toLowerCase() === "null") return null;
+      const nums = parseCSV(s);
+      return nums.length > 0 ? nums : null;
+    }
+    const nums = parseCSV(s);
+    return nums.length > 0 ? nums : s;
+  }
+  return raw;
+}
+
+// ── Sub-pill tab ──────────────────────────────────────────────────────
+
+function SubTabPill({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button onClick={onClick} role="tab" aria-selected={active}
+      style={{
+        background: active ? "var(--green)" : "var(--bg3)",
+        border: `1px solid ${active ? "var(--green)" : "var(--border)"}`,
+        color: active ? "#0d0f11" : "var(--muted)",
+        fontSize: 11, fontWeight: active ? 600 : 400,
+        padding: "4px 16px", borderRadius: 12,
+        cursor: "pointer", transition: "var(--transition-fast)",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+// ── Main screen ───────────────────────────────────────────────────────
 
 export function ScreenModelConfig() {
+  const subTab = useModelStore((s) => s.subTab);
+  const setSubTab = useModelStore((s) => s.setSubTab);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+      <div style={{ display: "flex", gap: 6, padding: "8px 16px 0", flexShrink: 0 }}>
+        <SubTabPill label="Create Model" active={subTab === "create"} onClick={() => setSubTab("create")} />
+        <SubTabPill label="Model View" active={subTab === "view"} onClick={() => setSubTab("view")} />
+      </div>
+      {subTab === "create" && <ScreenModelCreate />}
+      {subTab === "view" && <ScreenModelView />}
+    </div>
+  );
+}
+
+// ── ScreenModelView (stub) ────────────────────────────────────────────
+
+function ScreenModelView() {
+  return (
+    <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <span style={{ color: "var(--dim)", fontSize: 12 }}>
+        Model instances and management coming soon
+      </span>
+    </div>
+  );
+}
+
+// ── ScreenModelCreate ─────────────────────────────────────────────────
+
+function ScreenModelCreate() {
   const arch = useModelStore((s) => s.architecture);
-  const hp = useModelStore((s) => s.hyperparameters);
-  const lw = useModelStore((s) => s.lossWeights);
-  const aug = useModelStore((s) => s.augmentations);
-  const pretrainedPath = useModelStore((s) => s.pretrainedPath);
   const setArchitecture = useModelStore((s) => s.setArchitecture);
-  const setHyperparameters = useModelStore((s) => s.setHyperparameters);
-  const setLossWeights = useModelStore((s) => s.setLossWeights);
-  const setAugmentations = useModelStore((s) => s.setAugmentations);
-  const setPretrainedPath = useModelStore((s) => s.setPretrainedPath);
-  const resetHyperparameters = useModelStore((s) => s.resetHyperparameters);
   const addToast = useUiStore((s) => s.addToast);
 
+  const def = ARCH_DEFS.find((d) => d.id === arch) ?? ARCH_DEFS[0];
+  const [configValues, setConfigValues] = useState<Record<string, unknown>>({ ...FIELD_DEFAULTS[arch] });
+  const [modelNameInput, setModelNameInput] = useState("");
   const [yaml, setYaml] = useState("");
   const [copied, setCopied] = useState(false);
 
-  const regenerateYaml = useCallback(() => {
-    setYaml("");
-  }, [arch, hp, lw, aug, pretrainedPath]);
+  useEffect(() => {
+    setConfigValues({ ...FIELD_DEFAULTS[arch] });
+  }, [arch]);
+
+  const buildYaml = useCallback((name: string, values: Record<string, unknown>) => {
+    const lines = [`name: ${name || "<unnamed>"}`, `architecture: ${arch}`];
+    const defs = ARCH_DEFS.find((d) => d.id === arch)?.fields ?? [];
+    for (const f of defs) {
+      if (f.key === "num_in_ch" || f.key === "num_out_ch") continue;
+      if (f.type === "text") {
+        const serialized = serializeConfigValue(f, values[f.key]);
+        if (serialized === null) {
+          lines.push(`${f.key}: null`);
+        } else if (Array.isArray(serialized)) {
+          lines.push(`${f.key}: [${serialized.join(", ")}]`);
+        } else {
+          lines.push(`${f.key}: ${serialized}`);
+        }
+      } else if (f.key in values) {
+        lines.push(`${f.key}: ${values[f.key]}`);
+      }
+    }
+    return lines.join("\n");
+  }, [arch]);
 
   useEffect(() => {
-    regenerateYaml();
-  }, [regenerateYaml]);
+    setYaml(buildYaml(modelNameInput, configValues));
+  }, [modelNameInput, configValues, buildYaml]);
 
   const handleArchSelect = (a: Architecture) => {
-    const def = ARCH_DEFS.find((d) => d.id === a);
-    if (def) {
-      setArchitecture(a);
-      setHyperparameters(def.defaults);
-    }
+    setArchitecture(a);
+    setConfigValues({ ...FIELD_DEFAULTS[a] });
   };
 
   const handleCopyYaml = async () => {
@@ -115,86 +257,213 @@ export function ScreenModelConfig() {
     }
   };
 
-  const handleSaveModel = async () => {
-    if (!modelNameInput) return;
+  const handleChange = (key: string, value: unknown) => {
+    setConfigValues((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const handleCreateInstance = async () => {
+    const name = modelNameInput.trim();
+    if (!name) return;
     const proj = useProjectStore.getState().project;
     if (!proj) {
       addToast("No project open", "error");
       return;
     }
+
+    const defs = ARCH_DEFS.find((d) => d.id === arch)?.fields ?? [];
+    const config: Record<string, unknown> = {};
+    for (const f of defs) {
+      const raw = configValues[f.key];
+      if (f.type === "text") {
+        config[f.key] = serializeConfigValue(f, raw);
+      } else {
+        config[f.key] = raw;
+      }
+    }
+
     const newModel = {
       id: crypto.randomUUID(),
-      name: modelNameInput,
+      name,
       architecture: arch,
+      config,
       hyperparameters: {
-        scale: hp.scale,
-        batch_size: hp.batchSize,
-        patch_size: hp.patchSize,
-        learning_rate: hp.learningRate,
-        optimizer: hp.optimizer,
-        lr_scheduler: hp.lrScheduler,
-        total_iter: hp.totalIter,
-        augmentations: aug,
+        scale: (configValues.scale as number) ?? 4,
+        batch_size: 8,
+        patch_size: 64,
+        learning_rate: 2e-4,
+        optimizer: "Adam",
+        lr_scheduler: "cosine",
+        total_iter: 300000,
+        augmentations: {
+          horizontal_flip: true,
+          vertical_flip: false,
+          rotation_90: false,
+          mixup: false,
+          color_jitter: false,
+          random_degradation: false,
+          gaussian_blur: false,
+          noise_injection: false,
+        },
       },
       created_at: new Date().toISOString(),
     };
+
     const updated = { ...proj, models: [...(proj.models || []), newModel] };
     useProjectStore.setState({ project: updated });
-    addToast(`Model "${modelNameInput}" saved`, "success");
+    await SRProjManager.save().catch(() => {});
+    addToast(`Model "${name}" created`, "success");
     setModelNameInput("");
   };
 
-  const [modelNameInput, setModelNameInput] = useState("");
+  const paramsM = estimateParams(arch, configValues);
+  const weightFp32MB = formatWeightMB(paramsM);
+  const weightFp16MB = ((paramsM * 2) / 1024).toFixed(1);
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flex: 1,
-        minHeight: 0,
-        overflow: "hidden",
-        background: "var(--bg0)",
-      }}
-    >
-      {/* §10.2 Architecture selector — 230px left column */}
+    <div style={{ display: "flex", flex: 1, minHeight: 0, overflow: "hidden", background: "var(--bg0)" }}>
       <ArchSelector selected={arch} onSelect={handleArchSelect} />
-
-      {/* §10.3–10.7 Center: hyperparams + loss + aug + pretrained */}
-      <div
-        style={{
-          flex: 1,
-          display: "flex",
-          flexDirection: "column",
-          gap: 8,
-          padding: "10px 8px",
-          overflow: "auto",
-          minWidth: 0,
-        }}
-      >
-        <HyperparamsPanel hp={hp} onChange={setHyperparameters} onReset={resetHyperparameters} />
-        <LossWeightsPanel lw={lw} onChange={setLossWeights} />
-        <AugmentationPanel aug={aug} onChange={setAugmentations} />
-        <PretrainedPanel path={pretrainedPath} onChange={setPretrainedPath} />
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, padding: "10px 8px", overflow: "auto", minWidth: 0 }}>
+        <ConfigPanel fields={def.fields} values={configValues} onChange={handleChange} />
       </div>
-
-      {/* §10.6 YAML preview — 240px right column */}
-      <div style={{ width: 240, flexShrink: 0, borderLeft: "1px solid var(--border)", display: "flex", flexDirection: "column", padding: "0 8px", gap: 8 }}>
-        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+      <div style={{ width: 240, flexShrink: 0, borderLeft: "1px solid var(--border)", display: "flex", flexDirection: "column", padding: "0 8px", gap: 0, overflow: "hidden" }}>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", paddingTop: 10, paddingBottom: 8 }}>
           <input
             value={modelNameInput}
             onChange={(e) => setModelNameInput(e.target.value)}
             placeholder="Model name"
             style={{ flex: 1, background: "var(--bg3)", border: "1px solid var(--border)", color: "var(--text)", fontSize: 11, padding: "4px 6px", borderRadius: "var(--radius-sm)" }}
           />
-          <Btn variant="solid" onClick={handleSaveModel} disabled={!modelNameInput}>Save</Btn>
+          <Btn variant="solid" onClick={handleCreateInstance} disabled={!modelNameInput.trim()}>
+            Create Instance
+          </Btn>
         </div>
+
+        <div style={{ borderTop: "1px solid var(--border)", padding: "8px 12px", flexShrink: 0 }}>
+          <div style={{ fontSize: 10, color: "var(--muted)", fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Model Size</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+            <SizeRow label="Params" value={formatParamCount(paramsM)} />
+            <SizeRow label="Weights f32" value={`${weightFp32MB} MB`} />
+            <SizeRow label="Weights f16" value={`${weightFp16MB} MB`} />
+          </div>
+        </div>
+
         <YamlPanel yaml={yaml} copied={copied} onCopy={handleCopyYaml} />
       </div>
     </div>
   );
 }
 
-// ── §10.2 Architecture cards ──────────────────────────────────────────────
+function SizeRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <span style={{ fontSize: 10, color: "var(--dim)" }}>{label}</span>
+      <span style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--text)", fontWeight: 500 }}>{value}</span>
+    </div>
+  );
+}
+
+// ── Architecture Config Panel ─────────────────────────────────────────
+
+interface ConfigPanelProps {
+  fields: ConfigField[];
+  values: Record<string, unknown>;
+  onChange: (key: string, value: unknown) => void;
+}
+
+function ConfigPanel({ fields, values, onChange }: ConfigPanelProps) {
+  return (
+    <Panel title="Architecture Config">
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {fields.map((f) => (
+          <ConfigFieldRow key={f.key} field={f} value={values[f.key]} onChange={(v) => onChange(f.key, v)} />
+        ))}
+      </div>
+    </Panel>
+  );
+}
+
+interface ConfigFieldRowProps {
+  field: ConfigField;
+  value: unknown;
+  onChange: (value: unknown) => void;
+}
+
+function ConfigFieldRow({ field, value, onChange }: ConfigFieldRowProps) {
+  if (field.type === "text") {
+    const strVal = String(value ?? "");
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 28 }}>
+        <span style={{ fontSize: 10, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 500, minWidth: 130, flexShrink: 0 }}>{field.label}</span>
+        <input
+          value={strVal}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={field.key === "rgb_mean" ? "0.4488, 0.4371, 0.4040" : field.key === "depths" ? "6,6,6,6,6,6" : "6,6,6,6,6,6"}
+          style={{
+            flex: 1, background: "var(--bg3)", border: "1px solid var(--border)",
+            borderRadius: "var(--radius-sm)", padding: "4px 8px",
+            fontSize: 11, color: "var(--text)", fontFamily: "var(--font-mono)",
+            outline: "none",
+          }}
+        />
+      </div>
+    );
+  }
+
+  if (field.type === "dropdown") {
+    const strValue = String(value ?? field.default);
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 28 }}>
+        <span style={{ fontSize: 10, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 500, minWidth: 130, flexShrink: 0 }}>{field.label}</span>
+        <div style={{ display: "flex", gap: 4 }}>
+          {field.options.map((opt) => (
+            <button
+              key={String(opt)}
+              onClick={() => onChange(opt)}
+              style={{
+                background: strValue === String(opt) ? "var(--green)" : "var(--bg3)",
+                border: `1px solid ${strValue === String(opt) ? "var(--green)" : "var(--border)"}`,
+                color: strValue === String(opt) ? "#0d0f11" : "var(--muted)",
+                fontSize: 11, fontWeight: strValue === String(opt) ? 600 : 400,
+                padding: "2px 9px", borderRadius: "var(--radius-sm)",
+                cursor: "pointer", transition: "var(--transition-fast)",
+              }}
+            >
+              {String(opt)}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (field.type === "slider") {
+    const numVal = (value as number) ?? field.default;
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 28 }}>
+          <span style={{ fontSize: 10, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 500, minWidth: 130, flexShrink: 0 }}>{field.label}</span>
+          <span style={{ fontSize: 12, color: "var(--text)", fontFamily: "var(--font-mono)", fontWeight: 600, minWidth: 40 }}>{numVal}</span>
+          <input
+            type="range"
+            min={field.min}
+            max={field.max}
+            step={field.step}
+            value={numVal}
+            onChange={(e) => onChange(field.kind === "int" ? parseInt(e.target.value, 10) : parseFloat(e.target.value))}
+            style={{ flex: 1, accentColor: "var(--green)", height: 4, cursor: "pointer" }}
+          />
+          <span style={{ fontSize: 9, color: "var(--dim)", fontFamily: "var(--font-mono)" }}>
+            {field.min} – {field.max}
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+// ── Architecture cards ────────────────────────────────────────────────
 
 interface ArchSelectorProps {
   selected: Architecture;
@@ -203,38 +472,13 @@ interface ArchSelectorProps {
 
 function ArchSelector({ selected, onSelect }: ArchSelectorProps) {
   return (
-    <div
-      style={{
-        width: 230,
-        flexShrink: 0,
-        borderRight: "1px solid var(--border)",
-        display: "flex",
-        flexDirection: "column",
-        gap: 0,
-        overflow: "auto",
-        background: "var(--bg1)",
-      }}
-    >
-      <div
-        style={{
-          padding: "8px 12px 6px",
-          borderBottom: "1px solid var(--border)",
-          fontSize: 11,
-          color: "var(--text)",
-          fontWeight: 500,
-          flexShrink: 0,
-        }}
-      >
+    <div style={{ width: 230, flexShrink: 0, borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 0, overflow: "auto", background: "var(--bg1)" }}>
+      <div style={{ padding: "8px 12px 6px", borderBottom: "1px solid var(--border)", fontSize: 11, color: "var(--text)", fontWeight: 500, flexShrink: 0 }}>
         Architecture
       </div>
       <div style={{ display: "flex", flexDirection: "column", padding: 8, gap: 6 }}>
         {ARCH_DEFS.map((def) => (
-          <ArchCard
-            key={def.id}
-            def={def}
-            active={selected === def.id}
-            onClick={() => onSelect(def.id)}
-          />
+          <ArchCard key={def.id} def={def} active={selected === def.id} onClick={() => onSelect(def.id)} />
         ))}
       </div>
     </div>
@@ -249,7 +493,6 @@ interface ArchCardProps {
 
 function ArchCard({ def, active, onClick }: ArchCardProps) {
   const [hovered, setHovered] = useState(false);
-
   return (
     <div
       onClick={onClick}
@@ -258,38 +501,17 @@ function ArchCard({ def, active, onClick }: ArchCardProps) {
       style={{
         background: active ? "#1a3d2a" : hovered ? "#2a2d32" : "#1a1d21",
         border: `1px solid ${active ? "#4dba7f" : hovered ? "#5d6470" : "#3a3e46"}`,
-        borderRadius: 6,
-        padding: "10px 12px",
-        cursor: "pointer",
-        transition: "0.15s",
-        display: "flex",
-        flexDirection: "column",
-        gap: 5,
+        borderRadius: 6, padding: "10px 12px", cursor: "pointer", transition: "0.15s",
+        display: "flex", flexDirection: "column", gap: 5,
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "space-between" }}>
-        <span
-          style={{
-            fontSize: 12,
-            fontWeight: 600,
-            color: active ? "#4dba7f" : "#dde3ea",
-          }}
-        >
+        <span style={{ fontSize: 12, fontWeight: 600, color: active ? "#4dba7f" : "#dde3ea" }}>
           {def.id}
         </span>
-        {active && (
-          <span style={{ fontSize: 8, color: "var(--green)" }}>●</span>
-        )}
+        {active && <span style={{ fontSize: 8, color: "var(--green)" }}>●</span>}
       </div>
-      <span
-        style={{
-          fontSize: 9,
-          color: active ? "var(--green)" : "var(--accent)",
-          fontFamily: "var(--font-mono)",
-          textTransform: "uppercase",
-          letterSpacing: "0.05em",
-        }}
-      >
+      <span style={{ fontSize: 9, color: active ? "var(--green)" : "var(--accent)", fontFamily: "var(--font-mono)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
         {def.tag}
       </span>
       <span style={{ fontSize: 10, color: "var(--muted)", lineHeight: 1.4 }}>
@@ -312,270 +534,7 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-// ── §10.3 Hyperparameters panel ───────────────────────────────────────────
-
-interface HyperparamsPanelProps {
-  hp: Hyperparameters;
-  onChange: (hp: Partial<Hyperparameters>) => void;
-  onReset: () => void;
-}
-
-function HyperparamsPanel({ hp, onChange, onReset }: HyperparamsPanelProps) {
-  const handleLr = (val: string) => {
-    const n = parseFloat(val);
-    if (!isNaN(n)) onChange({ learningRate: n });
-  };
-
-  return (
-    <Panel
-      title="Hyperparameters"
-      actions={
-        /* §10.9 Reset to defaults */
-        <Btn small variant="ghost" onClick={onReset}>
-          Reset to defaults
-        </Btn>
-      }
-    >
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr",
-          gap: "10px 16px",
-        }}
-      >
-        <LabeledField label="Scale Factor">
-          <Dropdown
-            value={String(hp.scale)}
-            options={["2", "4", "8"]}
-            onChange={(v) => onChange({ scale: parseInt(v) })}
-          />
-        </LabeledField>
-
-        <LabeledField label="LR Scheduler">
-          <Dropdown
-            value={hp.lrScheduler}
-            options={[
-              { value: "cosine", label: "Cosine Annealing" },
-              { value: "multistep", label: "MultiStep LR" },
-              { value: "plateau", label: "Reduce on Plateau" },
-            ]}
-            onChange={(v) => onChange({ lrScheduler: v })}
-          />
-        </LabeledField>
-
-        <LabeledField label="Optimizer">
-          <Dropdown
-            value={hp.optimizer}
-            options={["Adam", "AdamW", "SGD"]}
-            onChange={(v) => onChange({ optimizer: v })}
-          />
-        </LabeledField>
-
-        <LabeledField label="Learning Rate">
-          <input
-            type="number"
-            step="0.00001"
-            min="0.000001"
-            max="0.01"
-            value={hp.learningRate}
-            onChange={(e) => handleLr(e.target.value)}
-            style={numInputStyle}
-          />
-        </LabeledField>
-
-        <LabeledField label="Total Iterations">
-          <input
-            type="number"
-            step="10000"
-            min="10000"
-            value={hp.totalIter}
-            onChange={(e) => onChange({ totalIter: parseInt(e.target.value) || hp.totalIter })}
-            style={numInputStyle}
-          />
-        </LabeledField>
-
-        <LabeledField label="Batch Size">
-          <input
-            type="number"
-            step="1"
-            min="1"
-            max="64"
-            value={hp.batchSize}
-            onChange={(e) => onChange({ batchSize: parseInt(e.target.value) || hp.batchSize })}
-            style={numInputStyle}
-          />
-        </LabeledField>
-
-        <LabeledField label="Patch Size (px)">
-          <input
-            type="number"
-            step="8"
-            min="32"
-            max="512"
-            value={hp.patchSize}
-            onChange={(e) => onChange({ patchSize: parseInt(e.target.value) || hp.patchSize })}
-            style={numInputStyle}
-          />
-        </LabeledField>
-      </div>
-    </Panel>
-  );
-}
-
-// ── §10.4 Loss weights ────────────────────────────────────────────────────
-
-interface LossWeightsPanelProps {
-  lw: LossWeights;
-  onChange: (lw: Partial<LossWeights>) => void;
-}
-
-function LossWeightsPanel({ lw, onChange }: LossWeightsPanelProps) {
-  return (
-    <Panel title="Loss Weights">
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr 1fr",
-          gap: 12,
-        }}
-      >
-        <LossField
-          label="Pixel L1"
-          value={lw.pixel}
-          onChange={(v) => onChange({ pixel: v })}
-          color="var(--text)"
-        />
-        <LossField
-          label="Perceptual"
-          value={lw.perceptual}
-          onChange={(v) => onChange({ perceptual: v })}
-          color="var(--blue)"
-        />
-        <LossField
-          label="Adversarial"
-          value={lw.adversarial}
-          onChange={(v) => onChange({ adversarial: v })}
-          color="var(--purple, #a855f7)"
-        />
-      </div>
-    </Panel>
-  );
-}
-
-interface LossFieldProps {
-  label: string;
-  value: number;
-  onChange: (v: number) => void;
-  color: string;
-}
-
-function LossField({ label, value, onChange, color }: LossFieldProps) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <span style={{ fontSize: 10, color, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-        {label}
-      </span>
-      <input
-        type="number"
-        step="0.1"
-        min="0"
-        max="10"
-        value={value}
-        onChange={(e) => {
-          const n = parseFloat(e.target.value);
-          if (!isNaN(n)) onChange(n);
-        }}
-        style={{ ...numInputStyle, borderColor: color === "var(--text)" ? undefined : color }}
-      />
-    </div>
-  );
-}
-
-// ── §10.5 Augmentation toggles ────────────────────────────────────────────
-
-interface AugmentationPanelProps {
-  aug: AugmentationConfig;
-  onChange: (aug: Partial<AugmentationConfig>) => void;
-}
-
-function AugmentationPanel({ aug, onChange }: AugmentationPanelProps) {
-  return (
-    <Panel title="Data Augmentation">
-      <div
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          gap: "6px 20px",
-        }}
-      >
-        {AUG_DEFS.map(({ key, label, hint }) => (
-          <div
-            key={key}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              minWidth: "calc(50% - 10px)",
-              padding: "4px 0",
-            }}
-          >
-            <Toggle
-              on={aug[key]}
-              onChange={() => onChange({ [key]: !aug[key] })}
-            />
-            <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-              <span style={{ fontSize: 11, color: "var(--text)" }}>{label}</span>
-              <span style={{ fontSize: 9, color: "var(--dim)" }}>{hint}</span>
-            </div>
-          </div>
-        ))}
-      </div>
-    </Panel>
-  );
-}
-
-// ── §10.7 Pretrained weights panel ────────────────────────────────────────
-
-interface PretrainedPanelProps {
-  path: string | null;
-  onChange: (path: string | null) => void;
-}
-
-function PretrainedPanel({ path, onChange }: PretrainedPanelProps) {
-  return (
-    <Panel title="Pretrained Weights">
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <span style={{ fontSize: 10, color: "var(--muted)", lineHeight: 1.4 }}>
-          Optional: initialize from a pre-trained .pth checkpoint. Compatibility is validated at training start.
-        </span>
-        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <PathInput
-              value={path ?? ""}
-              onChange={onChange}
-              browseTitle="Select Pretrained Weights"
-              mono
-              placeholder="None — train from scratch"
-              fileFilters={[{ name: "PyTorch Weights", extensions: ["pth", "pt", "safetensors"] }]}
-            />
-          </div>
-          {path && (
-            <Btn
-              variant="ghost"
-              small
-              onClick={() => onChange(null)}
-              style={{ flexShrink: 0 }}
-            >
-              Clear
-            </Btn>
-          )}
-        </div>
-      </div>
-    </Panel>
-  );
-}
-
-// ── §10.6 YAML preview panel ──────────────────────────────────────────────
+// ── YAML Preview panel ────────────────────────────────────────────────
 
 interface YamlPanelProps {
   yaml: string;
@@ -585,46 +544,18 @@ interface YamlPanelProps {
 
 function YamlPanel({ yaml, copied, onCopy }: YamlPanelProps) {
   return (
-    <div
-      style={{
-        width: 240,
-        flexShrink: 0,
-        borderLeft: "1px solid var(--border)",
-        display: "flex",
-        flexDirection: "column",
-        background: "var(--bg1)",
-        overflow: "hidden",
-      }}
-    >
-      <div
-        style={{
-          padding: "7px 12px",
-          borderBottom: "1px solid var(--border)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          flexShrink: 0,
-        }}
-      >
-        <span style={{ fontSize: 11, color: "var(--text)", fontWeight: 500 }}>
-          YAML Preview
-        </span>
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden", borderTop: "1px solid var(--border)" }}>
+      <div style={{ padding: "7px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
+        <span style={{ fontSize: 10, color: "var(--muted)", fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.05em" }}>YAML Preview</span>
         <Btn small variant="ghost" onClick={onCopy}>
           {copied ? "Copied!" : "Copy"}
         </Btn>
       </div>
       <pre
         style={{
-          flex: 1,
-          overflow: "auto",
-          margin: 0,
-          padding: "10px 12px",
-          fontSize: 9.5,
-          lineHeight: 1.6,
-          fontFamily: "var(--font-mono)",
-          color: "var(--muted)",
-          whiteSpace: "pre",
-          background: "transparent",
+          flex: 1, overflow: "auto", margin: 0, padding: "10px 12px",
+          fontSize: 9.5, lineHeight: 1.6, fontFamily: "var(--font-mono)",
+          color: "var(--muted)", whiteSpace: "pre", background: "transparent",
         }}
         dangerouslySetInnerHTML={{ __html: syntaxHighlight(yaml) }}
       />
@@ -632,12 +563,9 @@ function YamlPanel({ yaml, copied, onCopy }: YamlPanelProps) {
   );
 }
 
-// Simple YAML syntax highlighter (no external library)
 function syntaxHighlight(yaml: string): string {
   return yaml
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .split("\n")
     .map((line) => {
       if (/^\s*#/.test(line)) {
@@ -659,42 +587,3 @@ function syntaxHighlight(yaml: string): string {
     })
     .join("\n");
 }
-
-// ── Helpers ────────────────────────────────────────────────────────────────
-
-interface LabeledFieldProps {
-  label: string;
-  children: React.ReactNode;
-}
-
-function LabeledField({ label, children }: LabeledFieldProps) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <span
-        style={{
-          fontSize: 10,
-          color: "var(--muted)",
-          textTransform: "uppercase",
-          letterSpacing: "0.05em",
-          fontWeight: 500,
-        }}
-      >
-        {label}
-      </span>
-      {children}
-    </div>
-  );
-}
-
-const numInputStyle: React.CSSProperties = {
-  background: "var(--bg3)",
-  border: "1px solid var(--border)",
-  borderRadius: "var(--radius-sm)",
-  padding: "6px 10px",
-  fontSize: 12,
-  color: "var(--text)",
-  width: "100%",
-  outline: "none",
-  fontFamily: "var(--font-mono)",
-  boxSizing: "border-box",
-};
