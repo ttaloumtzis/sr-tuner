@@ -14,7 +14,8 @@ set -euo pipefail
 SRC_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$SRC_DIR"
 
-BACKEND="cpu"
+# Parse command-line arguments
+BACKEND=""  # empty = auto-detect
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --backend) BACKEND="$2"; shift 2 ;;
@@ -22,23 +23,40 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-echo "→ Building sidecar for backend=${BACKEND}"
+# ── Auto-detect torch backend from the installed venv ────────────────────
+
+DETECTED="cpu"
+if [ -f "$SRC_DIR/.venv/lib/python3.11/site-packages/torch/lib/libtorch_hip.so" ]; then
+    DETECTED="rocm"
+elif [ -f "$SRC_DIR/.venv/lib/python3.11/site-packages/torch/lib/libtorch_cuda.so" ]; then
+    DETECTED="cuda"
+fi
+
+if [ -z "$BACKEND" ]; then
+    BACKEND="$DETECTED"
+elif [ "$BACKEND" != "$DETECTED" ]; then
+    echo "  Warning: --backend=$BACKEND but venv has ${DETECTED} torch"
+fi
+
+echo "→ Building sidecar (backend=${BACKEND}, detected=${DETECTED})"
 
 # ── ROCm-specific setup ──────────────────────────────────────────────────
 
-CLEANUP_SYMLINK=0
 EXTRA_DATA=""
+EXTRA_BINARIES=""
 BUILD_MODE="--onefile"
 
 if [ "$BACKEND" = "rocm" ]; then
-    export LD_LIBRARY_PATH="/opt/rocm/lib:$LD_LIBRARY_PATH"
-    # PyInstaller resolves SONAMEs literally. Torch 2.5.1+rocm6.2 was built
-    # against HIP 6 (SONAME libamdhip64.so.6) but ROCm 7.x ships
-    # libamdhip64.so.7. Create a temporary compat symlink for the build.
-    if [ ! -f /opt/rocm/lib/libamdhip64.so.6 ] && [ -f /opt/rocm/lib/libamdhip64.so.7 ]; then
-        echo "  Creating compat symlink: libamdhip64.so.6 → libamdhip64.so.7"
-        ln -sf libamdhip64.so.7 /opt/rocm/lib/libamdhip64.so.6
-        CLEANUP_SYMLINK=1
+    export LD_LIBRARY_PATH="/opt/rocm/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    # Bundle the ROCm HIP runtime into the build. PyInstaller --add-binary
+    # doesn't support renaming at the destination, so it lands as
+    # libamdhip64.so.7. A post-build symlink (below) creates the
+    # libamdhip64.so.6 alias that torch expects.
+    ROCM_HIP_LIB="/opt/rocm/lib/libamdhip64.so.7"
+    if [ -f "$ROCM_HIP_LIB" ]; then
+        EXTRA_BINARIES="--add-binary $ROCM_HIP_LIB:torch/lib"
+    else
+        echo "  Warning: $ROCM_HIP_LIB not found, GPU support may be broken"
     fi
     # Bundle AMD GPU ID metadata for GPU detection
     TORCH_SHARE="$SRC_DIR/.venv/lib/python3.11/site-packages/torch/share"
@@ -72,6 +90,7 @@ uv run pyinstaller $BUILD_MODE \
     --name sr-engine \
     --add-data "$SRC_DIR/src/sr_engine/utils/configs:sr_engine/utils/configs" \
     $EXTRA_DATA \
+    $EXTRA_BINARIES \
     --hidden-import uvicorn \
     --hidden-import uvicorn.logging \
     --hidden-import uvicorn.loops.auto \
@@ -90,13 +109,6 @@ uv run pyinstaller $BUILD_MODE \
     --hidden-import pydantic \
     "$SRC_DIR/scripts/sidecar_entry.py"
 
-# ── Cleanup ROCm compat symlink ──────────────────────────────────────────
-
-if [ "$CLEANUP_SYMLINK" = 1 ]; then
-    rm -f /opt/rocm/lib/libamdhip64.so.6
-    echo "  Removed compat symlink"
-fi
-
 # ── Copy result to Tauri's binaries directory ────────────────────────────
 
 TRIPLE=$(rustc -vV | sed -n 's/.*host: *//p')
@@ -111,6 +123,15 @@ rm -rf "$BINARIES_DIR/sr-engine-${TRIPLE}" "$BINARIES_DIR/sr-engine-${TRIPLE}.ex
 if [ "$BUILD_MODE" = "--onedir" ]; then
     # --onedir produces dist/sr-engine/ (directory with _internal/ + binary)
     cp -r "$SRC_DIR/dist/sr-engine" "$BINARIES_DIR/sr-engine-${TRIPLE}"
+
+    # PyInstaller's --add-binary doesn't support renaming at the destination.
+    # The ROCm HIP runtime was bundled as libamdhip64.so.7, but torch expects
+    # libamdhip64.so.6. Create the compat symlink in the bundled directory.
+    TORCH_LIB="$BINARIES_DIR/sr-engine-${TRIPLE}/_internal/torch/lib"
+    if [ "$BACKEND" = "rocm" ] && [ -f "$TORCH_LIB/libamdhip64.so.7" ] && [ ! -f "$TORCH_LIB/libamdhip64.so.6" ]; then
+        ln -sf libamdhip64.so.7 "$TORCH_LIB/libamdhip64.so.6"
+    fi
+
     SIZE=$(du -sh "$BINARIES_DIR/sr-engine-${TRIPLE}" | cut -f1)
 else
     # --onefile produces dist/sr-engine (single binary)
