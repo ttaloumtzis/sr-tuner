@@ -16,7 +16,7 @@ experiments/
 .serena/
 .tokensave/
 .claude/
-checkpoints/
+/checkpoints/
 frontend/node_modules/
 src-tauri/target/
 *.log
