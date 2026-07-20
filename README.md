@@ -55,18 +55,32 @@ powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 
 > Python 3.11 or 3.12 must be available. On Linux: `apt install python3.11 python3.11-venv`. On macOS: `brew install python@3.12`. On Windows: download from [python.org](https://www.python.org/downloads/).
 
-**Node.js (via nvm — all platforms):**
+**Node.js (requires 18+):**
 
+**Linux / macOS:**
 ```bash
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.0/install.sh | bash
 nvm install 18
 ```
 
-**Rust (via rustup — all platforms):**
+**Windows:**
+```powershell
+# via nvm-windows
+winget install nvm-windows
+# or download from https://github.com/coreybutler/nvm-windows/releases
+nvm install 18
+nvm use 18
+```
 
+**Rust (via rustup):**
+
+**Linux / macOS:**
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
+
+**Windows:**
+Download and run [rustup-init.exe](https://rustup.rs/) — or use `winget install Rustlang.Rustup`.
 
 ### Per-platform notes
 
