@@ -1,5 +1,8 @@
 """Loss functions for super-resolution training."""
 
+import os
+from urllib.error import URLError
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -104,7 +107,22 @@ class PerceptualLoss(nn.Module):
 
         from torchvision.models import vgg19, VGG19_Weights
 
-        vgg = vgg19(weights=VGG19_Weights.IMAGENET1K_V1).features
+        try:
+            import certifi
+            os.environ.setdefault("SSL_CERT_FILE", certifi.where())
+        except ImportError:
+            pass
+
+        try:
+            vgg = vgg19(weights=VGG19_Weights.IMAGENET1K_V1).features
+        except URLError as e:
+            raise RuntimeError(
+                "Failed to download VGG19 pretrained weights (required for perceptual loss). "
+                "Check your internet connection or proxy settings. "
+                "To skip perceptual loss, set `perceptual_weight: 0` in your config. "
+                "On Windows, setting the SSL_CERT_FILE environment variable may help. "
+                f"Original error: {e}"
+            ) from e
         max_index = max(_VGG19_LAYER_INDEX[name] for name in self.layer_ids)
 
         self.vgg = nn.Sequential(*list(vgg.children())[: max_index + 1]).eval()

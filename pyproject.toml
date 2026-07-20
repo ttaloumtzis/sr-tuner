@@ -15,6 +15,7 @@ dependencies = [
     "tqdm>=4.66",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
+    "certifi>=2024.0",
 ]
 
 [project.scripts]
