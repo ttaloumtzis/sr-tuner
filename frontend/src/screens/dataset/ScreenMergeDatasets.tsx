@@ -7,6 +7,7 @@ import { Dropdown } from "../../components/ui/Dropdown";
 import { useDatasetStore } from "../../store/datasetStore";
 import { useProjectStore } from "../../store/projectStore";
 import { scanDatasets, type ScannedDataset } from "../../lib/scanDatasets";
+import { join, parentFromProjFile } from "../../lib/path";
 
 
 interface MergePreview {
@@ -19,9 +20,9 @@ interface MergePreview {
 export function ScreenMergeDatasets() {
   const s = useDatasetStore();
   const project = useProjectStore((s) => s.project);
-  const projectDir = project ? project.filePath.replace(/\/[^/]+\.srproj$/, "") : "";
-  const datasetsDir = projectDir ? projectDir + "/datasets" : "";
-  const defaultOutput = datasetsDir ? datasetsDir + "/merged" : "";
+  const projectDir = project ? parentFromProjFile(project.filePath) : "";
+  const datasetsDir = projectDir ? join(projectDir, "datasets") : "";
+  const defaultOutput = datasetsDir ? join(datasetsDir, "merged") : "";
 
   const [scanned, setScanned] = useState<ScannedDataset[]>([]);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
@@ -85,7 +86,7 @@ export function ScreenMergeDatasets() {
       const scaleNum = Number(scaleStr);
       const totalPairs = dsList.reduce((sum, d) => sum + d.pairCount, 0);
       const dirName = s.mergeCustomName || `scale_${scaleNum}`;
-      const outputPath = (s.mergeOutputPath || defaultOutput) + "/" + dirName;
+      const outputPath = join(s.mergeOutputPath || defaultOutput, dirName);
       p.push({ scale: scaleNum, sourceDatasets: dsList, totalPairs, outputPath });
     }
     setPreview(p);

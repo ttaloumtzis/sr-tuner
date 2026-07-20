@@ -1,7 +1,25 @@
+import multiprocessing
 import threading
 import time
 from dataclasses import dataclass, field
 from uuid import uuid4
+
+
+_subprocess_cancel_events: dict[str, multiprocessing.Event] = {}
+
+
+def register_subprocess_cancel_event(job_id: str, event: multiprocessing.Event) -> None:
+    _subprocess_cancel_events[job_id] = event
+
+
+def signal_subprocess_cancel(job_id: str) -> None:
+    event = _subprocess_cancel_events.get(job_id)
+    if event:
+        event.set()
+
+
+def unregister_subprocess_cancel_event(job_id: str) -> None:
+    _subprocess_cancel_events.pop(job_id, None)
 
 
 @dataclass

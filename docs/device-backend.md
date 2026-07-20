@@ -174,6 +174,17 @@ The `envs/build.sh` script configures PyTorch for the target backend:
 | `cuda` | PyPI CUDA | CUDA 12.4 |
 | `rocm` | PyPI ROCm | ROCm 6.2 |
 
+### Platform Support
+
+| Backend | Linux | macOS | Windows |
+|---------|-------|-------|---------|
+| CPU     | ✓     | ✓     | ✓       |
+| CUDA    | ✓     | —     | ✓       |
+| ROCm    | ✓     | —     | —       |
+
+- **ROCm is Linux-only.** Use the CUDA or CPU backend on Windows.
+- On Windows, use `.\envs\build.ps1 -Backend cpu` or `.\envs\build.ps1 -Backend cuda`.
+
 Verification via `envs/verify_env.py`:
 - Checks PyTorch imports without error
 - Validates CUDA/ROCm availability matches the requested backend

@@ -25,6 +25,7 @@ interface RunConfigState {
   betas: [number, number];
   numWorkers: number;
   metricsFrequency: number;
+  writeMetricsFile: boolean;
   validationEnabled: boolean;
   validationSplit: number;
   perceptualWeight: number;
@@ -32,6 +33,7 @@ interface RunConfigState {
   selectedInstance: string | null;
   instanceArchitecture: string | null;
   instanceScale: number | null;
+  instanceConfig: Record<string, unknown> | null;
 
   selectedDataset: string | null;
   selectedDatasetPath: string | null;
@@ -53,12 +55,14 @@ interface RunConfigState {
   setBetas: (v: [number, number]) => void;
   setNumWorkers: (v: number) => void;
   setMetricsFrequency: (v: number) => void;
+  setWriteMetricsFile: (v: boolean) => void;
   setValidationEnabled: (v: boolean) => void;
   setValidationSplit: (v: number) => void;
   setPerceptualWeight: (v: number) => void;
   setSelectedInstance: (v: string | null) => void;
   setInstanceArchitecture: (v: string | null) => void;
   setInstanceScale: (v: number | null) => void;
+  setInstanceConfig: (v: Record<string, unknown> | null) => void;
   setSelectedDataset: (v: string | null) => void;
   setSelectedDatasetPath: (v: string | null) => void;
   setSelectedDatasetPairs: (v: number | null) => void;
@@ -80,6 +84,7 @@ export const useRunConfigStore = create<RunConfigState>((set) => ({
   betas: [0.9, 0.99] as [number, number],
   numWorkers: 4,
   metricsFrequency: 1,
+  writeMetricsFile: true,
   validationEnabled: true,
   validationSplit: 0.1,
   perceptualWeight: 0.1,
@@ -87,6 +92,7 @@ export const useRunConfigStore = create<RunConfigState>((set) => ({
   selectedInstance: null,
   instanceArchitecture: null,
   instanceScale: null,
+  instanceConfig: null,
 
   selectedDataset: null,
   selectedDatasetPath: null,
@@ -108,12 +114,14 @@ export const useRunConfigStore = create<RunConfigState>((set) => ({
   setBetas: (v) => set({ betas: v }),
   setNumWorkers: (v) => set({ numWorkers: v }),
   setMetricsFrequency: (v) => set({ metricsFrequency: v }),
+  setWriteMetricsFile: (v) => set({ writeMetricsFile: v }),
   setValidationEnabled: (v) => set({ validationEnabled: v }),
   setValidationSplit: (v) => set({ validationSplit: v }),
   setPerceptualWeight: (v) => set({ perceptualWeight: v }),
   setSelectedInstance: (v) => set({ selectedInstance: v }),
   setInstanceArchitecture: (v) => set({ instanceArchitecture: v }),
   setInstanceScale: (v) => set({ instanceScale: v }),
+  setInstanceConfig: (v) => set({ instanceConfig: v }),
   setSelectedDataset: (v) => set({ selectedDataset: v }),
   setSelectedDatasetPath: (v) => set({ selectedDatasetPath: v }),
   setSelectedDatasetPairs: (v) => set({ selectedDatasetPairs: v }),

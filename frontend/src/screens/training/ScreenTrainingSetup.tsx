@@ -7,7 +7,7 @@ import { Dropdown, type DropdownOption } from "../../components/ui/Dropdown";
 import { useRunConfigStore } from "../../store/runConfigStore";
 import { useTrainingStore } from "../../store/trainingStore";
 import { useUiStore } from "../../store/uiStore";
-import { estimateVram } from "../../lib/vramEstimate";
+import { estimateVramBreakdown, type VramBreakdown } from "../../lib/vramEstimate";
 
 interface ValidationDotProps {
   valid: boolean | null;
@@ -23,8 +23,9 @@ interface NumInputProps {
   min?: number;
   max?: number;
   step?: number;
+  disabled?: boolean;
 }
-function NumInput({ value, onChange, min, max, step = 1 }: NumInputProps) {
+function NumInput({ value, onChange, min, max, step = 1, disabled }: NumInputProps) {
   return (
     <input
       type="number"
@@ -32,11 +33,13 @@ function NumInput({ value, onChange, min, max, step = 1 }: NumInputProps) {
       min={min}
       max={max}
       step={step}
+      disabled={disabled}
       onChange={(e) => onChange(Number(e.target.value))}
       style={{
         background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)",
         padding: "5px 8px", fontSize: 12, color: "var(--text)", fontFamily: "var(--font-mono)",
         width: "100%", outline: "none", boxSizing: "border-box" as const,
+        opacity: disabled ? 0.4 : 1, cursor: disabled ? "not-allowed" : undefined,
       }}
     />
   );
@@ -83,8 +86,21 @@ export function ScreenTrainingSetup() {
   const [datasetValid, setDatasetValid] = useState<boolean | null>(null);
   const [datasetErrors, setDatasetErrors] = useState<string[]>([]);
   const [customConfigPath, setCustomConfigPath] = useState("");
-  const [machineMode, setMachineMode] = useState(false);
   const [scaleMismatch, setScaleMismatch] = useState(false);
+  const [gpuTotalVramGb, setGpuTotalVramGb] = useState<number | null>(null);
+  const [launchError, setLaunchError] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { getEnv } = await import("../../lib/api");
+        const env = await getEnv();
+        if (env.vram_total_mb) {
+          setGpuTotalVramGb(env.vram_total_mb / 1024);
+        }
+      } catch { console.warn("getEnv failed in training setup"); }
+    })();
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -95,7 +111,7 @@ export function ScreenTrainingSetup() {
           value: i.name,
           label: `${i.name}${i.architecture ? ` (${i.architecture})` : ""}`,
         })));
-      } catch { /* not critical */ }
+      } catch { console.warn("listInstances failed in training setup"); }
     })();
   }, []);
 
@@ -111,7 +127,7 @@ export function ScreenTrainingSetup() {
           pairs: d.num_pairs,
           scale: d.scale,
         })));
-      } catch { /* not critical */ }
+      } catch { console.warn("listDatasets failed in training setup"); }
     })();
   }, []);
 
@@ -122,6 +138,7 @@ export function ScreenTrainingSetup() {
     s.setSelectedDataset(null);
     s.setSelectedDatasetPath(null);
     s.setSelectedDatasetPairs(null);
+    s.setInstanceConfig(null);
     s.setSelectedValidationDataset(null);
     setDatasetValid(null);
     setDatasetErrors([]);
@@ -136,26 +153,31 @@ export function ScreenTrainingSetup() {
       const inst = await getInstance(name);
       s.setInstanceArchitecture(inst.architecture);
       s.setInstanceScale(inst.scale ?? null);
+      s.setInstanceConfig(inst.config ?? null);
       const versions = await getInstanceVersions(name);
       const versionList = versions.map((v: { tag: string }) => ({ tag: v.tag, path: "" }));
       s.setInstanceVersions(versionList);
       if (versionList.length > 0) {
         s.setResumeFrom("latest");
       }
-    } catch { /* not critical */ }
+    } catch { console.warn("getInstance/getInstanceVersions failed in training setup"); }
   }, [s]);
 
   const handleDatasetSelect = useCallback((name: string) => {
-    s.setSelectedDataset(name);
+    s.setSelectedDataset(name || null);
     setDatasetValid(null);
     setDatasetErrors([]);
+    if (!name) {
+      s.setSelectedDatasetPath(null);
+      s.setSelectedDatasetPairs(null);
+      setScaleMismatch(false);
+      return;
+    }
     const ds = datasets.find((d) => d.value === name);
     if (ds) {
       s.setSelectedDatasetPath(ds.path);
       s.setSelectedDatasetPairs(ds.pairs);
       setScaleMismatch(s.instanceScale !== null && ds.scale !== s.instanceScale);
-    } else {
-      setScaleMismatch(false);
     }
   }, [s, datasets]);
 
@@ -178,10 +200,23 @@ export function ScreenTrainingSetup() {
     ? Math.ceil(s.selectedDatasetPairs / s.batchSize)
     : 0;
   const totalIters = itersPerEpoch * s.schedule.totalEpochs;
-  const vramEst = s.instanceArchitecture
-    ? estimateVram(s.instanceArchitecture as any, s.batchSize, s.patchSize, s.fp16)
-    : 0;
-  const isOom = false;
+
+  const instCfg = s.instanceConfig as Record<string, unknown> | undefined;
+  const vramBreakdown: VramBreakdown = s.instanceArchitecture
+    ? estimateVramBreakdown(
+        s.instanceArchitecture as any,
+        s.batchSize,
+        s.patchSize,
+        s.fp16,
+        s.instanceScale ?? 4,
+        instCfg?.num_feat as number | undefined,
+        instCfg?.num_block as number | undefined,
+        instCfg?.embed_dim as number | undefined,
+        instCfg?.depths as number[] | undefined,
+      )
+    : { totalGb: 0, weightsGb: 0, gradsGb: 0, adamGb: 0, activationsGb: 0, inputGb: 0, overheadGb: 0 };
+  const vramEst = vramBreakdown.totalGb;
+  const isOom = gpuTotalVramGb !== null && vramEst > gpuTotalVramGb;
 
   const canLaunch = s.selectedInstance && s.selectedDataset;
 
@@ -209,15 +244,24 @@ export function ScreenTrainingSetup() {
         validation_split: s.validationSplit,
         validation_dataset: s.selectedValidationDataset ?? undefined,
         metrics_frequency: s.metricsFrequency,
+        write_metrics_file: s.writeMetricsFile,
         perceptual_weight: s.perceptualWeight,
         warmup_steps: s.schedule.warmupSteps,
       });
 
+      useTrainingStore.getState().reset();
       useTrainingStore.getState().setActiveRun(res.job_id);
       useTrainingStore.getState().setStatus("running");
       useUiStore.getState().setActiveTab("metrics");
+      setLaunchError(null);
     } catch (e) {
-      console.error("Training launch failed:", e);
+      const msg = e instanceof Error ? e.message : String(e);
+      setLaunchError(msg);
+      useUiStore.getState().setLastApiError({
+        type: "error",
+        code: "LAUNCH_FAILED",
+        message: msg,
+      });
     }
   }, [s, customConfigPath]);
 
@@ -326,11 +370,13 @@ export function ScreenTrainingSetup() {
         >
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <Field label="Training Data">
-              <Dropdown
-                value={s.selectedDataset ?? ""}
-                options={[{ value: "", label: "— Select Dataset —" }, ...datasets.map((d) => ({ value: d.value, label: d.label }))]}
-                onChange={handleDatasetSelect}
-              />
+              <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                <Dropdown
+                  value={s.selectedDataset ?? ""}
+                  options={[{ value: "", label: "— Select Dataset —" }, ...datasets.map((d) => ({ value: d.value, label: d.label }))]}
+                  onChange={handleDatasetSelect}
+                />
+              </div>
             </Field>
             <Field label="Validation Data">
               <Dropdown
@@ -345,12 +391,19 @@ export function ScreenTrainingSetup() {
                 <span style={{ fontSize: 11, color: "var(--muted)" }}>Val enabled</span>
               </div>
               <Field label="Val split">
-                <NumInput value={s.validationSplit} onChange={s.setValidationSplit} min={0} max={1} step={0.05} />
+                <NumInput value={s.validationSplit} onChange={s.setValidationSplit}
+                  min={0} max={1} step={0.05}
+                  disabled={s.selectedValidationDataset !== null} />
               </Field>
               <Field label="Workers">
                 <NumInput value={s.numWorkers} onChange={s.setNumWorkers} min={0} max={16} />
               </Field>
             </div>
+            {s.selectedValidationDataset !== null && (
+              <div style={{ fontSize: 10, color: "var(--dim)", fontFamily: "var(--font-mono)" }}>
+                Split ratio ignored — using separate validation dataset
+              </div>
+            )}
             {scaleMismatch && (
               <div style={{ padding: "6px 8px", background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.4)", borderRadius: "var(--radius-sm)", fontSize: 10, color: "#f59e0b", lineHeight: 1.4 }}>
                 ⚠ Dataset scale does not match model scale ({s.instanceScale}×)
@@ -391,8 +444,8 @@ export function ScreenTrainingSetup() {
             </Field>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
-            <Toggle on={machineMode} onChange={() => setMachineMode(!machineMode)} />
-            <span style={{ fontSize: 11, color: "var(--muted)" }}>Machine Mode (JSONL metrics)</span>
+            <Toggle on={s.writeMetricsFile} onChange={() => s.setWriteMetricsFile(!s.writeMetricsFile)} />
+            <span style={{ fontSize: 11, color: "var(--muted)" }}>Write metrics.jsonl file</span>
           </div>
         </Panel>
       </div>
@@ -404,7 +457,17 @@ export function ScreenTrainingSetup() {
             <EstimateRow label="Iters / epoch" value={itersPerEpoch.toLocaleString()} />
             <EstimateRow label="Total iters" value={totalIters.toLocaleString()} />
             <EstimateRow label="Est. time" value="—" color="var(--amber, #f59e0b)" />
-            <EstimateRow label="VRAM est." value={`${vramEst.toFixed(1)} GB`} color={isOom ? "var(--red, #ef4444)" : undefined} />
+            <EstimateRow label="VRAM est." value={`${vramBreakdown.totalGb.toFixed(1)} GB`} color={isOom ? "var(--red, #ef4444)" : undefined} />
+            {vramBreakdown.totalGb > 0 && (
+              <div style={{ paddingLeft: 14, display: "flex", flexDirection: "column", gap: 2 }}>
+                <EstimateRow label="  Model weights" value={`${vramBreakdown.weightsGb.toFixed(2)} GB`} />
+                <EstimateRow label="  Gradients" value={`${vramBreakdown.gradsGb.toFixed(2)} GB`} />
+                <EstimateRow label="  Adam optimizer" value={`${vramBreakdown.adamGb.toFixed(2)} GB`} />
+                <EstimateRow label="  Activations" value={`${vramBreakdown.activationsGb.toFixed(2)} GB`} />
+                <EstimateRow label="  Input batch" value={`${vramBreakdown.inputGb.toFixed(2)} GB`} />
+                <EstimateRow label="  CUDA overhead" value={`${vramBreakdown.overheadGb.toFixed(2)} GB`} />
+              </div>
+            )}
             {isOom && (
               <div style={{ padding: "6px 8px", background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.4)", borderRadius: "var(--radius-sm)", fontSize: 10, color: "#f87171", lineHeight: 1.4 }}>
                 ⚠ Estimated VRAM exceeds GPU capacity — may OOM
@@ -413,6 +476,11 @@ export function ScreenTrainingSetup() {
             {datasetErrors.length > 0 && (
               <div style={{ padding: "6px 8px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: "var(--radius-sm)", fontSize: 10, color: "#f87171", lineHeight: 1.5 }}>
                 {datasetErrors.map((err, i) => <div key={i}>{err}</div>)}
+              </div>
+            )}
+            {launchError && (
+              <div style={{ padding: "6px 8px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: "var(--radius-sm)", fontSize: 10, color: "#f87171", lineHeight: 1.5 }}>
+                {launchError}
               </div>
             )}
 

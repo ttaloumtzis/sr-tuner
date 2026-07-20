@@ -16,6 +16,7 @@ const mockGetInstance = vi.fn().mockResolvedValue({ name: "my-model", path: "/mo
 const mockGetInstanceVersions = vi.fn().mockResolvedValue([]);
 const mockValidateDatasetPath = vi.fn().mockResolvedValue({ valid: true, problems: [] });
 const mockStartTraining = vi.fn().mockResolvedValue({ job_id: "test-job", status: "accepted" });
+const mockGetEnv = vi.fn().mockResolvedValue({ vram_total_mb: 24576 });
 
 vi.mock("../../../lib/api", () => ({
   listInstances: (...args: unknown[]) => mockListInstances(...args),
@@ -24,6 +25,7 @@ vi.mock("../../../lib/api", () => ({
   getInstanceVersions: (...args: unknown[]) => mockGetInstanceVersions(...args),
   validateDatasetPath: (...args: unknown[]) => mockValidateDatasetPath(...args),
   startTraining: (...args: unknown[]) => mockStartTraining(...args),
+  getEnv: (...args: unknown[]) => mockGetEnv(...args),
 }));
 
 describe("Training Setup (26.9)", () => {

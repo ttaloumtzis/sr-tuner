@@ -3,13 +3,12 @@ import logging
 import shutil
 import subprocess
 import threading
-import time
 
 from sr_engine.api.event_manager import SSEEventManager
 
 log = logging.getLogger(__name__)
 
-_POLL_INTERVAL = 3.0
+_POLL_INTERVAL = 0.5
 
 
 def _get_gpu_stats() -> tuple[float | None, float | None, float | None, float | None]:
@@ -35,7 +34,7 @@ def _get_gpu_stats() -> tuple[float | None, float | None, float | None, float | 
             )
             if result.returncode == 0 and result.stdout.strip():
                 line = result.stdout.strip().splitlines()[0]
-                parts = [p.strip() for p in line.split(", ")]
+                parts = [p.strip().replace(",", ".") for p in line.split(", ")]
                 if len(parts) >= 4:
                     util = float(parts[0])
                     vram_used = float(parts[1]) / 1024.0

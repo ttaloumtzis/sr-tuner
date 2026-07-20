@@ -1,6 +1,7 @@
 """Tests for data/video_extract.py — frame extraction from videos."""
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -36,5 +37,30 @@ class TestExtractFrames:
             out_dir=out_dir,
         )
         assert len(paths) > 0
+        for p in paths:
+            assert p.is_file()
+
+    def test_broken_pipe_during_extraction_returns_partial(self, sample_video, tmp_path):
+        """extract_frames should return partial results when decoder pipe breaks."""
+        import cv2
+
+        original_read = cv2.VideoCapture.read
+        call_count = [0]
+
+        def _breaking_read(self):
+            call_count[0] += 1
+            if call_count[0] >= 3:
+                raise BrokenPipeError("Simulated FFmpeg pipe break")
+            return original_read(self)
+
+        out_dir = tmp_path / "frames"
+        with patch.object(cv2.VideoCapture, "read", _breaking_read):
+            paths = extract_frames(
+                video_path=sample_video,
+                out_dir=out_dir,
+            )
+
+        # Should have partial results (at least 1, up to 2 frames)
+        assert len(paths) >= 1
         for p in paths:
             assert p.is_file()

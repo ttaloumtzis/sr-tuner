@@ -27,6 +27,7 @@ async def train_start(params: TrainParams, ws: Workspace = Depends(get_workspace
             "config": params.config,
             "resume": params.resume,
             "overrides": overrides,
+        "write_metrics_file": params.write_metrics_file,
         }, ws, cfg, tasks, events),
         daemon=True,
     )

@@ -1,5 +1,7 @@
 """Tests for data/degrade.py — batch degradation pipeline."""
 
+from unittest.mock import patch
+
 import numpy as np
 
 from sr_engine.data.degrade import (
@@ -44,6 +46,45 @@ class TestBatchDegrade:
             config={},
         )
         assert result == []
+
+    def test_worker_crash_returns_partial_results(self, tmp_path):
+        """When a worker crashes, batch_degrade should return partial results."""
+        import concurrent.futures
+        import cv2
+        import numpy as np
+
+        lr_dir = tmp_path / "lr"
+
+        # Create valid source images so _process_single_frame succeeds for them
+        hr_paths = []
+        for i in range(3):
+            path = tmp_path / f"frame_{i:04d}.png"
+            cv2.imwrite(str(path), np.ones((64, 64, 3), dtype=np.uint8) * 128)
+            hr_paths.append(path)
+
+        # Mock ProcessPoolExecutor so the map() results iterator raises
+        # BrokenPipeError after yielding 2 successful results.
+        def _mock_map(self, worker, items):
+            for i, item in enumerate(items):
+                if i == 2:
+                    raise BrokenPipeError("Mock worker pipe broken")
+                yield worker(item)
+
+        with patch.object(
+            concurrent.futures.ProcessPoolExecutor, "map", _mock_map,
+        ):
+            result = batch_degrade(
+                hr_paths=hr_paths,
+                lr_dir=lr_dir,
+                scale=4,
+                config={},
+            )
+
+        # Should have partial results (first 2 frames)
+        assert len(result) == 2
+        for hr, lr in result:
+            assert hr.exists()
+            assert lr.exists()
 
 
 class TestDegradeImageEnabled:

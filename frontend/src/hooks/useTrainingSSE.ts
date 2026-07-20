@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useTrainingStore, type HardwareData } from "../store/trainingStore";
+import { useUiStore } from "../store/uiStore";
 import { getBaseUrl } from "../lib/api";
 
 const SPEED_WINDOW_MS = 5000;
@@ -124,12 +125,12 @@ export function useTrainingSSE() {
             useTrainingStore.getState().updateFromValidate(vepoch, psnr, ssim, fullPsnr, fullSsim);
             const frames = event.frames as Record<string, string> | null | undefined;
             if (frames && frames.lrPath && frames.srPath) {
-              useTrainingStore.getState().setValidationFrames({
+              useTrainingStore.getState().pushValidationFrames(vepoch, {
                 lrPath: frames.lrPath,
                 srPath: frames.srPath,
                 gtPath: frames.gtPath ?? null,
                 diffPath: frames.diffPath ?? null,
-              });
+              }, psnr, ssim);
             }
             break;
           }
@@ -153,6 +154,18 @@ export function useTrainingSSE() {
             useTrainingStore.getState().setValidationRunning(false);
             break;
           }
+          case "error": {
+            const code = (event.code as string) ?? "UNKNOWN_ERROR";
+            const msg = (event.message as string) ?? "An unknown training error occurred";
+            useTrainingStore.getState().setError(code, msg);
+            useUiStore.getState().setLastApiError({
+              type: "error",
+              code,
+              message: msg,
+              context: event.context as Record<string, unknown> | undefined,
+            });
+            break;
+          }
         }
       } catch {
         // ignore malformed events
@@ -161,7 +174,8 @@ export function useTrainingSSE() {
 
     es.onerror = () => {
       const state = useTrainingStore.getState();
-      if (state.status === "done") return;
+      if (state.status === "done" || state.status === "failed") return;
+      useTrainingStore.getState().setStatus("disconnected");
     };
 
     return () => {

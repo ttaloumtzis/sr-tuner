@@ -4,6 +4,7 @@ from .degrade import batch_degrade
 from .video_extract import extract_frames
 import json
 from pathlib import Path
+import shutil
 from typing import Optional
 
 from sr_engine.utils.logging import get_logger
@@ -29,71 +30,86 @@ def build_from_video(
     out_dir_hr = out_dir / "HR"
     out_dir_lr = out_dir / "LR"
 
-    # 1. Extract the video frames to HR subfolder
-    hr_paths = extract_frames(
-        video_path=video_path,
-        out_dir=out_dir_hr,
-        frame_rate=config.get("frame_rate"),
-        start_time=config.get("start_time", 0.0),
-        duration=config.get("duration"),
-        reporter=reporter,
-    )
-
-    # Fast fallback if no frames were extracted
-    if not hr_paths:
-        raise ValueError(f"No frames were extracted from video: {video_path}")
-
-    # 2. Degradation pipeline to generate the LR pairs.
-    # NOTE: batch_degrade returns (hr, lr) pairs matched by identity, not two
-    # separately-sorted lists — do NOT zip(hr_paths, lr_paths) here. If any
-    # frame fails to decode, a positional zip would silently misalign every
-    # pair after the dropped one.
-    hr_lr_pairs = batch_degrade(
-        hr_paths=hr_paths,
-        lr_dir=out_dir_lr,
-        scale=config.get("scale", 4),
-        config=config,
-        reporter=reporter,
-    )
-
-    if len(hr_lr_pairs) < len(hr_paths):
-        skipped = len(hr_paths) - len(hr_lr_pairs)
-        log.warning("%d frame(s) failed to degrade and were skipped.", skipped)
-
-    # Build the temporary manifest metadata block first so the validator
-    # can read the configured scale factor dynamically.
-    manifest_data = {
-        "config": {
-            "scale": config.get("scale", 4),
-            "frame_rate": config.get("frame_rate"),
-            "video_source": str(video_path.name),
-        },
-        "pairs": [
-            {
-                "hr": str(hr.relative_to(out_dir)),
-                "lr": str(lr.relative_to(out_dir)),
-            }
-            for hr, lr in hr_lr_pairs
-        ],
-    }
-
-    # Write the manifest file BEFORE validating so the validator can audit it
-    manifest_path = out_dir / "manifest.json"
-    with open(manifest_path, "w", encoding="utf-8") as f:
-        json.dump(manifest_data, f, indent=4, ensure_ascii=False)
-
-    # 3. Comprehensive Deep Integrity Verification
-    report = validate(out_dir, reporter=reporter)
-    if not report.ok:
-        # If verification fails, clean up the bad manifest to keep things unstable/invalidated
-        if manifest_path.exists():
-            manifest_path.unlink()
-
-        # Structure problems list into a clean message
-        error_msg = "\n- ".join(report.problems)
-        raise RuntimeError(
-            f"Dataset validation failed for '{out_dir}'! Found the following problems:\n- {error_msg}"
+    try:
+        # 1. Extract the video frames to HR subfolder
+        hr_paths = extract_frames(
+            video_path=video_path,
+            out_dir=out_dir_hr,
+            frame_rate=config.get("frame_rate"),
+            start_time=config.get("start_time", 0.0),
+            duration=config.get("duration"),
+            reporter=reporter,
         )
+
+        # Fast fallback if no frames were extracted
+        if not hr_paths:
+            raise ValueError(f"No frames were extracted from video: {video_path}")
+
+        # 2. Degradation pipeline to generate the LR pairs.
+        # NOTE: batch_degrade returns (hr, lr) pairs matched by identity, not two
+        # separately-sorted lists — do NOT zip(hr_paths, lr_paths) here. If any
+        # frame fails to decode, a positional zip would silently misalign every
+        # pair after the dropped one.
+        hr_lr_pairs = batch_degrade(
+            hr_paths=hr_paths,
+            lr_dir=out_dir_lr,
+            scale=config.get("scale", 4),
+            config=config,
+            reporter=reporter,
+        )
+
+        if len(hr_lr_pairs) < len(hr_paths):
+            skipped = len(hr_paths) - len(hr_lr_pairs)
+            loss_ratio = skipped / len(hr_paths)
+            if loss_ratio > 0.5:
+                log.warning(
+                    "%.0f%% of frames were lost during degradation. "
+                    "Dataset may be incomplete.", loss_ratio * 100,
+                )
+            else:
+                log.warning("%d frame(s) failed to degrade and were skipped.", skipped)
+
+        # Build the temporary manifest metadata block first so the validator
+        # can read the configured scale factor dynamically.
+        manifest_data = {
+            "config": {
+                "scale": config.get("scale", 4),
+                "frame_rate": config.get("frame_rate"),
+                "video_source": str(video_path.name),
+            },
+            "pairs": [
+                {
+                    "hr": str(hr.relative_to(out_dir)),
+                    "lr": str(lr.relative_to(out_dir)),
+                }
+                for hr, lr in hr_lr_pairs
+            ],
+        }
+
+        # Write the manifest file BEFORE validating so the validator can audit it
+        manifest_path = out_dir / "manifest.json"
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(manifest_data, f, indent=4, ensure_ascii=False)
+
+        # 3. Comprehensive Deep Integrity Verification
+        report = validate(out_dir, reporter=reporter)
+        if not report.ok:
+            # If verification fails, clean up the bad manifest to keep things unstable/invalidated
+            if manifest_path.exists():
+                manifest_path.unlink()
+
+            # Structure problems list into a clean message
+            error_msg = "\n- ".join(report.problems)
+            raise RuntimeError(
+                f"Dataset validation failed for '{out_dir}'! Found the following problems:\n- {error_msg}"
+            )
+
+    except Exception:
+        # On any failure, clean up the partial output directory so retries
+        # don't encounter stale files from the aborted build.
+        if out_dir.exists():
+            shutil.rmtree(out_dir)
+        raise
 
     log.info("Successfully verified and built a stable dataset with %d pairs at: %s", report.num_pairs, out_dir)
     return out_dir

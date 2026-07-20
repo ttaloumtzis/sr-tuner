@@ -106,6 +106,7 @@ class TrainParams(BaseModel):
     metrics_frequency: int | None = None
     perceptual_weight: float | None = None
     warmup_steps: int | None = None
+    write_metrics_file: bool = True
 
     def to_overrides(self) -> dict:
         d: dict[str, Any] = {}

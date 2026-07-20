@@ -184,6 +184,25 @@ The build process:
 3. Embeds the frontend dist into the binary
 4. Packages into platform-specific bundle format
 
+### Building on Windows
+
+**Prerequisites:**
+
+- [Microsoft Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) or Visual Studio with "Desktop development with C++" workload
+- [WebView2](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) — ships with Windows 10 (version 1803+) and Windows 11
+- Rust MSVC toolchain (installed automatically by `rustup` on Windows)
+- Node.js >= 18
+
+**Build command** (same as other platforms):
+
+```powershell
+npx tauri build
+```
+
+**Output:** `src-tauri/target/release/bundle/msi/SR Tuner_<version>_x64_en-US.msi` and/or an `.exe` installer.
+
+**Note:** The Rust code already handles Windows-specific process management — the Tauri shell uses `taskkill /F /T /PID` to clean up the Python backend server, and `explorer` to open directories in File Explorer.
+
 ---
 
 ## Python Server Management
@@ -212,7 +231,9 @@ The server process is killed when:
 - The `stop_python_server` command is explicitly called
 - The Tauri process exits
 
-On Linux, the child process is automatically killed when the parent Tauri process exits (via process group signal).
+The Rust code handles child process cleanup for all platforms:
+- **Linux/macOS:** Uses `libc::kill` with process group signals (SIGTERM → SIGKILL after 5s grace period)
+- **Windows:** Uses `taskkill /F /T /PID` to forcefully terminate the process tree
 
 ---
 

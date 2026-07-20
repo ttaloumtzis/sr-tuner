@@ -5,6 +5,7 @@ export type TrainingStatus =
   | "running"
   | "paused"
   | "done"
+  | "failed"
   | "disconnected";
 
 export interface RunHistory {
@@ -21,6 +22,19 @@ export interface ValidationFrames {
   gtPath: string | null;
   diffPath: string | null;
 }
+
+// A single epoch's worth of validation frames, as saved by the trainer into
+// its own subfolder under validation/epoch_XXX/. Kept around (capped) so the
+// UI can scrub back through the run's progression instead of only ever
+// showing the latest epoch.
+export interface ValidationHistoryEntry extends ValidationFrames {
+  epoch: number;
+  psnr: number | null;
+  ssim: number | null;
+  receivedAt: number;
+}
+
+const MAX_VALIDATION_HISTORY = 300;
 
 export interface HardwareData {
   cpu_percent: number | null;
@@ -60,14 +74,21 @@ interface TrainingState {
   totalLossHistory: number[];
   psnrHistory: number[];
   ssimHistory: number[];
+  fullPsnrHistory: number[];
+  fullSsimHistory: number[];
   etaSec: number | null;
   finalEpoch: number | null;
   validationFrames: ValidationFrames | null;
+  validationHistory: ValidationHistoryEntry[];
   validationRunning: boolean;
+  errorCode: string | null;
+  errorMessage: string | null;
 
   setStatus: (status: TrainingStatus) => void;
+  setError: (code: string, message: string) => void;
   setActiveRun: (runId: string | null) => void;
   setValidationFrames: (frames: ValidationFrames | null) => void;
+  pushValidationFrames: (epoch: number, frames: ValidationFrames, psnr?: number | null, ssim?: number | null) => void;
   setValidationRunning: (v: boolean) => void;
   updateFromStep: (epoch: number, batch: number, totalBatch: number, speed: number) => void;
   setLiveLoss: (avg: number | null) => void;
@@ -106,14 +127,37 @@ export const useTrainingStore = create<TrainingState>((set) => ({
   totalLossHistory: [],
   psnrHistory: [],
   ssimHistory: [],
+  fullPsnrHistory: [],
+  fullSsimHistory: [],
   etaSec: null,
   finalEpoch: null,
   validationFrames: null,
+  validationHistory: [],
   validationRunning: false,
+  errorCode: null,
+  errorMessage: null,
 
   setStatus: (status) => set({ status }),
+  setError: (code, message) => set({ errorCode: code, errorMessage: message, status: "failed" }),
   setActiveRun: (runId) => set({ activeTrainingRunId: runId }),
   setValidationFrames: (frames) => set({ validationFrames: frames }),
+
+  pushValidationFrames: (epoch, frames, psnr = null, ssim = null) =>
+    set((s) => {
+      const entry: ValidationHistoryEntry = { epoch, ...frames, psnr, ssim, receivedAt: Date.now() };
+      // Each epoch trains into its own validation/epoch_XXX/ subfolder, so a
+      // given epoch should only ever appear once — but re-runs of the same
+      // epoch (e.g. resumed training) replace the earlier entry in place.
+      const idx = s.validationHistory.findIndex((e) => e.epoch === epoch);
+      const nextHistory = idx >= 0
+        ? [...s.validationHistory.slice(0, idx), entry, ...s.validationHistory.slice(idx + 1)]
+        : [...s.validationHistory, entry].sort((a, b) => a.epoch - b.epoch);
+      return {
+        validationFrames: frames,
+        validationHistory: nextHistory.slice(-MAX_VALIDATION_HISTORY),
+      };
+    }),
+
   setValidationRunning: (v) => set({ validationRunning: v }),
 
   updateFromStep: (epoch, batch, totalBatch, speed) =>
@@ -138,8 +182,12 @@ export const useTrainingStore = create<TrainingState>((set) => ({
     set((s) => {
       const psnrH = [...s.psnrHistory, psnr].slice(-500);
       const ssimH = [...s.ssimHistory, ssim].slice(-500);
+      const fullPsnrH = fullPsnr != null
+        ? [...s.fullPsnrHistory, fullPsnr].slice(-500) : s.fullPsnrHistory;
+      const fullSsimH = fullSsim != null
+        ? [...s.fullSsimHistory, fullSsim].slice(-500) : s.fullSsimHistory;
       const best = s.bestPsnr !== null ? Math.max(s.bestPsnr, psnr) : psnr;
-      return { epoch, psnr, ssim, fullPsnr: fullPsnr ?? s.fullPsnr, fullSsim: fullSsim ?? s.fullSsim, bestPsnr: best, psnrHistory: psnrH, ssimHistory: ssimH };
+      return { epoch, psnr, ssim, fullPsnr: fullPsnr ?? s.fullPsnr, fullSsim: fullSsim ?? s.fullSsim, bestPsnr: best, psnrHistory: psnrH, ssimHistory: ssimH, fullPsnrHistory: fullPsnrH, fullSsimHistory: fullSsimH };
     }),
 
   updateFromHardware: (data) =>
@@ -183,9 +231,14 @@ export const useTrainingStore = create<TrainingState>((set) => ({
     totalLossHistory: [],
     psnrHistory: [],
     ssimHistory: [],
+    fullPsnrHistory: [],
+    fullSsimHistory: [],
     etaSec: null,
     finalEpoch: null,
     validationFrames: null,
+    validationHistory: [],
     validationRunning: false,
+    errorCode: null,
+    errorMessage: null,
   }),
 }));

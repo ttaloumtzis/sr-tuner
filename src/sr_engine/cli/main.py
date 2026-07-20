@@ -1,5 +1,6 @@
 """sr-engine CLI entry point."""
 
+import signal
 from pathlib import Path
 import click
 
@@ -21,6 +22,11 @@ from .workspace_commands import workspace
 @click.pass_context
 def cli(ctx, workspace: Path | None) -> None:
     """sr-engine: super-resolution training and inference toolkit."""
+    # Ignore SIGPIPE so piping output (e.g. to `head`) doesn't
+    # raise BrokenPipeError / errno 32.
+    if hasattr(signal, "SIGPIPE"):
+        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+
     ctx.ensure_object(dict)
     if workspace:
         ctx.obj["workspace"] = Workspace(workspace)

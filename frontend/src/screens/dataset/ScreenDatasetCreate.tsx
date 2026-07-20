@@ -6,6 +6,7 @@ import { useDatasetStore, type DatasetMode, type DownscaleKernel } from "../../s
 import { useProjectStore } from "../../store/projectStore";
 import { DegradationPanel } from "./DegradationPanel";
 import { validateNamingPattern, previewFilename } from "../../lib/namingPattern";
+import { basename, join, parentFromProjFile } from "../../lib/path";
 
 
 function TypeCard({ id: _id, label, description, active, onClick }: {
@@ -88,8 +89,8 @@ function PreExistingMode() {
     (async () => {
       try {
         const { invoke } = await import("@tauri-apps/api/core");
-        const hrFiles: string[] = await invoke("list_image_files", { path: s.rootPath + "/HR" });
-        const lrFiles: string[] = await invoke("list_image_files", { path: s.rootPath + "/LR" });
+        const hrFiles: string[] = await invoke("list_image_files", { path: join(s.rootPath, "HR") });
+        const lrFiles: string[] = await invoke("list_image_files", { path: join(s.rootPath, "LR") });
         setDetectedHr(hrFiles.length);
         setDetectedLr(lrFiles.length);
       } catch { setDetectedHr(0); setDetectedLr(0); }
@@ -99,9 +100,9 @@ function PreExistingMode() {
   const handleImport = async () => {
     if (!s.rootPath || !project) return;
     const { invoke } = await import("@tauri-apps/api/core");
-    const projectDir = project.filePath.replace(/\/[^/]+\.srproj$/, "");
-    const name = s.rootPath.split("/").pop() || "imported";
-    const dst = projectDir + "/datasets/" + name;
+    const projectDir = parentFromProjFile(project.filePath);
+    const name = basename(s.rootPath) || "imported";
+    const dst = join(projectDir, "datasets", name);
     await invoke("copy_directory", { src: s.rootPath, dst });
   };
 
@@ -206,11 +207,11 @@ function VideoExtractMode() {
       const patternErr = validateNamingPattern(s.namingPattern);
       if (patternErr) { s.setJobError(patternErr); s.setJobStatus("error"); return; }
       if (!project) { s.setJobError("No project loaded"); s.setJobStatus("error"); return; }
-      const projectDir = project.filePath.replace(/\/[^/]+\.srproj$/, "");
+      const projectDir = parentFromProjFile(project.filePath);
       const firstVideo = s.videoFiles[0]?.path;
       if (!firstVideo) { s.setJobError("No video file selected"); s.setJobStatus("error"); return; }
-      const videoName = firstVideo.split("/").pop()?.replace(/\.[^/.]+$/, "") || "extracted";
-      const out = projectDir + "/datasets/" + videoName;
+      const videoName = basename(firstVideo).replace(/\.[^/.]+$/, "") || "extracted";
+      const out = join(projectDir, "datasets", videoName);
       const degParts: string[] = [];
       if (s.degBlur) degParts.push("blur");
       if (s.degNoise) degParts.push("noise");
@@ -294,19 +295,26 @@ function VideoExtractMode() {
       </div>
 
       {s.videoFiles.length > 0 && (
-        <div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", overflow: "hidden" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 80px", padding: "5px 10px", background: "var(--bg2)", borderBottom: "1px solid var(--border)" }}>
-            {["Filename", "Status"].map((h) => (
-              <span key={h} style={{ fontSize: 9, color: "var(--dim)", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.8 }}>{h}</span>
+          <div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", overflow: "hidden" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 80px 30px", padding: "5px 10px", background: "var(--bg2)", borderBottom: "1px solid var(--border)" }}>
+              {["Filename", "Status"].map((h) => (
+                <span key={h} style={{ fontSize: 9, color: "var(--dim)", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.8 }}>{h}</span>
+              ))}
+              <span />
+            </div>
+            {s.videoFiles.map((f, i) => (
+              <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 80px 30px", padding: "6px 10px", borderBottom: i < s.videoFiles.length - 1 ? "1px solid var(--border)" : undefined, alignItems: "center" }}>
+                <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
+                <span style={{ fontSize: 10, fontWeight: 600, color: f.status === "done" ? "var(--green)" : f.status === "extracting" ? "var(--amber)" : "var(--dim)", background: f.status === "done" ? "var(--greenDim)" : f.status === "extracting" ? "color-mix(in srgb, var(--amber) 15%, transparent)" : "var(--bg3)", border: `1px solid ${f.status === "done" ? "var(--green)" : f.status === "extracting" ? "var(--amber)" : "var(--border)"}`, borderRadius: 8, padding: "2px 7px", display: "inline-block" }}>{f.status}</span>
+                <button onClick={() => s.removeVideoFile(f.path)} title="Remove"
+                  style={{ background: "none", border: "none", color: "var(--muted)", cursor: "pointer", fontSize: 14, lineHeight: 1, padding: 2, opacity: 0.4, transition: "var(--transition-fast)" }}
+                  onMouseEnter={(e) => { (e.target as HTMLButtonElement).style.opacity = "1"; }}
+                  onMouseLeave={(e) => { (e.target as HTMLButtonElement).style.opacity = "0.4"; }}>
+                  ✕
+                </button>
+              </div>
             ))}
           </div>
-          {s.videoFiles.map((f, i) => (
-            <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 80px", padding: "6px 10px", borderBottom: i < s.videoFiles.length - 1 ? "1px solid var(--border)" : undefined, alignItems: "center" }}>
-              <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
-              <span style={{ fontSize: 10, fontWeight: 600, color: f.status === "done" ? "var(--green)" : f.status === "extracting" ? "var(--amber)" : "var(--dim)", background: f.status === "done" ? "var(--greenDim)" : f.status === "extracting" ? "color-mix(in srgb, var(--amber) 15%, transparent)" : "var(--bg3)", border: `1px solid ${f.status === "done" ? "var(--green)" : f.status === "extracting" ? "var(--amber)" : "var(--border)"}`, borderRadius: 8, padding: "2px 7px", display: "inline-block" }}>{f.status}</span>
-            </div>
-          ))}
-        </div>
       )}
 
       <ScaleNamingBar />

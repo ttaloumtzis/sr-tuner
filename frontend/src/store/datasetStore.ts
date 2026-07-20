@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { basename } from "../lib/path";
 
 export type DatasetSubTab = "create" | "browse" | "merge";
 export type DatasetMode = "image_folder" | "video_extract" | "on_the_fly";
@@ -142,6 +143,7 @@ interface DatasetState {
 
   addVideoFiles: (paths: string[]) => void;
   clearVideoFiles: () => void;
+  removeVideoFile: (path: string) => void;
   setExtractionProgress: (p: ExtractionProgress | null) => void;
 
   setMergeOutputPath: (p: string) => void;
@@ -287,11 +289,13 @@ export const useDatasetStore = create<DatasetState>((set) => ({
       return {
         videoFiles: [
           ...s.videoFiles,
-          ...toAdd.map((p) => ({ name: p.split("/").pop() ?? p, path: p, status: "pending" as const })),
+          ...toAdd.map((p) => ({ name: basename(p) ?? p, path: p, status: "pending" as const })),
         ],
       };
     }),
   clearVideoFiles: () => set({ videoFiles: [] }),
+  removeVideoFile: (path: string) =>
+    set((s) => ({ videoFiles: s.videoFiles.filter((f) => f.path !== path) })),
   setExtractionProgress: (extractionProgress) => set({ extractionProgress }),
 
   setMergeOutputPath: (mergeOutputPath) => set({ mergeOutputPath }),

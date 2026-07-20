@@ -6,6 +6,7 @@ import { Panel } from "../../components/ui/Panel";
 import { useProjectStore } from "../../store/projectStore";
 import { useDatasetStore } from "../../store/datasetStore";
 import { scanDatasets, listDatasetPairs, type ScannedDataset } from "../../lib/scanDatasets";
+import { join, parentFromProjFile } from "../../lib/path";
 
 function DatasetListItem({ ds, active, onClick }: { ds: ScannedDataset; active: boolean; onClick: () => void }) {
   const [hovered, setHovered] = useState(false);
@@ -66,8 +67,8 @@ export function ScreenBrowseDatasets() {
   const [showBlackFrames, setShowBlackFrames] = useState(false);
   const prevJobStatusRef = useRef(store.jobStatus);
 
-  const projectDir = project ? project.filePath.replace(/\/[^/]+\.srproj$/, "") : "";
-  const datasetsDir = projectDir ? projectDir + "/datasets" : "";
+  const projectDir = project ? parentFromProjFile(project.filePath) : "";
+  const datasetsDir = projectDir ? join(projectDir, "datasets") : "";
 
   const healthReport = store.healthReport as Record<string, unknown> | null;
   const blackFrames = (healthReport?.black_frames as string[]) ?? [];

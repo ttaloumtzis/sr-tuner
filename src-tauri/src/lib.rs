@@ -3,23 +3,84 @@ use std::sync::Mutex;
 use std::process::{Child, Command, Stdio};
 use tauri::Manager;
 
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+
 // ── Managed state ─────────────────────────────────────────────────────────
 
 struct ServerState(Mutex<Option<Child>>);
+
+// ── Process group kill helper ────────────────────────────────────────────
+
+fn kill_process_group(pid: u32) {
+    #[cfg(unix)]
+    {
+        // Send SIGTERM to the entire process group (-pid).
+        // setpgid in start_python_server ensures uv + uvicorn are both in this group.
+        unsafe { libc::kill(-(pid as i32), libc::SIGTERM); }
+
+        // Wait up to 5 seconds for graceful shutdown, but break early
+        // as soon as the process group is empty (checked via kill(2) with sig=0).
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            // kill with sig=0 only checks existence — 0 means alive, ESRCH means gone
+            if unsafe { libc::kill(-(pid as i32), 0) } != 0 {
+                return; // process group is empty, no need for SIGKILL
+            }
+        }
+
+        // Force-kill the entire group if still alive after the grace period
+        let _ = unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
+    }
+
+    #[cfg(windows)]
+    {
+        let _ = Command::new("taskkill")
+            .args(["/F", "/T", "/PID", &pid.to_string()])
+            .spawn();
+    }
+}
 
 // ── Python server lifecycle ───────────────────────────────────────────────
 
 #[tauri::command]
 fn start_python_server(app: tauri::AppHandle) -> Result<(), String> {
-    let child = Command::new("uv")
-        .args(["run", "uvicorn", "sr_engine.api.app:app", "--host", "127.0.0.1", "--port", "8765", "--log-level", "info"])
+    let state = app.state::<ServerState>();
+
+    // Kill any previously-spawned instance to prevent orphaned processes
+    // from React Strict Mode double-mount, HMR, or user re-requesting.
+    if let Ok(mut guard) = state.0.lock() {
+        if let Some(mut old) = guard.take() {
+            kill_process_group(old.id());
+            let _ = old.wait();
+        }
+    }
+
+    let mut cmd = Command::new("uv");
+    cmd.args([
+            "run", "uvicorn", "sr_engine.api.app:app",
+            "--host", "127.0.0.1", "--port", "8765", "--log-level", "info",
+        ])
         .stdout(Stdio::null())
-        .stderr(Stdio::inherit())
-        .spawn()
+        .stderr(Stdio::inherit());
+
+    #[cfg(unix)]
+    unsafe {
+        cmd.pre_exec(|| {
+            // Isolate this process into its own process group so we can
+            // kill *every* descendant (uv → uvicorn) in one shot later.
+            libc::setpgid(0, 0);
+            Ok(())
+        });
+    }
+
+    let child = cmd.spawn()
         .map_err(|e| format!("Failed to start Python server: {e}"))?;
 
-    let state = app.state::<ServerState>();
-    *state.0.lock().map_err(|e| format!("Mutex poisoned: {e}"))? = Some(child);
+    if let Ok(mut guard) = state.0.lock() {
+        *guard = Some(child);
+    }
     Ok(())
 }
 
@@ -28,7 +89,7 @@ fn stop_python_server(app: tauri::AppHandle) -> Result<(), String> {
     let state = app.state::<ServerState>();
     let Ok(mut guard) = state.0.lock() else { return Ok(()) };
     if let Some(mut child) = guard.take() {
-        child.kill().ok();
+        kill_process_group(child.id());
         child.wait().ok();
     }
     Ok(())
@@ -167,13 +228,30 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .manage(ServerState(Mutex::new(None)))
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { .. } = event {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // Keep the window alive so JS cleanup (project save, training
+                // cancel) can complete asynchronously.
+                api.prevent_close();
+
+                // Kill the server in a background thread so the Tauri event
+                // loop stays responsive for JS cleanup.
                 let state = window.state::<ServerState>();
-                let Ok(mut guard) = state.0.lock() else { return };
-                if let Some(mut child) = guard.take() {
-                    child.kill().ok();
-                    child.wait().ok();
+                if let Ok(mut guard) = state.0.lock() {
+                    if let Some(mut child) = guard.take() {
+                        std::thread::spawn(move || {
+                            kill_process_group(child.id());
+                            child.wait().ok();
+                        });
+                    }
                 }
+
+                // Give JS (useSaveTrigger etc.) 10 seconds to finish its own
+                // cleanup and call destroy(). If JS never responds, force-close.
+                let win = window.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(10));
+                    let _ = win.destroy();
+                });
             }
         })
         .invoke_handler(tauri::generate_handler![

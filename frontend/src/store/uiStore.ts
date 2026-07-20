@@ -18,6 +18,8 @@ interface UiState {
   expandedPanels: Record<string, boolean>;
   toasts: { id: string; message: string; type: "info" | "success" | "error" }[];
   comparisonRunIds: string[];
+  workspaceReady: boolean;
+  workspaceError: string | null;
   setActiveTab: (tab: TabId) => void;
   setDisplayedRunId: (id: string | null) => void;
   setServerConnected: (connected: boolean) => void;
@@ -27,6 +29,8 @@ interface UiState {
   addToast: (message: string, type?: "info" | "success" | "error") => void;
   removeToast: (id: string) => void;
   setComparisonRunIds: (ids: string[]) => void;
+  setWorkspaceReady: (ready: boolean) => void;
+  setWorkspaceError: (error: string | null) => void;
 }
 
 export const useUiStore = create<UiState>((set) => ({
@@ -37,6 +41,8 @@ export const useUiStore = create<UiState>((set) => ({
   expandedPanels: {},
   toasts: [],
   comparisonRunIds: [],
+  workspaceReady: false,
+  workspaceError: null,
   setActiveTab: (tab) => set({ activeTab: tab }),
   setDisplayedRunId: (id) => set({ displayedRunId: id }),
   setServerConnected: (connected) => set({ isServerConnected: connected }),
@@ -55,4 +61,6 @@ export const useUiStore = create<UiState>((set) => ({
       toasts: s.toasts.filter((t) => t.id !== id),
     })),
   setComparisonRunIds: (ids) => set({ comparisonRunIds: ids }),
+  setWorkspaceReady: (ready) => set({ workspaceReady: ready }),
+  setWorkspaceError: (error) => set({ workspaceError: error }),
 }));

@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { DatasetManifest } from "./api-types";
+import { basename, join } from "./path";
 
 export interface ScannedDataset {
   name: string;
@@ -19,12 +20,12 @@ export async function scanDatasets(parentDir: string): Promise<ScannedDataset[]>
   for (const entry of entries) {
     if (!entry.endsWith("/")) continue;
     const name = entry.replace(/\/$/, "");
-    const fullPath = parentDir.replace(/\/$/, "") + "/" + name;
+    const fullPath = join(parentDir, name);
 
     const [hasHr, hasLr, hasManifest] = await Promise.all([
-      invoke<boolean>("path_exists", { path: fullPath + "/HR" }),
-      invoke<boolean>("path_exists", { path: fullPath + "/LR" }),
-      invoke<boolean>("path_exists", { path: fullPath + "/manifest.json" }),
+      invoke<boolean>("path_exists", { path: join(fullPath, "HR") }),
+      invoke<boolean>("path_exists", { path: join(fullPath, "LR") }),
+      invoke<boolean>("path_exists", { path: join(fullPath, "manifest.json") }),
     ]);
 
     let scale = 4;
@@ -39,7 +40,7 @@ export async function scanDatasets(parentDir: string): Promise<ScannedDataset[]>
     }
 
     if (pairCount === 0 && hasHr) {
-      const hrFiles: string[] = await invoke("list_image_files", { path: fullPath + "/HR" });
+      const hrFiles: string[] = await invoke("list_image_files", { path: join(fullPath, "HR") });
       pairCount = hrFiles.length;
     }
 
@@ -52,7 +53,7 @@ export async function scanDatasets(parentDir: string): Promise<ScannedDataset[]>
 
 export async function readManifest(datasetPath: string): Promise<DatasetManifest | null> {
   try {
-    const raw = await invoke<string>("read_text_file", { path: datasetPath + "/manifest.json" });
+    const raw = await invoke<string>("read_text_file", { path: join(datasetPath, "manifest.json") });
     return JSON.parse(raw) as DatasetManifest;
   } catch {
     return null;
@@ -63,18 +64,18 @@ export async function listDatasetPairs(datasetPath: string): Promise<{ hr: strin
   const manifest = await readManifest(datasetPath);
   if (manifest && manifest.pairs.length > 0) {
     return manifest.pairs.map((p) => ({
-      hr: datasetPath + "/" + p.hr,
-      lr: datasetPath + "/" + p.lr,
+      hr: join(datasetPath, p.hr),
+      lr: join(datasetPath, p.lr),
     }));
   }
   const [hrFiles, lrFiles] = await Promise.all([
-    invoke<string[]>("list_image_files", { path: datasetPath + "/HR" }),
-    invoke<string[]>("list_image_files", { path: datasetPath + "/LR" }),
+    invoke<string[]>("list_image_files", { path: join(datasetPath, "HR") }),
+    invoke<string[]>("list_image_files", { path: join(datasetPath, "LR") }),
   ]);
   const count = Math.min(hrFiles.length, lrFiles.length);
   const pairs: { hr: string; lr: string }[] = [];
   const sortKey = (p: string) => {
-    const name = p.split("/").pop() ?? p;
+    const name = basename(p);
     return name.replace(/\D/g, "").padStart(10, "0") + name;
   };
   hrFiles.sort((a, b) => sortKey(a).localeCompare(sortKey(b)));

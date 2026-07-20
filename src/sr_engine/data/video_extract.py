@@ -1,11 +1,14 @@
 # video_extract.py
 """Video frame extraction — optimized single-stream decoding."""
 
+import logging
 from pathlib import Path
 from typing import Optional
 import cv2
 
 from sr_engine.utils.progress import ProgressReporter
+
+log = logging.getLogger(__name__)
 
 
 def extract_frames(
@@ -70,26 +73,33 @@ def extract_frames(
     reporter = reporter or ProgressReporter()
     reporter.start(total=total_to_process, desc="Extracting Frames")
 
-    while current_frame < end_frame:
-        if (current_frame - start_frame) % frame_step == 0:
-            # We want this frame: grab AND decode it
-            success, image = vidcap.read()
-            if not success:
-                break
+    try:
+        while current_frame < end_frame:
+            if (current_frame - start_frame) % frame_step == 0:
+                # We want this frame: grab AND decode it
+                success, image = vidcap.read()
+                if not success:
+                    break
 
-            filename = f"{str(saved_count).zfill(padding_length)}.png"
-            frame_path = out_dir / filename
-            cv2.imwrite(str(frame_path), image)
-            extracted_paths.append(frame_path)
-            saved_count += 1
-        else:
-            # We DON'T want this frame: grab it quickly, bypass heavy pixel decoding
-            success = vidcap.grab()
-            if not success:
-                break
+                filename = f"{str(saved_count).zfill(padding_length)}.png"
+                frame_path = out_dir / filename
+                cv2.imwrite(str(frame_path), image)
+                extracted_paths.append(frame_path)
+                saved_count += 1
+            else:
+                # We DON'T want this frame: grab it quickly, bypass heavy pixel decoding
+                success = vidcap.grab()
+                if not success:
+                    break
 
-        current_frame += 1
-        reporter.update(1)
+            current_frame += 1
+            reporter.update(1)
+    except BrokenPipeError:
+        log.warning(
+            "Video decoder pipe broken at frame %d/%d. "
+            "Returning %d extracted frames.",
+            current_frame, total_frames, saved_count,
+        )
 
     reporter.finish()
 

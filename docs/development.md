@@ -2,6 +2,8 @@
 
 ## Dev Environment Setup
 
+### Linux / macOS
+
 ```bash
 # Create venv with dev dependencies
 uv venv
@@ -11,6 +13,25 @@ uv sync --group dev
 rm -rf .venv uv.lock
 ./envs/build.sh --backend cpu
 uv sync --group dev
+
+# Activate
+source .venv/bin/activate
+```
+
+### Windows (PowerShell)
+
+```powershell
+# Create venv with dev dependencies
+uv venv
+uv sync --group dev
+
+# Or rebuild from scratch (CPU backend)
+Remove-Item -Recurse -Force .venv, uv.lock -ErrorAction SilentlyContinue
+.\envs\build.ps1 -Backend cpu
+uv sync --group dev
+
+# Activate
+.venv\Scripts\Activate.ps1
 ```
 
 Dev dependencies include:
@@ -179,6 +200,23 @@ Current coverage targets (enforced by CI):
 - CLI commands: > 90%
 - Data pipeline: > 80%
 - Models: > 85%
+
+## Continuous Integration
+
+## Platform-Specific Notes
+
+### Windows
+
+- The Python codebase is fully cross-platform (uses `pathlib.Path` throughout, no platform-specific conditionals).
+- All Python dependencies (PyTorch, opencv-python, FastAPI, etc.) support Windows natively.
+- The build script `envs/build.ps1` supports CPU and CUDA backends. ROCm is Linux-only.
+- On Windows, activate the virtual environment with `.venv\Scripts\Activate.ps1` (not `source .venv/bin/activate`).
+- `ruff check src/`, `pytest`, and all other dev tools work identically on Windows.
+- For Tauri desktop builds, see [Desktop Application](desktop.md#building-on-windows).
+
+### Linux / macOS
+
+No special notes — use `./envs/build.sh` as described above.
 
 ## Continuous Integration
 

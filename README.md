@@ -23,6 +23,8 @@ Super-resolution (SR) engine for training and running deep learning-based super-
 
 The project requires **Python >=3.11, <3.13** and uses [uv](https://docs.astral.sh/uv/) as the package manager.
 
+**Linux / macOS:**
+
 ```bash
 # CPU-only
 ./envs/build.sh --backend cpu
@@ -30,11 +32,83 @@ The project requires **Python >=3.11, <3.13** and uses [uv](https://docs.astral.
 # NVIDIA CUDA
 ./envs/build.sh --backend cuda
 
-# AMD ROCm
+# AMD ROCm (Linux only)
 ./envs/build.sh --backend rocm
 ```
 
+**Windows (PowerShell):**
+
+```powershell
+# CPU-only
+.\envs\build.ps1 -Backend cpu
+
+# NVIDIA CUDA
+.\envs\build.ps1 -Backend cuda
+```
+
+> **Windows + ROCm:** AMD ROCm is not supported on Windows. Use the CUDA or CPU backend.
+> **WSL recommended:** For full compatibility (including ROCm and native bash scripts), use [Windows Subsystem for Linux](https://learn.microsoft.com/en-us/windows/wsl/install).
+
 The build script creates a `.venv`, runs `uv sync --no-dev`, installs the correct PyTorch wheel for the chosen backend (`cpu`, `cu121`, or `rocm6.2`), and runs `envs/verify_env.py` to confirm the setup.
+
+## Windows Setup
+
+### Native (PowerShell)
+
+Prerequisites: **Python 3.11–3.12**, [uv](https://docs.astral.sh/uv/), and [Git](https://git-scm.com/).
+
+```powershell
+# CPU-only
+.\envs\build.ps1 -Backend cpu
+
+# NVIDIA CUDA
+.\envs\build.ps1 -Backend cuda
+
+# Activate the virtual environment
+.venv\Scripts\Activate.ps1
+```
+
+After activation, all CLI commands work identically to Linux/macOS:
+
+```powershell
+srengine workspace init
+srengine dataset build --input video.mp4 --out ./datasets/my_set
+srengine train run --model rrdb_esrgan --dataset ./datasets/my_set
+```
+
+### WSL (Recommended)
+
+For full compatibility with bash-based build scripts and the ROCm backend, use [Windows Subsystem for Linux](https://learn.microsoft.com/en-us/windows/wsl/install):
+
+```bash
+# Inside WSL (Ubuntu 22.04+)
+./envs/build.sh --backend cpu
+```
+
+The frontend (Vite dev server) and desktop (Tauri) can run from Windows and connect to a Python API server running inside WSL.
+
+### Desktop (Tauri)
+
+Building the native desktop app on Windows requires:
+
+- **MSVC Build Tools** — [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) or Visual Studio with the "Desktop development with C++" workload
+- **WebView2** — ships with Windows 10 (1803+) and Windows 11
+- **Rust MSVC toolchain** — installed automatically by `rustup` on Windows
+
+```powershell
+npx tauri build
+```
+
+Output: `src-tauri/target/release/bundle/msi/SR Tuner_<version>_x64_en-US.msi`
+
+### Known Windows caveats
+
+| Issue | Mitigation |
+|-------|------------|
+| ROCm not available on Windows | Use `-Backend cpu` or `-Backend cuda` |
+| `nvidia-smi` outputs `,` as decimal separator on some European locale systems | The GPU polling code normalizes `,` → `.` before parsing float values |
+| Frontend path separators | All path operations use cross-platform `join()`/`basename()` utilities |
+| Virtual environment activation | Use `.venv\Scripts\Activate.ps1` (not `source .venv/bin/activate`) |
 
 | Package | Purpose |
 |---|---|

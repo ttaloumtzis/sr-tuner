@@ -238,7 +238,7 @@ class Trainer:
 
         full_dataset = PairedImageFolderDataset(dataset_dir, transform=None)
 
-        if val_dataset_dir:
+        if val_dataset_dir and validation_enabled:
             val_dataset = PairedImageFolderDataset(val_dataset_dir, transform=None)
             self.val_dataset = val_dataset
             self.val_dataloader = DataLoader(
@@ -496,6 +496,13 @@ class Trainer:
 
             for batch_idx, (lr, hr) in enumerate(self.train_dataloader):
                 losses = self._run_step(lr, hr)
+
+                if self._cancel_check():
+                    log.warning("Cancellation requested mid-epoch %d — saving checkpoint", epoch + 1)
+                    self._save(epoch + 1)
+                    self._emit("phase", phase="cancelled", epoch=epoch + 1)
+                    raise TrainingCancelled()
+
                 self._progress.update(1)
                 self._progress.set_postfix(**losses)
 

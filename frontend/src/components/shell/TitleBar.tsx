@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useSaveTrigger } from "../../lib/useSaveTrigger";
 import { useProjectStore } from "../../store/projectStore";
+import { parentFromProjFile } from "../../lib/path";
 import { SettingsModal } from "./SettingsModal";
 
 function TrafficLights() {
@@ -50,7 +51,7 @@ export function TitleBar() {
 
   const name = project?.name ?? "";
   const filePath = project?.filePath ?? "";
-  const parentDir = filePath ? filePath.replace(/\/[^/]+\.srproj$/, "") : "";
+  const parentDir = filePath ? parentFromProjFile(filePath) : "";
 
   return (
     <div

@@ -15,13 +15,7 @@ import { PathInput } from "../../components/ui/PathInput";
 import { Dropdown } from "../../components/ui/Dropdown";
 import { open } from "@tauri-apps/plugin-dialog";
 import { PBar } from "../../components/ui/PBar";
-
-
-// ── Helpers ────────────────────────────────────────────────────────────────
-
-function basename(filePath: string): string {
-  return filePath.split(/[\\/]/).pop() ?? filePath;
-}
+import { basename } from "../../lib/path";
 
 // ── Cross-hatch background ─────────────────────────────────────────────────
 

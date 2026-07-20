@@ -1,6 +1,7 @@
 """HR -> LR degradation pipeline (blur, noise, JPEG, JPEG2000, downsample)."""
 
 import concurrent.futures
+from concurrent.futures.process import BrokenProcessPool
 from functools import partial
 import logging
 import multiprocessing
@@ -317,12 +318,19 @@ def batch_degrade(
     ) as executor:
         results = executor.map(worker, hr_paths)
 
-        for hr_path, lr_path in results:
-            if lr_path is not None:
-                pairs.append((hr_path, lr_path))
-            elif hr_path.exists():
-                hr_path.unlink()
-            reporter.update(1)
+        try:
+            for hr_path, lr_path in results:
+                if lr_path is not None:
+                    pairs.append((hr_path, lr_path))
+                elif hr_path.exists():
+                    hr_path.unlink()
+                reporter.update(1)
+        except (BrokenPipeError, BrokenProcessPool):
+            logger.warning(
+                "Degradation worker crashed after %d/%d frames. "
+                "Returning partial results.",
+                len(pairs), len(hr_paths),
+            )
 
     reporter.finish()
 

@@ -214,7 +214,7 @@ function ScreenModelView() {
         setVersions([]);
       }
     } catch {
-      if (!loading) setInstances([]);
+      // keep previous state on transient errors; poll will retry
     }
     setLoading(false);
   }, [selectedName, loading]);

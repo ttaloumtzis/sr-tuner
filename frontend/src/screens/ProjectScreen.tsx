@@ -5,6 +5,7 @@ import { PathInput } from "../components/ui/PathInput";
 import { useProjectStore } from "../store/projectStore";
 import { useToast } from "../components/shell/ToastProvider";
 import { SRPROJ_SCHEMA_VERSION, type SRProjFile } from "../lib/srproj";
+import { join } from "../lib/path";
 
 // ── Recent projects persistence ────────────────────────────────────────────
 
@@ -48,7 +49,7 @@ function removeRecent(filePath: string): RecentEntry[] {
 function DirPreview({ parentDir, name }: { parentDir: string; name: string }) {
   const stem = name.trim();
   if (!parentDir || !stem) return null;
-  const root = parentDir.replace(/\/$/, "") + "/" + stem;
+  const root = join(parentDir, stem);
   return (
     <div
       style={{
@@ -92,8 +93,8 @@ function NewProjectForm({ onDone }: { onDone: () => void }) {
     setCreating(true);
     setError(null);
 
-    const projectRoot = parentDir.replace(/\/$/, "") + "/" + stem;
-    const projFile = projectRoot + "/" + stem + ".srproj";
+    const projectRoot = join(parentDir, stem);
+    const projFile = join(projectRoot, stem + ".srproj");
 
     try {
       // Do not overwrite an existing project
@@ -104,12 +105,12 @@ function NewProjectForm({ onDone }: { onDone: () => void }) {
         return;
       }
 
-      await invoke("create_dir_all", { path: projectRoot + "/datasets" });
-      await invoke("create_dir_all", { path: projectRoot + "/models" });
-      await invoke("create_dir_all", { path: projectRoot + "/experiments" });
-      await invoke("create_dir_all", { path: projectRoot + "/configs" });
-      await invoke("create_dir_all", { path: projectRoot + "/logs" });
-      await invoke("create_dir_all", { path: projectRoot + "/checkpoints" });
+      await invoke("create_dir_all", { path: join(projectRoot, "datasets") });
+      await invoke("create_dir_all", { path: join(projectRoot, "models") });
+      await invoke("create_dir_all", { path: join(projectRoot, "experiments") });
+      await invoke("create_dir_all", { path: join(projectRoot, "configs") });
+      await invoke("create_dir_all", { path: join(projectRoot, "logs") });
+      await invoke("create_dir_all", { path: join(projectRoot, "checkpoints") });
 
       // Write initial .srproj
       const now = new Date().toISOString();

@@ -11,6 +11,7 @@ import { useSSEConnection } from "./hooks/useSSEConnection";
 import { useTrainingSSE } from "./hooks/useTrainingSSE";
 import { initApiUrl, initWorkspace } from "./lib/api";
 import { ProjectScreen } from "./screens/ProjectScreen";
+import { parentFromProjFile } from "./lib/path";
 import { ScreenDatasetSetup } from "./screens/dataset/ScreenDatasetSetup";
 import { ScreenModelConfig } from "./screens/model/ScreenModelConfig";
 import { ScreenTrainingSetup } from "./screens/training/ScreenTrainingSetup";
@@ -39,24 +40,40 @@ function TabContent() {
 }
 
 function ProjectLayout() {
-  const { isConnected: _, showDialog, retry } = useSSEConnection();
   useTrainingSSE();
-
-  const handleExit = () => {
-    try {
-      // @ts-ignore
-      window.__TAURI__?.invoke("stop_python_server");
-    } catch { /* browser mode */ }
-    window.close();
-  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", width: "100%", height: "100%", overflow: "hidden" }}>
       <TabBar />
       <TabContent />
       <StatusBar />
-      <ConnectionErrorDialog open={showDialog} onRetry={retry} onExit={handleExit} />
       <ErrorRouter />
+    </div>
+  );
+}
+
+function LoadingWorkspace({ name }: { name: string }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", width: "100%", height: "100%", alignItems: "center", justifyContent: "center", background: "var(--bg0)", gap: 12 }}>
+      <div style={{ color: "var(--dim)", fontSize: 11, fontFamily: "var(--font-mono)" }}>
+        Loading project <span style={{ color: "var(--text)" }}>{name}</span>…
+      </div>
+    </div>
+  );
+}
+
+function WorkspaceErrorView({ name, error, onRetry }: { name: string; error: string; onRetry: () => void }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", width: "100%", height: "100%", alignItems: "center", justifyContent: "center", background: "var(--bg0)", gap: 12, padding: 24 }}>
+      <div style={{ color: "var(--red)", fontSize: 12, fontFamily: "var(--font-mono)" }}>
+        Failed to open workspace for {name}
+      </div>
+      <div style={{ color: "var(--muted)", fontSize: 10, maxWidth: 400, textAlign: "center", wordBreak: "break-word" }}>
+        {error}
+      </div>
+      <button onClick={onRetry} style={{ background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text)", cursor: "pointer", fontSize: 11, padding: "4px 12px", fontFamily: "var(--font-mono)" }}>
+        Retry
+      </button>
     </div>
   );
 }
@@ -69,8 +86,15 @@ function LandingLayout() {
   );
 }
 
+const WORKSPACE_MAX_RETRIES = 5;
+
 export default function App() {
   const project = useProjectStore((s) => s.project);
+  const isServerConnected = useUiStore((s) => s.isServerConnected);
+  const workspaceReady = useUiStore((s) => s.workspaceReady);
+  const workspaceError = useUiStore((s) => s.workspaceError);
+  const setWorkspaceReady = useUiStore((s) => s.setWorkspaceReady);
+  const setWorkspaceError = useUiStore((s) => s.setWorkspaceError);
 
   useEffect(() => {
     initApiUrl();
@@ -85,16 +109,73 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!project) return;
-    const projectDir = project.filePath.replace(/\/[^/]+\.srproj$/, "");
-    initWorkspace(projectDir).catch((err) => {
-      console.warn("Workspace init failed (non-fatal):", err);
-    });
-  }, [project]);
+    if (!project) {
+      setWorkspaceReady(false);
+      setWorkspaceError(null);
+    }
+  }, [project, setWorkspaceReady, setWorkspaceError]);
+
+  useEffect(() => {
+    if (!project || !isServerConnected || workspaceReady) return;
+
+    const projectDir = parentFromProjFile(project.filePath);
+    let cancelled = false;
+
+    (async () => {
+      for (let retries = 0; retries < WORKSPACE_MAX_RETRIES && !cancelled; retries++) {
+        try {
+          await initWorkspace(projectDir);
+          if (!cancelled) {
+            setWorkspaceReady(true);
+            setWorkspaceError(null);
+          }
+          return;
+        } catch (err) {
+          if (cancelled) return;
+          if (retries >= WORKSPACE_MAX_RETRIES - 1) {
+            const msg = err instanceof Error ? err.message : String(err);
+            setWorkspaceError(msg);
+            console.warn("Workspace init failed after", WORKSPACE_MAX_RETRIES, "retries:", err);
+            return;
+          }
+          await new Promise(r => setTimeout(r, 1000 * (retries + 1)));
+        }
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [project, isServerConnected, workspaceReady, setWorkspaceReady, setWorkspaceError]);
+
+  const { showDialog, retry } = useSSEConnection();
+
+  const handleExit = () => {
+    try {
+      // @ts-ignore
+      window.__TAURI__?.invoke("stop_python_server");
+    } catch { /* browser mode */ }
+    window.close();
+  };
+
+  const handleRetryWorkspace = () => {
+    setWorkspaceError(null);
+    setWorkspaceReady(false);
+  };
+
+  let content;
+  if (project && !workspaceReady && !workspaceError) {
+    content = <LoadingWorkspace name={project.name} />;
+  } else if (project && workspaceError && !workspaceReady) {
+    content = <WorkspaceErrorView name={project.name} error={workspaceError} onRetry={handleRetryWorkspace} />;
+  } else if (project && workspaceReady) {
+    content = <ProjectLayout />;
+  } else {
+    content = <LandingLayout />;
+  }
 
   return (
     <ToastProvider>
-      {project ? <ProjectLayout /> : <LandingLayout />}
+      {content}
+      <ConnectionErrorDialog open={showDialog} onRetry={retry} onExit={handleExit} />
     </ToastProvider>
   );
 }

@@ -1,5 +1,7 @@
 import logging
+import multiprocessing
 import shutil
+import threading
 import time
 from pathlib import Path
 
@@ -10,6 +12,8 @@ from sr_engine.api.task_manager import (
     BackgroundTaskManager,
     acquire_training_slot,
     release_training_slot,
+    register_subprocess_cancel_event,
+    unregister_subprocess_cancel_event,
 )
 from sr_engine.data.dataset_builder import build_from_preprocessed, build_from_video
 from sr_engine.monitoring.hardware import HardwareMonitor
@@ -23,30 +27,52 @@ from sr_engine.workspace import Workspace
 log = logging.getLogger(__name__)
 
 
-def run_training(
+class QueueEventBus:
+    """Drop-in for SSEEventManager that forwards events via multiprocessing.Queue.
+
+    Used in the training subprocess so the main process can bridge to SSE.
+    """
+
+    def __init__(self, queue: multiprocessing.Queue) -> None:
+        self._queue = queue
+
+    def publish(self, job_id: str, event: dict) -> None:
+        try:
+            self._queue.put_nowait((job_id, event))
+        except Exception:
+            pass
+
+
+def _run_training_subprocess(
     job_id: str,
     params: dict,
-    ws: Workspace | None,
-    cfg_loader,
-    tasks: BackgroundTaskManager,
-    events: SSEEventManager,
+    ws_path: str | None,
+    event_queue: multiprocessing.Queue,
+    cancel_event,
 ) -> None:
-    """Run training in a background thread."""
-    if not acquire_training_slot():
-        tasks.fail_job(job_id, "Another training is already running")
-        return
+    """Run training in a subprocess with an isolated CUDA context.
 
-    tasks.start_job(job_id)
+    Sends events back to the main process via *event_queue*.
+    Uses *cancel_event* (multiprocessing.Event) for cancellation checks.
+    """
+    events = QueueEventBus(event_queue)
+
+    def _cancel_check() -> bool:
+        return cancel_event.is_set()
+
     try:
-        model_name = params["model_name"]
-        instance = params["instance"]
-        dataset = params["dataset"]
+        ws = Workspace(Path(ws_path)) if ws_path else None
+        cfg = DefaultConfigs(ws)
 
-        model_inst = ws.get_model_instance(instance)
-        inst_cfg_path = model_inst.path / "config.yaml"
-        inst_cfg = load_config(inst_cfg_path) if inst_cfg_path.exists() else {}
+        model_name: str = params["model_name"]
+        instance: str = params["instance"]
+        dataset: str = params["dataset"]
 
-        model_cfg = cfg_loader.get_model_config(model_name) or {}
+        model_inst = ws.get_model_instance(instance) if ws else None
+        inst_cfg_path = model_inst.path / "config.yaml" if model_inst else None
+        inst_cfg = load_config(inst_cfg_path) if inst_cfg_path and inst_cfg_path.exists() else {}
+
+        model_cfg = cfg.get_model_config(model_name) or {}
         if inst_cfg:
             model_cfg = merge_overrides(model_cfg, inst_cfg)
 
@@ -59,7 +85,7 @@ def run_training(
         if custom_config:
             train_cfg = load_config(Path(custom_config))
         else:
-            train_cfg = cfg_loader.get_train_config()
+            train_cfg = cfg.get_train_config()
 
         overrides = params.get("overrides", {})
         if overrides:
@@ -91,7 +117,8 @@ def run_training(
 
         metrics_stream: MetricsStream | None = None
         validation_frame_dir: Path | None = None
-        if run_dir is not None:
+        write_metrics_file = params.get("write_metrics_file", True)
+        if run_dir is not None and write_metrics_file:
             metrics_path = run_dir / "metrics.jsonl"
             metrics_stream = MetricsStream(metrics_path, metadata={
                 "job_id": job_id,
@@ -99,14 +126,10 @@ def run_training(
                 "instance": instance,
                 "dataset": dataset,
             })
+        if run_dir is not None:
             validation_frame_dir = run_dir / "validation"
             validation_frame_dir.mkdir(parents=True, exist_ok=True)
 
-        def _cancel_check() -> bool:
-            rec = tasks.get_job(job_id)
-            return rec is not None and rec.cancel_event.is_set()
-
-        hw_monitor = HardwareMonitor(events, job_id)
         trainer = Trainer(
             model_cfg=model_cfg,
             train_cfg=train_cfg,
@@ -125,7 +148,7 @@ def run_training(
             callbacks=[sse_callback],
             cancel_check=_cancel_check,
         )
-        hw_monitor.start()
+
         trainer.train()
 
         if ws:
@@ -140,17 +163,124 @@ def run_training(
                 },
             )
 
-        tasks.complete_job(job_id)
+        events.publish(job_id, {"type": "phase", "phase": "complete"})
+        event_queue.put(None)
 
     except TrainingCancelled:
-        tasks.cancel_job(job_id)
+        events.publish(job_id, {"type": "phase", "phase": "cancelled"})
+        event_queue.put(None)
+
+    except Exception as e:
+        log.exception("Training subprocess %s failed", job_id)
+        error_type = type(e).__name__
+        error_code = "CUDA_OUT_OF_MEMORY" if "out of memory" in str(e).lower() else error_type
+        events.publish(job_id, {"type": "error", "code": error_code, "message": str(e)})
+        event_queue.put(None)
+
+
+def _bridge_loop(
+    bridge_stop: threading.Event,
+    event_queue: multiprocessing.Queue,
+    events: SSEEventManager,
+    job_id: str,
+    tasks: BackgroundTaskManager,
+) -> None:
+    """Read events from subprocess queue and publish to SSE + task manager."""
+    while not bridge_stop.is_set():
+        try:
+            item = event_queue.get(timeout=1)
+        except Exception:
+            continue
+        if item is None:
+            break
+        jid, evt = item
+        events.publish(jid, evt)
+
+
+def run_training(
+    job_id: str,
+    params: dict,
+    ws: Workspace | None,
+    cfg_loader,
+    tasks: BackgroundTaskManager,
+    events: SSEEventManager,
+) -> None:
+    """Run training in a subprocess to isolate the CUDA context.
+
+    The main process manages the training slot, hardware monitoring,
+    and bridges SSE events from the subprocess.
+    """
+    if not acquire_training_slot():
+        tasks.fail_job(job_id, "Another training is already running")
+        return
+
+    tasks.start_job(job_id)
+    ctx = multiprocessing.get_context("spawn")
+    event_queue = ctx.Queue()
+    cancel_event = ctx.Event()
+    register_subprocess_cancel_event(job_id, cancel_event)
+
+    hw_monitor = HardwareMonitor(events, job_id)
+    bridge_stop = threading.Event()
+
+    proc = ctx.Process(
+        target=_run_training_subprocess,
+        args=(
+            job_id,
+            {
+                "model_name": params["model_name"],
+                "instance": params["instance"],
+                "dataset": params["dataset"],
+                "config": params.get("config"),
+                "resume": params.get("resume"),
+                "overrides": params.get("overrides", {}),
+                "write_metrics_file": params.get("write_metrics_file", True),
+            },
+            str(ws.path) if ws else None,
+            event_queue,
+            cancel_event,
+        ),
+    )
+
+    try:
+        proc.start()
+        hw_monitor.start()
+
+        bridge_thread = threading.Thread(
+            target=_bridge_loop,
+            args=(bridge_stop, event_queue, events, job_id, tasks),
+            daemon=True,
+        )
+        bridge_thread.start()
+
+        proc.join()
+        bridge_stop.set()
+
+        if proc.exitcode != 0 and proc.exitcode is not None:
+            msg = f"Training subprocess exited with code {proc.exitcode}"
+            log.error(msg)
+            tasks.fail_job(job_id, msg)
+            events.publish(job_id, {"type": "error", "code": "SUBPROCESS_CRASH", "message": msg})
+
+        rec = tasks.get_job(job_id)
+        if rec and rec.status == "running":
+            tasks.complete_job(job_id)
+
     except Exception as e:
         log.exception("Training job %s failed", job_id)
         tasks.fail_job(job_id, str(e))
+        events.publish(job_id, {"type": "error", "code": type(e).__name__, "message": str(e)})
     finally:
         hw_monitor.stop()
         events.publish(job_id, None)
+        unregister_subprocess_cancel_event(job_id)
         release_training_slot()
+        # Clear the queue
+        while not event_queue.empty():
+            try:
+                event_queue.get_nowait()
+            except Exception:
+                break
 
 
 def run_inference(

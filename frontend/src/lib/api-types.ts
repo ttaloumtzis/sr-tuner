@@ -50,6 +50,7 @@ export interface TrainParams {
   metrics_frequency?: number;
   perceptual_weight?: number;
   warmup_steps?: number;
+  write_metrics_file?: boolean;
 }
 
 export interface InferParams {

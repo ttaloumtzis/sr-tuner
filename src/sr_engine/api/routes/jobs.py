@@ -48,9 +48,11 @@ async def job_status(job_id: str):
 @router.post("/{job_id}/cancel")
 async def cancel_job(job_id: str):
     from sr_engine.api.app import tasks
+    from sr_engine.api.task_manager import signal_subprocess_cancel
 
     ok = tasks.cancel_job(job_id)
     if not ok:
         from fastapi import HTTPException
         raise HTTPException(404, f"Job not found or already finished: {job_id}")
+    signal_subprocess_cancel(job_id)
     return {"status": "cancelled", "job_id": job_id}

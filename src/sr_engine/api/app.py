@@ -47,7 +47,7 @@ async def event_stream(job_id: str):
             async for event in events.subscribe(job_id):
                 yield event
         except Exception:
-            pass
+            log.warning("SSE client disconnected for job %s", job_id)
         finally:
             events.cleanup(job_id)
 
