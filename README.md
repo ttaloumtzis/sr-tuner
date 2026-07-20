@@ -17,98 +17,80 @@ Super-resolution (SR) engine for training and running deep learning-based super-
 - **Desktop GUI** — React/TypeScript frontend with Tauri 2 desktop shell, providing a native interface for project management, dataset operations, model training, inference, and checkpoint management
 - **CLI** — Full-featured Click-based command-line interface with standalone command aliases
 
-## Dependencies
+## Prerequisites
 
-### Python (CLI + API Server)
+The project uses three runtimes. You only need the ones relevant to how you use sr-engine.
 
-The project requires **Python >=3.11, <3.13** and uses [uv](https://docs.astral.sh/uv/) as the package manager.
+| Component | Runtime | Needed for |
+|-----------|---------|------------|
+| CLI + API server | **Python** ≥3.11, <3.13 + [uv](https://docs.astral.sh/uv/) | All ML operations, dataset pipeline, REST API |
+| Desktop GUI | **Node.js** ≥18 + npm | React frontend development and builds |
+| Desktop shell | **Rust** (edition 2021) | Building the native Tauri desktop binary |
 
-**Linux / macOS:**
+### Quick setup
 
-```bash
-# CPU-only
-./envs/build.sh --backend cpu
-
-# NVIDIA CUDA
-./envs/build.sh --backend cuda
-
-# AMD ROCm (Linux only)
-./envs/build.sh --backend rocm
-```
-
-**Windows (PowerShell):**
-
-```powershell
-# CPU-only
-.\envs\build.ps1 -Backend cpu
-
-# NVIDIA CUDA
-.\envs\build.ps1 -Backend cuda
-```
-
-> **Windows + ROCm:** AMD ROCm is not supported on Windows. Use the CUDA or CPU backend.
-> **WSL recommended:** For full compatibility (including ROCm and native bash scripts), use [Windows Subsystem for Linux](https://learn.microsoft.com/en-us/windows/wsl/install).
-
-The build script creates a `.venv`, runs `uv sync --no-dev`, installs the correct PyTorch wheel for the chosen backend (`cpu`, `cu121`, or `rocm6.2`), and runs `envs/verify_env.py` to confirm the setup.
-
-## Windows Setup
-
-### Native (PowerShell)
-
-Prerequisites: **Python 3.11–3.12**, [uv](https://docs.astral.sh/uv/), and [Git](https://git-scm.com/).
-
-```powershell
-# CPU-only
-.\envs\build.ps1 -Backend cpu
-
-# NVIDIA CUDA
-.\envs\build.ps1 -Backend cuda
-
-# Activate the virtual environment
-.venv\Scripts\Activate.ps1
-```
-
-After activation, all CLI commands work identically to Linux/macOS:
-
-```powershell
-srengine workspace init
-srengine dataset build --input video.mp4 --out ./datasets/my_set
-srengine train run --model rrdb_esrgan --dataset ./datasets/my_set
-```
-
-### WSL (Recommended)
-
-For full compatibility with bash-based build scripts and the ROCm backend, use [Windows Subsystem for Linux](https://learn.microsoft.com/en-us/windows/wsl/install):
+Once the relevant runtimes are installed, set up the Python environment:
 
 ```bash
-# Inside WSL (Ubuntu 22.04+)
-./envs/build.sh --backend cpu
+# Linux / macOS
+./envs/build.sh --backend cpu       # or --backend cuda / --backend rocm
+
+# Windows (PowerShell)
+.\envs\build.ps1 -Backend cpu        # or -Backend cuda
 ```
 
-The frontend (Vite dev server) and desktop (Tauri) can run from Windows and connect to a Python API server running inside WSL.
+The build script creates a `.venv` with `uv sync`, installs the correct PyTorch wheel, and verifies the setup.
 
-### Desktop (Tauri)
+### Installing runtimes
 
-Building the native desktop app on Windows requires:
+**Python + uv:**
 
-- **MSVC Build Tools** — [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) or Visual Studio with the "Desktop development with C++" workload
-- **WebView2** — ships with Windows 10 (1803+) and Windows 11
-- **Rust MSVC toolchain** — installed automatically by `rustup` on Windows
+```bash
+# Linux / macOS
+curl -fsSL https://astral.sh/uv/install.sh | bash
 
-```powershell
-npx tauri build
+# Windows (PowerShell)
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-Output: `src-tauri/target/release/bundle/msi/SR Tuner_<version>_x64_en-US.msi`
+> Python 3.11 or 3.12 must be available. On Linux: `apt install python3.11 python3.11-venv`. On macOS: `brew install python@3.12`. On Windows: download from [python.org](https://www.python.org/downloads/).
 
-### Known Windows caveats
+**Node.js (via nvm — all platforms):**
+
+```bash
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.0/install.sh | bash
+nvm install 18
+```
+
+**Rust (via rustup — all platforms):**
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+### Per-platform notes
+
+**Linux** — Tauri desktop build requires system libraries:
+
+```bash
+sudo apt install -y build-essential libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev
+```
+
+**macOS** — Install via [Homebrew](https://brew.sh/): `brew install python@3.12 uv node rust`.
+
+**Windows:**
+- **ROCm** is not supported on Windows. Use `-Backend cpu` or `-Backend cuda`.
+- **WSL** (recommended): run `./envs/build.sh` inside Ubuntu on WSL for full bash compatibility. The frontend and desktop app run from Windows and connect to the API server in WSL.
+- **Tauri desktop build** requires [MSVC Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/), WebView2 (included in Win10 1803+), and the Rust MSVC toolchain. Output is `.msi` / `.exe` in `src-tauri/target/release/bundle/`.
+- **Known caveats:**
 
 | Issue | Mitigation |
 |-------|------------|
-| ROCm not available on Windows | Use `-Backend cpu` or `-Backend cuda` |
 | `nvidia-smi` outputs `,` as decimal separator on some European locale systems | The GPU polling code normalizes `,` → `.` before parsing float values |
 | Frontend path separators | All path operations use cross-platform `join()`/`basename()` utilities |
 | Virtual environment activation | Use `.venv\Scripts\Activate.ps1` (not `source .venv/bin/activate`) |
+
+### Python packages
 
 | Package | Purpose |
 |---|---|
@@ -122,16 +104,9 @@ Output: `src-tauri/target/release/bundle/msi/SR Tuner_<version>_x64_en-US.msi`
 | psutil | System monitoring |
 | tqdm | Progress bars |
 
-### GUI Frontend (Node.js / React)
+### Frontend packages (React / TypeScript)
 
-Requires **Node.js >=18**. Dependencies are managed via npm:
-
-```bash
-cd frontend
-npm install         # installs everything in package.json
-npm run dev         # Vite dev server (requires API on :8765)
-npm run build       # production build
-```
+Managed via npm — `cd frontend && npm install`:
 
 | Package | Purpose |
 |---|---|
@@ -144,13 +119,9 @@ npm run build       # production build
 | typescript | Type safety |
 | vite | Dev server & bundler |
 
-### GUI Shell (Rust / Tauri)
+### Rust crates (Tauri shell)
 
-Requires the **Rust toolchain** (edition 2021). Dependencies are fetched by Cargo during the Tauri build:
-
-```bash
-npx tauri build     # also compiles the Rust shell
-```
+Fetched by Cargo during `npx tauri build`:
 
 | Crate | Purpose |
 |---|---|
@@ -162,40 +133,54 @@ npx tauri build     # also compiles the Rust shell
 
 ## Quick Start
 
-First, set up the environment (see [Dependencies](#dependencies) above), then:
+### Datasets
 
-```bash
-# Initialize a workspace
-srengine workspace init
+Extract frames from video files, apply a configurable degradation pipeline (blur, noise, compression, downscaling), and produce paired HR/LR training datasets.
 
-# Build a dataset from a video
+```
 srengine dataset build --input video.mp4 --out ./datasets/my_set
+```
 
-# Train a model
+Additional operations: validation, health checks (corrupt image detection, black frame pruning), and merging multiple datasets grouped by scale factor.
+
+### Training
+
+Train RRDB (ESRGAN-style) or SwinIR models with configurable hyperparameters, mixed-precision (bf16/fp16), cosine LR scheduling with warmup, validation split, and live JSONL metrics streaming.
+
+```
 srengine train run --model rrdb_esrgan --dataset ./datasets/my_set
+```
 
-# Run inference
+### Inference
+
+Run trained models on images or videos with VRAM-safe tiled processing. Supports ONNX, TorchScript, and SafeTensors export.
+
+```
 srengine infer run --model checkpoints/model.pth --input input.png --output output.png
+```
 
-# Start the API server (required for the GUI)
+### API Server
+
+Start the FastAPI REST API on port 8765, required for the desktop GUI. Provides SSE-based real-time progress, background job management, and comprehensive endpoints for all operations.
+
+```
 srengine serve start
 ```
 
-Full CLI reference is available in [`docs/cli-reference.md`](docs/cli-reference.md) and all commands support `--help`.
-
 ### Desktop GUI
+
+The React/TypeScript frontend with Tauri 2 desktop shell provides tab-based navigation for project management, dataset operations, model training with live metrics, drag-and-drop inference, and checkpoint browsing.
 
 ```bash
 cd frontend
-npm install
-npm run dev         # development (requires API server on :8765)
-npm run build       # production build
-npx tauri build     # standalone desktop binary
+npm install               # install frontend dependencies
+npm run dev               # Vite dev server (requires API on :8765)
+npx tauri build           # standalone desktop binary
 ```
 
-The GUI provides tab-based navigation for project management, dataset operations, model management, training (with live metrics), inference (drag-and-drop), and checkpoint browsing.
-
 ### Python API
+
+Use sr-engine programmatically from your own Python scripts:
 
 ```python
 from sr_engine.models.registry import build_model
@@ -207,6 +192,8 @@ dataset = PairedImageFolderDataset("datasets/my_set")
 infer_image(model_checkpoint="checkpoints/model.pth", input_path="input.png",
             output_path="output.png", device="cuda")
 ```
+
+Full CLI reference is in [`docs/cli-reference.md`](docs/cli-reference.md). All commands support `--help`.
 
 ## Project Structure
 
