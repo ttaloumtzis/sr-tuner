@@ -31,11 +31,19 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@types/testing-library__jest-dom": "^5.14.9",
-    "@vitejs/plugin-react": "^4.3.3",
+    "@vitejs/plugin-react": "^5.2.0",
     "@vitest/ui": "^4.1.5",
     "jsdom": "^29.1.1",
     "typescript": "^5.9.3",
-    "vite": "^5.4.10",
+    "vite": "^6.4.3",
     "vitest": "^4.1.5"
+  },
+  "overrides": {
+    "vitest": {
+      "vite": ">=8.0.16",
+      "@vitest/mocker": {
+        "vite": ">=8.0.16"
+      }
+    }
   }
 }
