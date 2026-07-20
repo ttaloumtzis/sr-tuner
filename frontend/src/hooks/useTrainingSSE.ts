@@ -33,6 +33,26 @@ export function useTrainingSSE() {
   useEffect(() => {
     if (!activeTrainingRunId) return;
 
+    // Fetch launch config from backend (survives page refresh)
+    (async () => {
+      try {
+        const { getJobStatus } = await import("../lib/api");
+        const job = await getJobStatus(activeTrainingRunId);
+        if (job.config) {
+          useTrainingStore.getState().setLaunchConfig({
+            totalEpochs: (job.config.max_epochs as number) ?? 100,
+            batchSize: (job.config.batch_size as number) ?? 16,
+            learningRate: (job.config.learning_rate as number) ?? 2e-4,
+            fp16: (job.config.dtype as string) === "bf16",
+            patchSize: (job.config.patch_size as number) ?? 128,
+            validationEnabled: ((job.config.validation as Record<string, unknown>)?.enabled as boolean) ?? true,
+          });
+        }
+      } catch {
+        // local snapshot from handleLaunch is the fallback
+      }
+    })();
+
     const baseUrl = getBaseUrl();
     const es = new EventSource(`${baseUrl}/api/events?job_id=${activeTrainingRunId}`);
     esRef.current = es;

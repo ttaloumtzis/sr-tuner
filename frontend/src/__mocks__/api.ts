@@ -15,6 +15,7 @@ export const startInference = vi.fn();
 export const buildDataset = vi.fn();
 export const validateDatasetPath = vi.fn();
 export const healthCheck = vi.fn();
+export const getDatasetHealth = vi.fn();
 export const mergeDatasets = vi.fn();
 export const listJobs = vi.fn();
 export const getJobStatus = vi.fn();

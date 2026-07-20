@@ -11,7 +11,6 @@ export function useDatasetSSE() {
   const finishProgressStep = useDatasetStore((s) => s.finishProgressStep);
   const clearJob = useDatasetStore((s) => s.clearJob);
   const setMergeResults = useDatasetStore((s) => s.setMergeResults);
-  const setHealthReport = useDatasetStore((s) => s.setHealthReport);
   const setValidationResult = useDatasetStore((s) => s.setValidationResult);
   const esRef = useRef<EventSource | null>(null);
 
@@ -62,8 +61,6 @@ export function useDatasetSSE() {
             setJobStatus("done");
             const results = (event as Record<string, unknown>).results;
             if (results) setMergeResults(results as { scale: number; output_path: string; source_datasets: string[] }[]);
-            const report = (event as Record<string, unknown>).report;
-            if (report) setHealthReport(report as Record<string, unknown>);
             const validation = (event as Record<string, unknown>).validation;
             if (validation) setValidationResult(validation as { valid: boolean; problems: string[]; num_pairs: number });
             break;

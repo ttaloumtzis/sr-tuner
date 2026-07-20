@@ -252,6 +252,14 @@ export function ScreenTrainingSetup() {
       useTrainingStore.getState().reset();
       useTrainingStore.getState().setActiveRun(res.job_id);
       useTrainingStore.getState().setStatus("running");
+      useTrainingStore.getState().setLaunchConfig({
+        totalEpochs: s.schedule.totalEpochs,
+        batchSize: s.batchSize,
+        learningRate: s.learningRate,
+        fp16: s.fp16,
+        patchSize: s.patchSize,
+        validationEnabled: s.validationEnabled,
+      });
       useUiStore.getState().setActiveTab("metrics");
       setLaunchError(null);
     } catch (e) {

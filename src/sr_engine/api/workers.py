@@ -477,11 +477,12 @@ def run_dataset_health(
     tasks.start_job(job_id)
     t0 = time.time()
     try:
-        from sr_engine.data.dataset_health import check_dataset_health
+        from sr_engine.data.dataset_health import check_dataset_health, save_health_report
 
         sse = SSEProgressReporter(events, job_id)
         dataset_dir = Path(params["path"])
         report = check_dataset_health(dataset_dir, reporter=sse)
+        save_health_report(dataset_dir, report)
 
         events.publish(job_id, {"type": "done", "elapsed_seconds": time.time() - t0, "report": report})
         tasks.complete_job(job_id, {"report": report})

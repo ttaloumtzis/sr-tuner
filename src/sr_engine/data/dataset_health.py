@@ -13,6 +13,27 @@ from sr_engine.utils.logging import get_logger
 
 log = get_logger(__name__)
 
+HEALTH_REPORT_FILENAME = ".health_report.json"
+
+
+def save_health_report(dataset_dir: Path, report: dict) -> None:
+    path = dataset_dir / HEALTH_REPORT_FILENAME
+    try:
+        path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    except OSError as e:
+        log.warning("Failed to save health report to %s: %s", path, e)
+
+
+def load_health_report(dataset_dir: Path) -> dict | None:
+    path = dataset_dir / HEALTH_REPORT_FILENAME
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        log.warning("Failed to load health report from %s: %s", path, e)
+        return None
+
 
 def _extract_color_data(img: np.ndarray, channels_summary: Counter) -> np.ndarray:
     """Helper to extract relevant color layers and track bit-depth channel counts."""
@@ -279,3 +300,11 @@ def prune_black_frames(dataset_dir: Path, black_filenames: list[str],
 
         except (json.JSONDecodeError, OSError) as e:
             log.warning("Could not sync manifest.json adjustments: %s", e)
+
+    # Stale health report is no longer valid after pruning
+    health_path = dataset_dir / HEALTH_REPORT_FILENAME
+    if health_path.exists():
+        try:
+            health_path.unlink()
+        except OSError as e:
+            log.warning("Could not remove stale health report: %s", e)

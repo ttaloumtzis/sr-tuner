@@ -1,7 +1,6 @@
 import { useEffect, useId, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { useTrainingStore } from "../../store/trainingStore";
 import { useModelStore } from "../../store/modelStore";
-import { useRunConfigStore } from "../../store/runConfigStore";
 import { useToast } from "../../components/shell/ToastProvider";
 import { Btn } from "../../components/ui/Btn";
 import { cancelJob } from "../../lib/api";
@@ -283,7 +282,7 @@ function ProgressRow() {
   const totalBatch = useTrainingStore((s) => s.totalBatch);
   const speed = useTrainingStore((s) => s.speed);
   const validationRunning = useTrainingStore((s) => s.validationRunning);
-  const totalEpochs = useRunConfigStore((s) => s.schedule.totalEpochs);
+  const totalEpochs = useTrainingStore((s) => s.launchConfig?.totalEpochs ?? 0);
 
   const epochPct = totalBatch > 0 ? (batch / totalBatch) * 100 : 0;
   const overallPct = totalEpochs > 0 ? ((epoch - 1 + epochPct / 100) / totalEpochs) * 100 : 0;

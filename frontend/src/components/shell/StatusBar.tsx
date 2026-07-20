@@ -17,7 +17,7 @@ export function StatusBar() {
   const epoch = useTrainingStore((s) => s.epoch);
   const etaSec = useTrainingStore((s) => s.etaSec);
   const resumeFrom = useRunConfigStore((s) => s.resumeFrom);
-  const totalEpochs = useRunConfigStore((s) => s.schedule.totalEpochs);
+  const totalEpochs = useTrainingStore((s) => s.launchConfig?.totalEpochs ?? 0);
   const [deviceName, setDeviceName] = useState<string | null>(null);
 
   useEffect(() => {

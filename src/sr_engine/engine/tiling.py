@@ -20,6 +20,42 @@ def _compute_starts(dim_size: int, tile_size: int, stride: int) -> list[int]:
     return starts
 
 
+def _tile_blend_weight(
+    tile_h: int,
+    tile_w: int,
+    overlap: int,
+    has_top: bool,
+    has_bot: bool,
+    has_left: bool,
+    has_right: bool,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    """Create a 2D linear-ramp weight map for one tile.
+
+    Outside the overlap region the weight is 1.0.  In each overlap region
+    the weight linearly ramps from 1.0 at the inner edge to 0.0 at the
+    tile edge (when a neighbour exists).  Tile edges that form the image
+    border (no neighbour) keep weight 1.0 so border pixels are preserved.
+
+    Returns a ``(tile_h, tile_w)`` weight tensor.
+    """
+    row_w = torch.ones(tile_h, device=device, dtype=dtype)
+    col_w = torch.ones(tile_w, device=device, dtype=dtype)
+
+    if overlap > 0:
+        if has_top:
+            row_w[:overlap] = torch.linspace(0, 1, overlap, device=device, dtype=dtype)
+        if has_bot:
+            row_w[tile_h - overlap:] = torch.linspace(1, 0, overlap, device=device, dtype=dtype)
+        if has_left:
+            col_w[:overlap] = torch.linspace(0, 1, overlap, device=device, dtype=dtype)
+        if has_right:
+            col_w[tile_w - overlap:] = torch.linspace(1, 0, overlap, device=device, dtype=dtype)
+
+    return row_w[:, None] * col_w[None, :]
+
+
 def tile_image(
     image: torch.Tensor,
     tile_size: int,
@@ -68,19 +104,19 @@ def tile_image(
 def stitch_tiles(
     tiles: list[tuple[torch.Tensor, tuple[int, int]]],
     output_size: tuple[int, int],
-    overlap: int,
+    overlap: int = 0,
 ) -> torch.Tensor:
     """Stitch overlapping tiles back into a full image.
 
-    Overlapping regions are averaged (by accumulation count) to avoid seam
-    artifacts.
+    Overlapping regions are blended with a position-aware linear ramp so
+    that every pixel receives weight 1.0 in total — seam artefacts are
+    eliminated while border pixels are preserved exactly.
 
     Args:
         tiles: List of ``(tile, (row, col))`` tuples.
         output_size: ``(H, W)`` of the output image.
-        overlap: Overlap used during tiling (accepted for API symmetry with
-            ``tile_image``; the current averaging strategy doesn't need the
-            exact value, since it just counts contributions per pixel).
+        overlap: Overlap between adjacent tiles in pixels (used to
+            determine the blend-ramp width).
 
     Returns:
         Stitched image tensor of shape ``(C, H, W)``.
@@ -94,20 +130,28 @@ def stitch_tiles(
     device = first_tile.device
     dtype = first_tile.dtype
 
+    tile_h, tile_w = first_tile.shape[1], first_tile.shape[2]
+
     output = torch.zeros((channels, height, width), device=device, dtype=dtype)
     weight = torch.zeros((1, height, width), device=device, dtype=dtype)
 
     for tile, (row, col) in tiles:
-        tile_h, tile_w = tile.shape[1], tile.shape[2]
-
-        # Clip in case a tile would extend past the declared output bounds
-        # (shouldn't normally happen if tiles came from tile_image with a
-        # matching output_size, but guards against mismatched inputs).
         row_end = min(row + tile_h, height)
         col_end = min(col + tile_w, width)
+        actual_h = row_end - row
+        actual_w = col_end - col
 
-        output[:, row:row_end, col:col_end] += tile[:, : row_end - row, : col_end - col]
-        weight[:, row:row_end, col:col_end] += 1.0
+        # Detect image borders — tiles at the image edge have no neighbor
+        # on that side, so their overlap weight stays 1.0 (no blending).
+        w = _tile_blend_weight(
+            tile_h, tile_w, overlap,
+            has_top=row > 0, has_bot=row_end < height,
+            has_left=col > 0, has_right=col_end < width,
+            device=device, dtype=dtype,
+        )[:actual_h, :actual_w]
+
+        output[:, row:row_end, col:col_end] += tile[:, :actual_h, :actual_w] * w
+        weight[:, row:row_end, col:col_end] += w
 
     weight = weight.clamp(min=1e-8)
     return output / weight

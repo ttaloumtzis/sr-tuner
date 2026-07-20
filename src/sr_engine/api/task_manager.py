@@ -32,6 +32,7 @@ class TaskRecord:
     completed_at: float | None = None
     error: str | None = None
     result: dict | None = None
+    params: dict | None = None
     cancel_event: threading.Event = field(default_factory=threading.Event)
 
 
@@ -56,7 +57,7 @@ class BackgroundTaskManager:
         self._tasks: dict[str, TaskRecord] = {}
         self._lock = threading.Lock()
 
-    def create_job(self, job_type: str) -> str:
+    def create_job(self, job_type: str, params: dict | None = None) -> str:
         job_id = f"{job_type}_{int(time.time())}_{uuid4().hex[:8]}"
         with self._lock:
             self._tasks[job_id] = TaskRecord(
@@ -64,6 +65,7 @@ class BackgroundTaskManager:
                 job_type=job_type,
                 status="pending",
                 created_at=time.time(),
+                params=params,
             )
         return job_id
 

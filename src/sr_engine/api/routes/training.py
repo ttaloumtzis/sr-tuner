@@ -16,8 +16,8 @@ async def train_start(params: TrainParams, ws: Workspace = Depends(get_workspace
     from sr_engine.api.app import events, tasks
     from sr_engine.api.workers import run_training
 
-    job_id = tasks.create_job("train")
     overrides = params.to_overrides()
+    job_id = tasks.create_job("train", params=overrides)
     thread = threading.Thread(
         target=run_training,
         args=(job_id, {

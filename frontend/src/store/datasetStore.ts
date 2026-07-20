@@ -95,7 +95,6 @@ interface DatasetState {
   jobType: "build" | "health" | "merge" | "prune" | "validate" | null;
   progressSteps: ProgressStep[];
   mergeResults: { scale: number; output_path: string; source_datasets: string[] }[] | null;
-  healthReport: Record<string, unknown> | null;
   validationResult: { valid: boolean; problems: string[]; num_pairs: number } | null;
 
   setSubTab: (tab: DatasetSubTab) => void;
@@ -160,7 +159,6 @@ interface DatasetState {
   finishProgressStep: (stepId: number) => void;
   clearJob: () => void;
   setMergeResults: (results: { scale: number; output_path: string; source_datasets: string[] }[] | null) => void;
-  setHealthReport: (report: Record<string, unknown> | null) => void;
   setValidationResult: (result: { valid: boolean; problems: string[]; num_pairs: number } | null) => void;
 }
 
@@ -228,7 +226,6 @@ export const useDatasetStore = create<DatasetState>((set) => ({
   jobType: null,
   progressSteps: [],
   mergeResults: null,
-  healthReport: null,
   validationResult: null,
 
   setSubTab: (subTab) => set({
@@ -331,6 +328,5 @@ export const useDatasetStore = create<DatasetState>((set) => ({
     })),
   clearJob: () => set({ jobId: null, jobStatus: "idle", jobError: null, jobType: null, progressSteps: [], extractionProgress: null, mergeResults: null }),
   setMergeResults: (mergeResults) => set({ mergeResults }),
-  setHealthReport: (healthReport) => set({ healthReport }),
   setValidationResult: (validationResult) => set({ validationResult }),
 }));

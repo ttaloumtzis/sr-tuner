@@ -19,4 +19,4 @@ experiments/
 /checkpoints/
 frontend/node_modules/
 src-tauri/target/
-*.log
+*.logfrontend/src.zip

@@ -63,6 +63,7 @@ export const buildDataset = (params: DatasetBuildParams) => request<JobAccepted>
 export const validateDatasetPath = (params: DatasetValidateParams) => request<{ valid: boolean; problems: string[]; num_pairs: number }>("POST", "/api/datasets/validate", params);
 export const startValidateDataset = (params: DatasetValidateParams) => request<JobAccepted>("POST", "/api/datasets/validate-async", params);
 export const healthCheck = (params: DatasetHealthParams) => request<JobAccepted>("POST", "/api/datasets/health", params);
+export const getDatasetHealth = (path: string) => request<Record<string, unknown> | null>("GET", `/api/datasets/health?path=${encodeURIComponent(path)}`);
 export const mergeDatasets = (params: DatasetMergeParams) => request<JobAccepted>("POST", "/api/datasets/merge", params);
 export const pruneBlackFrames = (params: { path: string; black_frames: string[] }) => request<JobAccepted>("POST", "/api/datasets/prune", params);
 

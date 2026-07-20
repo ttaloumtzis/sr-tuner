@@ -34,6 +34,15 @@ export interface ValidationHistoryEntry extends ValidationFrames {
   receivedAt: number;
 }
 
+export interface LaunchConfig {
+  totalEpochs: number;
+  batchSize: number;
+  learningRate: number;
+  fp16: boolean;
+  patchSize: number;
+  validationEnabled: boolean;
+}
+
 const MAX_VALIDATION_HISTORY = 300;
 
 export interface HardwareData {
@@ -83,6 +92,7 @@ interface TrainingState {
   validationRunning: boolean;
   errorCode: string | null;
   errorMessage: string | null;
+  launchConfig: LaunchConfig | null;
 
   setStatus: (status: TrainingStatus) => void;
   setError: (code: string, message: string) => void;
@@ -96,6 +106,7 @@ interface TrainingState {
   updateFromValidate: (epoch: number, psnr: number, ssim: number, fullPsnr?: number, fullSsim?: number) => void;
   updateFromHardware: (data: HardwareData) => void;
   setFinalEpoch: (epoch: number) => void;
+  setLaunchConfig: (config: LaunchConfig) => void;
   reset: () => void;
 }
 
@@ -136,11 +147,13 @@ export const useTrainingStore = create<TrainingState>((set) => ({
   validationRunning: false,
   errorCode: null,
   errorMessage: null,
+  launchConfig: null,
 
   setStatus: (status) => set({ status }),
   setError: (code, message) => set({ errorCode: code, errorMessage: message, status: "failed" }),
   setActiveRun: (runId) => set({ activeTrainingRunId: runId }),
   setValidationFrames: (frames) => set({ validationFrames: frames }),
+  setLaunchConfig: (config) => set({ launchConfig: config }),
 
   pushValidationFrames: (epoch, frames, psnr = null, ssim = null) =>
     set((s) => {
@@ -240,5 +253,6 @@ export const useTrainingStore = create<TrainingState>((set) => ({
     validationRunning: false,
     errorCode: null,
     errorMessage: null,
+    launchConfig: null,
   }),
 }));

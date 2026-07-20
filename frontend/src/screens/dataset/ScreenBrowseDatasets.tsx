@@ -65,12 +65,12 @@ export function ScreenBrowseDatasets() {
   const [loading, setLoading] = useState(false);
   const [pruneResult, setPruneResult] = useState<{ pruned: number; valid: boolean; problems: string[] } | null>(null);
   const [showBlackFrames, setShowBlackFrames] = useState(false);
+  const [healthReport, setHealthReport] = useState<Record<string, unknown> | null>(null);
   const prevJobStatusRef = useRef(store.jobStatus);
 
   const projectDir = project ? parentFromProjFile(project.filePath) : "";
   const datasetsDir = projectDir ? join(projectDir, "datasets") : "";
 
-  const healthReport = store.healthReport as Record<string, unknown> | null;
   const blackFrames = (healthReport?.black_frames as string[]) ?? [];
 
   const refresh = useCallback(async () => {
@@ -100,6 +100,20 @@ export function ScreenBrowseDatasets() {
     })();
   }, [selected]);
 
+  // Fetch cached health report from backend when dataset changes
+  useEffect(() => {
+    if (!selected) { setHealthReport(null); return; }
+    (async () => {
+      try {
+        const { getDatasetHealth } = await import("../../lib/api");
+        const report = await getDatasetHealth(selected.path);
+        setHealthReport(report);
+      } catch {
+        setHealthReport(null);
+      }
+    })();
+  }, [selected]);
+
   useEffect(() => {
     const prev = prevJobStatusRef.current;
     prevJobStatusRef.current = store.jobStatus;
@@ -111,6 +125,16 @@ export function ScreenBrowseDatasets() {
         refresh();
       } else if (store.jobType === "validate") {
         refresh();
+      } else if (store.jobType === "health") {
+        (async () => {
+          try {
+            const { getDatasetHealth } = await import("../../lib/api");
+            const report = await getDatasetHealth(selected?.path ?? "");
+            setHealthReport(report);
+          } catch {
+            setHealthReport(null);
+          }
+        })();
       }
     }
   }, [store.jobStatus]);
@@ -118,8 +142,6 @@ export function ScreenBrowseDatasets() {
   const handleSelect = (ds: ScannedDataset) => {
     setSelected(ds);
     setPruneResult(null);
-    store.setHealthReport(null);
-    store.setValidationResult(null);
   };
 
   const handleValidate = async () => {
@@ -235,7 +257,12 @@ export function ScreenBrowseDatasets() {
 
             {healthReport && (
               <div style={{ padding: "6px 12px" }}>
-                <Panel title="Health Report">
+                <Panel title="Health Report" actions={
+                  <button onClick={() => setHealthReport(null)}
+                    style={{ background: "none", border: "none", color: "var(--muted)", fontSize: 12, cursor: "pointer", padding: "0 4px", lineHeight: 1 }}>
+                    ✕
+                  </button>
+                }>
                   <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11 }}>
                     <div>Total images: <span style={{ fontFamily: "var(--font-mono)", fontWeight: 600, color: "var(--green)" }}>{String(healthReport.total_images ?? "?")}</span></div>
                     <div>Computed threshold: <span style={{ fontFamily: "var(--font-mono)" }}>{String(healthReport.computed_threshold ?? "?")}</span></div>

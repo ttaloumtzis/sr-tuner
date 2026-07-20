@@ -81,6 +81,22 @@ async def health_check(params: DatasetHealthParams, ws: Workspace = Depends(get_
     return {"job_id": job_id, "status": "accepted"}
 
 
+@router.get("/health")
+async def get_health_report(
+    path: str,
+    ws: Workspace = Depends(get_workspace),
+):
+    dataset_path = Path(path).resolve()
+    if not str(dataset_path).startswith(str(ws.path)):
+        raise HTTPException(403, "Path is outside the workspace")
+    from sr_engine.data.dataset_health import load_health_report
+
+    report = load_health_report(dataset_path)
+    if report is None:
+        return None
+    return report
+
+
 @router.post("/merge")
 async def merge(params: DatasetMergeParams, ws: Workspace = Depends(get_workspace)):
     input_path = Path(params.input).resolve()

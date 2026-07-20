@@ -78,6 +78,7 @@ export interface JobStatus {
   completed_at?: number;
   error?: string;
   result?: Record<string, unknown>;
+  config?: Record<string, unknown>;
 }
 
 export interface EnvInfo {

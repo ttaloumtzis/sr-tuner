@@ -20,6 +20,7 @@ async def list_jobs():
             completed_at=r.completed_at,
             error=r.error,
             result=r.result,
+            config=r.params,
         )
         for r in records
     ]
@@ -42,6 +43,7 @@ async def job_status(job_id: str):
         completed_at=rec.completed_at,
         error=rec.error,
         result=rec.result,
+        config=rec.params,
     )
 
 

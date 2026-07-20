@@ -156,6 +156,7 @@ class JobStatus(BaseModel):
     completed_at: float | None = None
     error: str | None = None
     result: dict | None = None
+    config: dict | None = None
 
 class JobList(BaseModel):
     jobs: list[JobStatus]

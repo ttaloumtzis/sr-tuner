@@ -77,7 +77,7 @@ export const useRunConfigStore = create<RunConfigState>((set) => ({
   fp16: false,
   schedule: DEFAULT_SCHEDULE,
   batchSize: 16,
-  patchSize: 64,
+  patchSize: 128,
   learningRate: 2e-4,
   seed: 42,
   weightDecay: 0.0,

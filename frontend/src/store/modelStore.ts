@@ -19,7 +19,7 @@ const DEFAULT_HYPERPARAMETERS: Hyperparameters = {
   optimizer: "Adam",
   learningRate: 1e-4,
   batchSize: 16,
-  patchSize: 64,
+  patchSize: 128,
   totalIter: 300000,
 };
 
