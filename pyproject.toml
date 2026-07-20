@@ -35,6 +35,7 @@ dev = [
     "pytest-cov>=5.0",
     "pytest-mock>=3.14",
     "ruff>=0.3",
+    "pyinstaller>=6.0",
     # torch removed from here to prevent default installation of CUDA-heavy wheels
 ]
 

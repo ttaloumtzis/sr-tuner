@@ -42,6 +42,62 @@ fn kill_process_group(pid: u32) {
     }
 }
 
+// ── Sidecar binary resolution ────────────────────────────────────────────
+// Tries the bundled sidecar (release) or the dev build output (debug).
+// Falls back to None so the caller can use `uv run uvicorn` instead.
+
+#[allow(unused_variables)]
+fn find_sidecar_binary(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    #[cfg(not(debug_assertions))]
+    {
+        // Release mode: bundled in the app's resource directory via externalBin.
+        let dir = app.path().resource_dir().ok()?;
+        let path = dir.join("bin").join("sr-engine");
+        if is_valid_sidecar(&path) {
+            return Some(path);
+        }
+        // Windows variant
+        let path_exe = dir.join("bin").join("sr-engine.exe");
+        if is_valid_sidecar(&path_exe) {
+            return Some(path_exe);
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    {
+        // Dev mode: check the project's build output.
+        // The sidecar binary is built by scripts/build-sidecar.sh and placed at
+        // src-tauri/binaries/sr-engine-<target-triple>.
+        // build.rs creates a 1-byte placeholder if the real binary is missing;
+        // we reject anything smaller than 1 KB.
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let triple = env!("SR_ENGINE_TARGET_TRIPLE");
+        let path = manifest_dir
+            .join("binaries")
+            .join(format!("sr-engine-{triple}"));
+        if is_valid_sidecar(&path) {
+            return Some(path);
+        }
+        let path_exe = manifest_dir
+            .join("binaries")
+            .join(format!("sr-engine-{triple}.exe"));
+        if is_valid_sidecar(&path_exe) {
+            return Some(path_exe);
+        }
+    }
+
+    None
+}
+
+/// Returns `true` if the file exists and is larger than 1 KB (real sidecar).
+/// build.rs creates a 1-byte placeholder when the real binary hasn't been
+/// built yet — we reject that so the caller falls back to `uv run uvicorn`.
+fn is_valid_sidecar(path: &std::path::Path) -> bool {
+    std::fs::metadata(path)
+        .map(|m| m.len() > 1024)
+        .unwrap_or(false)
+}
+
 // ── Python server lifecycle ───────────────────────────────────────────────
 
 #[tauri::command]
@@ -57,19 +113,35 @@ fn start_python_server(app: tauri::AppHandle) -> Result<(), String> {
         }
     }
 
-    let mut cmd = Command::new("uv");
-    cmd.args([
-            "run", "uvicorn", "sr_engine.api.app:app",
-            "--host", "127.0.0.1", "--port", "8765", "--log-level", "info",
-        ])
-        .stdout(Stdio::null())
+    let mut cmd = if let Some(sidecar_path) = find_sidecar_binary(&app) {
+        // Sidecar binary found — use it directly (no arguments needed;
+        // the entry script hard-codes host/port).
+        Command::new(sidecar_path)
+    } else {
+        // No sidecar available — fall back to `uv run uvicorn` (dev mode).
+        let mut c = Command::new("uv");
+        c.args([
+            "run",
+            "uvicorn",
+            "sr_engine.api.app:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "8765",
+            "--log-level",
+            "info",
+        ]);
+        c
+    };
+
+    cmd.stdout(Stdio::null())
         .stderr(Stdio::inherit());
 
     #[cfg(unix)]
     unsafe {
         cmd.pre_exec(|| {
             // Isolate this process into its own process group so we can
-            // kill *every* descendant (uv → uvicorn) in one shot later.
+            // kill *every* descendant in one shot later.
             libc::setpgid(0, 0);
             Ok(())
         });

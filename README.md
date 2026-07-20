@@ -25,7 +25,7 @@ The project uses three runtimes. You only need the ones relevant to how you use 
 |-----------|---------|------------|
 | CLI + API server | **Python** ≥3.11, <3.13 + [uv](https://docs.astral.sh/uv/) | All ML operations, dataset pipeline, REST API |
 | Desktop GUI | **Node.js** ≥18 + npm | React frontend development and builds |
-| Desktop shell | **Rust** (edition 2021) | Building the native Tauri desktop binary |
+| Desktop shell | **Rust** (edition 2021) + **PyInstaller** (for release builds) | Building the native Tauri desktop binary + bundling the Python backend |
 
 ### Quick setup
 
@@ -186,11 +186,19 @@ srengine serve start
 The React/TypeScript frontend with Tauri 2 desktop shell provides tab-based navigation for project management, dataset operations, model training with live metrics, drag-and-drop inference, and checkpoint browsing.
 
 ```bash
-cd frontend
-npm install               # install frontend dependencies
-npm run dev               # Vite dev server (requires API on :8765)
-npx tauri build           # standalone desktop binary
+# 1. Install frontend deps (once)
+cd frontend && npm install
+
+# 2. Dev mode (uses .venv, Python changes picked up on restart)
+cd .. && cargo tauri dev
+
+# 3. Release build (bundles Python backend as standalone binary)
+./scripts/build-sidecar.sh          # PyInstaller --onefile (~300 MB)
+cargo tauri build                   # AppImage / .dmg / .msi
 ```
+
+Dev mode runs the Python backend via `uv run uvicorn` from your `.venv`.
+The release build embeds a self-contained Python binary — the app runs on any machine without Python or `.venv`.
 
 ### Python API
 
@@ -250,7 +258,7 @@ Default configuration files are bundled in `src/sr_engine/utils/configs/` and ar
 ## Development
 
 ```bash
-# Install dev dependencies
+# Install dev dependencies (pytest, ruff, pyinstaller)
 uv sync --group dev
 
 # Run tests
