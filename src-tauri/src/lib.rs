@@ -89,13 +89,31 @@ fn find_sidecar_binary(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
     None
 }
 
-/// Returns `true` if the file exists and is larger than 1 KB (real sidecar).
+/// Returns `true` if the path is a valid sidecar.
 /// build.rs creates a 1-byte placeholder when the real binary hasn't been
 /// built yet — we reject that so the caller falls back to `uv run uvicorn`.
+///
+/// Two build modes are accepted:
+///   --onefile: a single binary file > 1 KB
+///   --onedir:  a directory containing the binary + _internal/
 fn is_valid_sidecar(path: &std::path::Path) -> bool {
-    std::fs::metadata(path)
-        .map(|m| m.len() > 1024)
-        .unwrap_or(false)
+    let meta = std::fs::metadata(path);
+    match meta {
+        Ok(m) if m.is_dir() => true,          // --onedir directory
+        Ok(m) => m.len() > 1024,              // --onefile real binary
+        _ => false,
+    }
+}
+
+/// Resolve the actual executable path for a sidecar.
+///   --onefile: path is the binary itself
+///   --onedir:  path is a directory, binary is at path / sr-engine
+fn resolve_sidecar_exe(path: &std::path::Path) -> std::path::PathBuf {
+    if path.is_dir() {
+        path.join("sr-engine")
+    } else {
+        path.to_path_buf()
+    }
 }
 
 // ── Python server lifecycle ───────────────────────────────────────────────
@@ -114,9 +132,11 @@ fn start_python_server(app: tauri::AppHandle) -> Result<(), String> {
     }
 
     let mut cmd = if let Some(sidecar_path) = find_sidecar_binary(&app) {
-        // Sidecar binary found — use it directly (no arguments needed;
-        // the entry script hard-codes host/port).
-        Command::new(sidecar_path)
+        // Sidecar found — resolve the actual binary (handles both --onefile
+        // and --onedir layouts). No arguments needed; the entry script
+        // hard-codes host/port.
+        let exe = resolve_sidecar_exe(&sidecar_path);
+        Command::new(exe)
     } else {
         // No sidecar available — fall back to `uv run uvicorn` (dev mode).
         let mut c = Command::new("uv");
