@@ -201,6 +201,10 @@ class FFmpegExtractor:
         if duration is not None:
             total_frames = min(total_frames, int(duration * info.fps))
 
+        # Adjust total for frame_rate filtering (e.g. 10fps on 30fps source)
+        if effective_rate < info.fps and info.fps > 0 and total_frames > 0:
+            total_frames = round(total_frames * (effective_rate / info.fps))
+
         log.info("Running ffmpeg: %s", " ".join(str(a) for a in cmd))
 
         reporter = reporter or ProgressReporter()
