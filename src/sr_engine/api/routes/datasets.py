@@ -1,8 +1,10 @@
 import json
+import shutil
 import threading
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 
 from sr_engine.api.deps import get_configs, get_workspace
 from sr_engine.api.schemas import DatasetBuildParams, DatasetHealthParams, DatasetMergeParams, DatasetPruneParams, DatasetValidateParams
@@ -141,6 +143,65 @@ async def prune_dataset(params: DatasetPruneParams, ws: Workspace = Depends(get_
     return {"job_id": job_id, "status": "accepted"}
 
 
+@router.delete("/{dataset_name}")
+async def delete_dataset(
+    dataset_name: str,
+    ws: Workspace = Depends(get_workspace),
+):
+    dataset_path = ws.path / "datasets" / dataset_name
+    if not dataset_path.is_dir():
+        raise HTTPException(404, f"Dataset '{dataset_name}' not found")
+    if not str(dataset_path).startswith(str(ws.path)):
+        raise HTTPException(403, "Path is outside the workspace")
+    shutil.rmtree(dataset_path)
+    return {"deleted": dataset_name}
+
+
+@router.get("/{dataset_name}/image")
+async def serve_dataset_image(
+    dataset_name: str,
+    kind: str,
+    index: int,
+    ws: Workspace = Depends(get_workspace),
+):
+    dataset_path = ws.path / "datasets" / dataset_name
+    manifest_path = dataset_path / "manifest.json"
+    if not manifest_path.is_file():
+        raise HTTPException(404, "Manifest not found for dataset")
+
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        raise HTTPException(500, "Failed to read manifest")
+
+    pairs = data.get("pairs", [])
+
+    if pairs:
+        # Normal path: use manifest pairs
+        if index < 0 or index >= len(pairs):
+            raise HTTPException(404, f"Pair index {index} out of range (0-{len(pairs) - 1})")
+        rel_path = pairs[index].get(kind, "")
+        if not rel_path:
+            raise HTTPException(404, f"No '{kind}' path for pair {index}")
+        full_path = (dataset_path / rel_path).resolve()
+    else:
+        # Fallback: scan HR/ and LR/ directories (covers merged datasets
+        # and any other case where the manifest pairs list is empty)
+        kind_dir = dataset_path / ("HR" if kind == "hr" else "LR")
+        if not kind_dir.is_dir():
+            raise HTTPException(404, f"No '{kind.upper()}/' directory for dataset")
+        files = sorted(kind_dir.glob("*.png"))
+        if index < 0 or index >= len(files):
+            raise HTTPException(404, f"Pair index {index} out of range (0-{len(files) - 1})")
+        full_path = files[index].resolve()
+
+    if not str(full_path).startswith(str(ws.path)):
+        raise HTTPException(403, "Path outside workspace")
+    if not full_path.is_file():
+        raise HTTPException(404, f"Image file not found: {full_path}")
+    return FileResponse(str(full_path), filename=full_path.name)
+
+
 @router.get("")
 async def list_datasets(
     scale: int | None = None,
@@ -163,10 +224,19 @@ async def list_datasets(
         ds_scale = int(data.get("config", {}).get("scale", 4))
         if scale is not None and ds_scale != scale:
             continue
+        pairs = data.get("pairs", [])
+        if pairs:
+            num_pairs = len(pairs)
+        elif (d / "HR").is_dir() and (d / "LR").is_dir():
+            hr_files = list((d / "HR").glob("*.png"))
+            lr_files = list((d / "LR").glob("*.png"))
+            num_pairs = min(len(hr_files), len(lr_files))
+        else:
+            num_pairs = 0
         result.append({
             "name": d.name,
             "path": str(d),
             "scale": ds_scale,
-            "num_pairs": len(data.get("pairs", [])),
+            "num_pairs": num_pairs,
         })
     return result

@@ -26,6 +26,31 @@ min_lr: 1e-7
 dtype: float32  # "bf16" enables bfloat16, "float16" enables fp16 + GradScaler
 
 # --- Losses ---
+# Each loss is a named entry with a "type" and "weight".
+# Available types: l1, l2, vgg, edge, style, fft, ssim, lpips
+# Type-specific params are passed as extra keys (e.g. layers for vgg/style).
 losses:
-  perceptual_weight: 0.1
-  # adversarial_weight: 0.01  # Not implemented yet
+  pixel:
+    type: l1
+    weight: 1.0
+  perceptual:
+    type: vgg
+    weight: 0.1
+    layers: ["relu5_4"]
+  # Uncomment to enable additional losses:
+  # edge:
+  #   type: edge
+  #   weight: 0.05
+  # style:
+  #   type: style
+  #   weight: 0.01
+  #   layers: ["relu1_2", "relu2_2", "relu3_4", "relu4_4", "relu5_2"]
+  # fft:
+  #   type: fft
+  #   weight: 0.01
+  # ssim:
+  #   type: ssim
+  #   weight: 0.1
+  # lpips:
+  #   type: lpips
+  #   weight: 0.1

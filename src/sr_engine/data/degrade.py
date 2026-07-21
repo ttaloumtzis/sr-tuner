@@ -157,6 +157,12 @@ def _degrade_image(
     img = hr_image.copy()
 
     height, width = img.shape[:2]
+    if height < scale or width < scale:
+        logger.warning(
+            "[degrade] Image dimensions (%dx%d) are smaller than scale factor %d",
+            width, height, scale,
+        )
+        return None
     height -= height % scale
     width -= width % scale
     img = img[:height, :width]
@@ -272,10 +278,14 @@ def _process_single_frame(
 ) -> tuple[Path, Path | None]:
     hr_img = cv2.imread(str(hr_path))
     if hr_img is None:
-        logger.warning(f"[degrade] Skipping unreadable frame: {hr_path}")
+        logger.warning("[degrade] Skipping unreadable frame: %s", hr_path)
         return hr_path, None
 
     lr_img = _degrade_image(hr_img, scale, **kwargs)
+
+    if lr_img is None or lr_img.size == 0:
+        logger.warning("[degrade] Degradation produced empty image, skipping: %s", hr_path)
+        return hr_path, None
 
     lr_path = lr_dir / hr_path.name
     cv2.imwrite(str(lr_path), lr_img)
@@ -322,8 +332,6 @@ def batch_degrade(
             for hr_path, lr_path in results:
                 if lr_path is not None:
                     pairs.append((hr_path, lr_path))
-                elif hr_path.exists():
-                    hr_path.unlink()
                 reporter.update(1)
         except (BrokenPipeError, BrokenProcessPool):
             logger.warning(

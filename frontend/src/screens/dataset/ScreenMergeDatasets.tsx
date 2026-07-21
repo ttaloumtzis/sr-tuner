@@ -22,7 +22,7 @@ export function ScreenMergeDatasets() {
   const project = useProjectStore((s) => s.project);
   const projectDir = project ? parentFromProjFile(project.filePath) : "";
   const datasetsDir = projectDir ? join(projectDir, "datasets") : "";
-  const defaultOutput = datasetsDir ? join(datasetsDir, "merged") : "";
+  const defaultOutput = datasetsDir ? datasetsDir : "";
 
   const [scanned, setScanned] = useState<ScannedDataset[]>([]);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());

@@ -37,6 +37,15 @@ class RandomCrop:
                 f"requested patch size ({self.patch_size}x{self.patch_size})."
             )
 
+        _, hr_h, hr_w = hr.shape
+        min_hr = self.patch_size * self.scale
+        if hr_h < min_hr or hr_w < min_hr:
+            raise ValueError(
+                f"HR image dimensions ({hr_w}x{hr_h}) are smaller than "
+                f"required for patch size {self.patch_size} at scale {self.scale} "
+                f"(need {min_hr}x{min_hr})."
+            )
+
         y_lr = random.randint(0, lr_h - self.patch_size)
         x_lr = random.randint(0, lr_w - self.patch_size)
 
@@ -160,6 +169,16 @@ class CenterCrop:
                 f"LR image dimensions ({lr_w}x{lr_h}) are smaller than "
                 f"requested patch size ({self.patch_size}x{self.patch_size})."
             )
+
+        _, hr_h, hr_w = hr.shape
+        min_hr = self.patch_size * self.scale
+        if hr_h < min_hr or hr_w < min_hr:
+            raise ValueError(
+                f"HR image dimensions ({hr_w}x{hr_h}) are smaller than "
+                f"required for patch size {self.patch_size} at scale {self.scale} "
+                f"(need {min_hr}x{min_hr})."
+            )
+
         y_lr = (lr_h - self.patch_size) // 2
         x_lr = (lr_w - self.patch_size) // 2
         y_hr = y_lr * self.scale

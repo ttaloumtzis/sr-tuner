@@ -1,11 +1,13 @@
 """Dataset builder — orchestrates video -> HR/LR folder output."""
-from .dataset_validator import validate
-from .degrade import batch_degrade
-from .video_extract import extract_frames
 import json
+import threading
 from pathlib import Path
 import shutil
 from typing import Optional
+
+from .dataset_validator import validate
+from .degrade import batch_degrade
+from .video_extract import extract_frames
 
 from sr_engine.utils.logging import get_logger
 from sr_engine.utils.progress import ProgressReporter
@@ -17,6 +19,7 @@ def build_from_video(
         out_dir: Path,
         config: dict,
         reporter: Optional[ProgressReporter] = None,
+        cancel_event: Optional[threading.Event] = None,
 ) -> Path:
     """Build a dataset from a video file.
 
@@ -39,6 +42,7 @@ def build_from_video(
             start_time=config.get("start_time", 0.0),
             duration=config.get("duration"),
             reporter=reporter,
+            cancel_event=cancel_event,
         )
 
         # Fast fallback if no frames were extracted
@@ -61,13 +65,12 @@ def build_from_video(
         if len(hr_lr_pairs) < len(hr_paths):
             skipped = len(hr_paths) - len(hr_lr_pairs)
             loss_ratio = skipped / len(hr_paths)
-            if loss_ratio > 0.5:
-                log.warning(
-                    "%.0f%% of frames were lost during degradation. "
-                    "Dataset may be incomplete.", loss_ratio * 100,
-                )
-            else:
-                log.warning("%d frame(s) failed to degrade and were skipped.", skipped)
+            raise RuntimeError(
+                f"{skipped}/{len(hr_paths)} frames ({loss_ratio:.0%}) failed to decode during "
+                f"degradation. The video likely uses a pixel format or codec that OpenCV "
+                f"cannot decode. Try re-encoding: "
+                f"ffmpeg -i {video_path} -c:v libx264 -pix_fmt yuv420p -crf 18 output.mp4"
+            )
 
         # Build the temporary manifest metadata block first so the validator
         # can read the configured scale factor dynamically.

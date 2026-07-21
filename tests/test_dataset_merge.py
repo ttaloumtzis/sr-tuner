@@ -162,7 +162,12 @@ class TestMergeDatasets:
         assert data["config"]["scale"] == 4
         assert "vid1" in data["config"]["sources"]
         assert "vid2" in data["config"]["sources"]
-        assert data["pairs"] == []
+        assert len(data["pairs"]) == 5
+        for pair in data["pairs"]:
+            assert "HR/" in pair["hr"]
+            assert "LR/" in pair["lr"]
+            assert pair["hr"].endswith(".png")
+            assert pair["lr"].endswith(".png")
 
     def test_output_validated(self, tmp_path):
         ds_root = tmp_path / "datasets"

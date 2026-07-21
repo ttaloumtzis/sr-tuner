@@ -1,395 +1,717 @@
-import { useState, useEffect, useCallback, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { convertFileSrc } from "@tauri-apps/api/core";
-import { Btn } from "../../components/ui/Btn";
-import { Panel } from "../../components/ui/Panel";
-import { useProjectStore } from "../../store/projectStore";
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import {
+  Search,
+  Sliders,
+  ZoomIn,
+  ZoomOut,
+  FolderOpen,
+  Activity,
+  CheckCircle,
+  AlertCircle,
+  Trash2,
+  ChevronLeft,
+  ChevronRight,
+  Eye,
+  Columns,
+  Layers,
+  RotateCcw,
+  Loader2,
+} from "lucide-react";
+import "./ScreenBrowseDatasets.css";
+import { listDatasets, getDatasetImageUrl, validateDatasetPath, healthCheck, getDatasetHealth, deleteDataset, pruneBlackFrames } from "../../lib/api";
+import type { DatasetInfo, HealthReport } from "../../lib/api-types";
+import { useToast } from "../../components/shell/ToastProvider";
 import { useDatasetStore } from "../../store/datasetStore";
-import { scanDatasets, listDatasetPairs, type ScannedDataset } from "../../lib/scanDatasets";
-import { join, parentFromProjFile } from "../../lib/path";
+import { useDatasetSSE } from "../../hooks/useDatasetSSE";
+import { JobOverlay } from "../../components/dataset/JobOverlay";
 
-function DatasetListItem({ ds, active, onClick }: { ds: ScannedDataset; active: boolean; onClick: () => void }) {
-  const [hovered, setHovered] = useState(false);
-  const status = ds.hasManifest ? "✅" : "⚠";
-  return (
-    <div onClick={onClick} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
-      style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", cursor: "pointer", background: active ? "var(--greenDim)" : hovered ? "var(--bg2)" : "transparent", borderRadius: "var(--radius-sm)", transition: "var(--transition-fast)" }}>
-      <span style={{ fontSize: 14, flexShrink: 0 }}>📁</span>
-      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 1 }}>
-        <span style={{ fontSize: 11, color: "var(--text)", fontWeight: active ? 600 : 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ds.name}</span>
-        <span style={{ fontSize: 9, color: "var(--dim)", fontFamily: "var(--font-mono)" }}>×{ds.scale} · {ds.pairCount} pairs</span>
-      </div>
-      <span style={{ fontSize: 10, flexShrink: 0 }} title={ds.hasManifest ? "Has manifest" : "Needs validation"}>{status}</span>
-    </div>
+const FILMSTRIP_WINDOW = 25;
+const FALLBACK_IMG =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='80'%3E%3Crect fill='%231c1f23' width='120' height='80'/%3E%3Ctext x='60' y='42' text-anchor='middle' fill='%236b7583' font-size='10' font-family='sans-serif'%3ENo image%3C/text%3E%3C/svg%3E";
+
+export const ScreenBrowseDatasets: React.FC = () => {
+  const { show: toast } = useToast();
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedScaleFilter, setSelectedScaleFilter] = useState("all");
+  const [selectedName, setSelectedName] = useState<string | null>(null);
+  const [datasets, setDatasets] = useState<DatasetInfo[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const [currentPairIndex, setCurrentPairIndex] = useState(1);
+  const [viewMode, setViewMode] = useState<"slider" | "split" | "diff">("slider");
+  const [sliderPosition, setSliderPosition] = useState(50);
+  const [isDraggingSlider, setIsDraggingSlider] = useState(false);
+  const [zoomLevel, setZoomLevel] = useState(1);
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+
+  const sliderContainerRef = useRef<HTMLDivElement>(null);
+  const thumbScrollRef = useRef<HTMLDivElement>(null);
+
+  useDatasetSSE();
+  const jobStatus = useDatasetStore((s) => s.jobStatus);
+  const jobType = useDatasetStore((s) => s.jobType);
+  const setJobId = useDatasetStore((s) => s.setJobId);
+  const setJobStatus = useDatasetStore((s) => s.setJobStatus);
+  const setJobType = useDatasetStore((s) => s.setJobType);
+
+  const [healthReport, setHealthReport] = useState<HealthReport | null>(null);
+  const [healthReportLoading, setHealthReportLoading] = useState(false);
+  const [selectedBlackFrames, setSelectedBlackFrames] = useState<Set<string>>(new Set());
+
+  const currentDataset = datasets.find((d) => d.name === selectedName) ?? null;
+  const pairsCount = currentDataset?.num_pairs ?? 0;
+
+  const setPair = useCallback(
+    (n: number) => setCurrentPairIndex(Math.max(1, Math.min(pairsCount, n))),
+    [pairsCount],
   );
-}
 
-function ThumbStrip({ pairs, current, onSelect }: { pairs: { hr: string; lr: string }[]; current: number; onSelect: (i: number) => void }) {
-  const total = pairs.length;
-  const half = 10;
-  const start = Math.max(0, current - half);
-  const end = Math.min(total, current + half + 1);
-  const visible = [];
+  const handleValidate = useCallback(async () => {
+    if (!currentDataset) return;
+    try {
+      const res = await validateDatasetPath({ path: currentDataset.path });
+      if (res.valid) {
+        toast("success", `Dataset validated — ${res.num_pairs} pairs, no problems`);
+      } else {
+        toast("warning", `Validation found ${res.problems.length} problem(s): ${res.problems.join(", ")}`);
+      }
+    } catch (err) {
+      toast("error", `Validation failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }, [currentDataset, toast]);
 
-  for (let i = start; i < end; i++) {
-    visible.push(i);
+  const handleHealthReport = useCallback(async () => {
+    if (!currentDataset) return;
+    try {
+      let report = await getDatasetHealth(currentDataset.path);
+      if (report === null) {
+        const result = await healthCheck({ path: currentDataset.path, yes: false });
+        setJobId(result.job_id);
+        setJobType("health");
+        setJobStatus("running");
+        toast("info", "Health check started");
+      } else {
+        setHealthReport(report);
+        toast("success", `Health report loaded — ${report.black_frames.length} black frames`);
+      }
+    } catch (err) {
+      setJobId(null);
+      setJobType(null);
+      setJobStatus("idle");
+      toast("error", `Health check failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }, [currentDataset, toast]);
+
+  const toggleBlackFrame = useCallback((filename: string) => {
+    setSelectedBlackFrames((prev) => {
+      const next = new Set(prev);
+      if (next.has(filename)) next.delete(filename);
+      else next.add(filename);
+      return next;
+    });
+  }, []);
+
+  const selectAllBlackFrames = useCallback(() => {
+    if (!healthReport) return;
+    setSelectedBlackFrames(new Set(healthReport.black_frames));
+  }, [healthReport]);
+
+  const deselectAllBlackFrames = useCallback(() => {
+    setSelectedBlackFrames(new Set());
+  }, []);
+
+  const handlePrune = useCallback(async () => {
+    if (!currentDataset || selectedBlackFrames.size === 0) return;
+    try {
+      const result = await pruneBlackFrames({
+        path: currentDataset.path,
+        black_frames: Array.from(selectedBlackFrames),
+      });
+      setJobId(result.job_id);
+      setJobType("prune");
+      setJobStatus("running");
+      toast("info", `Pruning ${selectedBlackFrames.size} black frames...`);
+      setSelectedBlackFrames(new Set());
+    } catch (err) {
+      toast("error", `Prune failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }, [currentDataset, selectedBlackFrames, toast]);
+
+  const handleOpenDirectory = useCallback(async () => {
+    if (!currentDataset) return;
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("open_in_file_manager", { path: currentDataset.path });
+    } catch {
+      toast("info", `Dataset path: ${currentDataset.path}`);
+    }
+  }, [currentDataset, toast]);
+
+  const handleDelete = useCallback(async () => {
+    if (!currentDataset) return;
+    if (!window.confirm(`Delete dataset "${currentDataset.name}" and all its files?`)) return;
+    try {
+      await deleteDataset(currentDataset.name);
+      toast("success", `Dataset "${currentDataset.name}" deleted`);
+      setCurrentPairIndex(1);
+      listDatasets().then((data) => {
+        setDatasets(data);
+        setSelectedName((prev) => {
+          if (prev && data.some((d) => d.name === prev)) return prev;
+          return data.length > 0 ? data[0].name : null;
+        });
+      }).catch(() => {});
+    } catch (err) {
+      toast("error", `Delete failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }, [currentDataset, toast]);
+
+  const fetchDatasets = useCallback(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    listDatasets()
+      .then((data) => {
+        if (cancelled) return;
+        setDatasets(data);
+        setSelectedName((prev) => {
+          if (prev && data.some((d) => d.name === prev)) return prev;
+          return data.length > 0 ? data[0].name : null;
+        });
+        setCurrentPairIndex(1);
+        setLoading(false);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : String(err));
+        setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => fetchDatasets(), [fetchDatasets]);
+
+  useEffect(() => {
+    if (!currentDataset) return;
+    let cancelled = false;
+    setHealthReportLoading(true);
+    setHealthReport(null);
+    getDatasetHealth(currentDataset.path)
+      .then((report) => {
+        if (!cancelled) {
+          setHealthReport(report);
+          setHealthReportLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setHealthReport(null);
+          setHealthReportLoading(false);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [currentDataset?.path]);
+
+  useEffect(() => {
+    if (jobStatus !== "done" || jobType !== "health" || !currentDataset) return;
+    getDatasetHealth(currentDataset.path)
+      .then((report) => setHealthReport(report))
+      .catch(() => setHealthReport(null));
+  }, [jobStatus, jobType, currentDataset?.path]);
+
+  useEffect(() => {
+    if (jobStatus === "done" && jobType === "prune") {
+      fetchDatasets();
+      setHealthReport(null);
+      setSelectedBlackFrames(new Set());
+    }
+  }, [jobStatus, jobType, fetchDatasets]);
+
+  const filteredDatasets = datasets.filter((ds) => {
+    const matchesSearch = ds.name.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesScale = selectedScaleFilter === "all" || `x${ds.scale}` === selectedScaleFilter;
+    return matchesSearch && matchesScale;
+  });
+
+  const imgTransform = useCallback(
+    (includePan = true): React.CSSProperties => ({
+      width: "100%",
+      height: "100%",
+      transform: `scale(${zoomLevel})${includePan ? ` translate(${panOffset.x}px, ${panOffset.y}px)` : ""}`,
+      maxWidth: zoomLevel > 1 ? "none" : "100%",
+      maxHeight: zoomLevel > 1 ? "none" : "100%",
+      objectFit: "contain",
+    }),
+    [zoomLevel, panOffset],
+  );
+
+  const currentHrUrl =
+    currentDataset ? getDatasetImageUrl(currentDataset.name, "hr", currentPairIndex - 1) : "";
+  const currentLrUrl =
+    currentDataset ? getDatasetImageUrl(currentDataset.name, "lr", currentPairIndex - 1) : "";
+
+  const startThumb = Math.max(1, currentPairIndex - FILMSTRIP_WINDOW);
+  const endThumb = Math.min(pairsCount, currentPairIndex + FILMSTRIP_WINDOW);
+  const thumbIndices: number[] = [];
+  if (pairsCount > 0) {
+    for (let i = startThumb; i <= endThumb; i++) thumbIndices.push(i);
+  }
+
+  const scrollThumbs = useCallback((dir: "left" | "right") => {
+    thumbScrollRef.current?.scrollBy({
+      left: dir === "left" ? -200 : 200,
+      behavior: "smooth",
+    });
+  }, []);
+
+  const handleMove = useCallback((clientX: number) => {
+    if (!sliderContainerRef.current) return;
+    const rect = sliderContainerRef.current.getBoundingClientRect();
+    const x = clientX - rect.left;
+    setSliderPosition(Math.max(0, Math.min(100, (x / rect.width) * 100)));
+  }, []);
+
+  useEffect(() => {
+    if (!isDraggingSlider) return;
+    const onMove = (e: MouseEvent) => handleMove(e.clientX);
+    const onUp = () => setIsDraggingSlider(false);
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [isDraggingSlider, handleMove]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement) return;
+      if (e.key === "ArrowRight") setPair(currentPairIndex + 1);
+      else if (e.key === "ArrowLeft") setPair(currentPairIndex - 1);
+      else if (e.key === "1") setViewMode("slider");
+      else if (e.key === "2") setViewMode("split");
+      else if (e.key === "3") setViewMode("diff");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [setPair, currentPairIndex]);
+
+  if (loading) {
+    return (
+      <>
+        <div className="sr-browse-container">
+          <div className="loading-spinner">
+            <Loader2 size={18} className="spin" />
+            Loading datasets…
+          </div>
+        </div>
+        <JobOverlay />
+      </>
+    );
+  }
+
+  if (error) {
+    return (
+      <>
+        <div className="sr-browse-container">
+          <div className="error-banner">
+            <AlertCircle size={20} />
+            <span>Failed to load datasets: {error}</span>
+            <button onClick={fetchDatasets}>Retry</button>
+          </div>
+        </div>
+        <JobOverlay />
+      </>
+    );
+  }
+
+  if (datasets.length === 0) {
+    return (
+      <>
+        <div className="sr-browse-container">
+          <div className="empty-state">No datasets found. Create one in the "Create Dataset" tab.</div>
+        </div>
+        <JobOverlay />
+      </>
+    );
   }
 
   return (
-    <div style={{ display: "flex", gap: 4, overflow: "hidden", alignItems: "center", justifyContent: "center", padding: "4px 0" }}>
-      <button onClick={() => onSelect(Math.max(0, current - 20))} disabled={current === 0}
-        style={{ background: "none", border: "none", color: "var(--muted)", fontSize: 12, cursor: current === 0 ? "default" : "pointer", padding: "2px 4px", opacity: current === 0 ? 0.3 : 1 }}>
-        ◄
-      </button>
-      {visible.map((i) => (
-        <div key={i} onClick={() => onSelect(i)}
-          style={{ width: 40, height: 30, borderRadius: "var(--radius-sm)", overflow: "hidden", border: i === current ? "2px solid var(--green)" : "2px solid transparent", cursor: "pointer", opacity: i === current ? 1 : 0.6, flexShrink: 0, transition: "var(--transition-fast)" }}>
-          <img src={convertFileSrc(pairs[i].lr)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+    <>
+    <div className="sr-browse-container">
+      <aside className="sr-sidebar">
+        <div className="sidebar-header">
+          <h3>Datasets</h3>
+          <span className="dataset-count-badge">{filteredDatasets.length}</span>
         </div>
-      ))}
-      <button onClick={() => onSelect(Math.min(total - 1, current + 20))} disabled={current >= total - 1}
-        style={{ background: "none", border: "none", color: "var(--muted)", fontSize: 12, cursor: current >= total - 1 ? "default" : "pointer", padding: "2px 4px", opacity: current >= total - 1 ? 0.3 : 1 }}>
-        ►
-      </button>
-    </div>
-  );
+
+        <div className="sidebar-controls">
+          <div className="search-input-wrapper">
+            <Search size={14} className="search-icon" />
+            <input
+              type="text"
+              placeholder="Search datasets…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+
+          <div className="scale-filter-pills">
+            {["all", "x2", "x4", "x8"].map((scale) => (
+              <button
+                key={scale}
+                className={`scale-pill ${selectedScaleFilter === scale ? "active" : ""}`}
+                onClick={() => setSelectedScaleFilter(scale)}
+              >
+                {scale.toUpperCase()}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="dataset-list">
+          {filteredDatasets.map((ds) => {
+            const isSelected = ds.name === selectedName;
+            return (
+              <div
+                key={ds.name}
+                className={`dataset-card ${isSelected ? "selected" : ""}`}
+                onClick={() => {
+                  setSelectedName(ds.name);
+                  setCurrentPairIndex(1);
+                  setZoomLevel(1);
+                  setPanOffset({ x: 0, y: 0 });
+                }}
+              >
+                <div className="card-top-row">
+                  <span className="dataset-name" title={ds.name}>
+                    {ds.name}
+                  </span>
+                  <CheckCircle size={14} className="manifest-check" />
+                </div>
+                <div className="card-bottom-row">
+                  <span className="scale-tag">x{ds.scale}</span>
+                  <span className="pairs-count">{ds.num_pairs.toLocaleString()} pairs</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </aside>
+
+      <main className="sr-main-studio">
+        <header className="studio-header">
+          <div className="dataset-meta-group">
+            <h2 className="selected-title">{currentDataset?.name ?? "—"}</h2>
+            <div className="meta-pill-group">
+              <span className="meta-badge scale">
+                {currentDataset ? `x${currentDataset.scale}` : "—"}
+              </span>
+              <span className="meta-badge pairs">
+                {pairsCount.toLocaleString()} pairs
+              </span>
+              <span className="meta-badge manifest">Manifest OK</span>
+              {healthReportLoading
+  ? <span className="meta-badge health unverified">Health: Checking…</span>
+  : jobStatus === "running" && jobType === "health"
+    ? <span className="meta-badge health unverified">Health: Running…</span>
+    : healthReport === null
+      ? <span className="meta-badge health unverified">Health: Unchecked</span>
+      : healthReport.black_frames.length === 0
+        ? <span className="meta-badge health healthy">Health: OK</span>
+        : <span className="meta-badge health warning">Health: {healthReport.black_frames.length} issue{healthReport.black_frames.length !== 1 ? "s" : ""}</span>
 }
-
-export function ScreenBrowseDatasets() {
-  const project = useProjectStore((s) => s.project);
-  const store = useDatasetStore();
-  const [datasets, setDatasets] = useState<ScannedDataset[]>([]);
-  const [selected, setSelected] = useState<ScannedDataset | null>(null);
-  const [pairs, setPairs] = useState<{ hr: string; lr: string }[]>([]);
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [pruneResult, setPruneResult] = useState<{ pruned: number; valid: boolean; problems: string[] } | null>(null);
-  const [showBlackFrames, setShowBlackFrames] = useState(false);
-  const [healthReport, setHealthReport] = useState<Record<string, unknown> | null>(null);
-  const prevJobStatusRef = useRef(store.jobStatus);
-
-  const projectDir = project ? parentFromProjFile(project.filePath) : "";
-  const datasetsDir = projectDir ? join(projectDir, "datasets") : "";
-
-  const blackFrames = (healthReport?.black_frames as string[]) ?? [];
-
-  const refresh = useCallback(async () => {
-    if (!datasetsDir) { setDatasets([]); return; }
-    setLoading(true);
-    try {
-      const exists = await invoke<boolean>("path_exists", { path: datasetsDir });
-      if (!exists) { setDatasets([]); return; }
-      const ds = await scanDatasets(datasetsDir);
-      setDatasets(ds);
-      if (ds.length > 0 && !selected) {
-        setSelected(ds[0]);
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, [datasetsDir]);
-
-  useEffect(() => { refresh(); }, [refresh]);
-
-  useEffect(() => {
-    if (!selected) { setPairs([]); return; }
-    (async () => {
-      const p = await listDatasetPairs(selected.path);
-      setPairs(p);
-      setCurrentIndex(0);
-    })();
-  }, [selected]);
-
-  // Fetch cached health report from backend when dataset changes
-  useEffect(() => {
-    if (!selected) { setHealthReport(null); return; }
-    (async () => {
-      try {
-        const { getDatasetHealth } = await import("../../lib/api");
-        const report = await getDatasetHealth(selected.path);
-        setHealthReport(report);
-      } catch {
-        setHealthReport(null);
-      }
-    })();
-  }, [selected]);
-
-  useEffect(() => {
-    const prev = prevJobStatusRef.current;
-    prevJobStatusRef.current = store.jobStatus;
-    if (store.jobStatus === "done" && prev === "running") {
-      if (store.jobType === "prune") {
-        setPruneResult({ pruned: blackFrames.length, valid: true, problems: [] });
-        refresh();
-      } else if (store.jobType === "build") {
-        refresh();
-      } else if (store.jobType === "validate") {
-        refresh();
-      } else if (store.jobType === "health") {
-        (async () => {
-          try {
-            const { getDatasetHealth } = await import("../../lib/api");
-            const report = await getDatasetHealth(selected?.path ?? "");
-            setHealthReport(report);
-          } catch {
-            setHealthReport(null);
-          }
-        })();
-      }
-    }
-  }, [store.jobStatus]);
-
-  const handleSelect = (ds: ScannedDataset) => {
-    setSelected(ds);
-    setPruneResult(null);
-  };
-
-  const handleValidate = async () => {
-    if (!selected) return;
-    store.clearJob();
-    store.setJobType("validate");
-    store.setJobStatus("running");
-    try {
-      const { startValidateDataset } = await import("../../lib/api");
-      const res = await startValidateDataset({ path: selected.path });
-      store.setJobId(res.job_id);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      store.setJobError(msg);
-      store.setJobStatus("error");
-    }
-  };
-
-  const handleHealth = async () => {
-    if (!selected) return;
-    try {
-      store.clearJob();
-      store.setJobType("health");
-      const { healthCheck } = await import("../../lib/api");
-      const res = await healthCheck({ path: selected.path, yes: false });
-      store.setJobId(res.job_id);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      store.setJobError(msg);
-      store.setJobStatus("error");
-    }
-  };
-
-  const handlePrune = async () => {
-    if (!selected) return;
-    store.clearJob();
-    store.setJobType("prune");
-    store.setJobStatus("running");
-    try {
-      const { pruneBlackFrames } = await import("../../lib/api");
-      const res = await pruneBlackFrames({
-        path: selected.path,
-        black_frames: blackFrames,
-      });
-      store.setJobId(res.job_id);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      store.setJobError(msg);
-      store.setJobStatus("error");
-    }
-  };
-
-  const handleOpen = async () => {
-    if (!selected) return;
-    await invoke("open_in_file_manager", { path: selected.path });
-  };
-
-  const handleDelete = async () => {
-    if (!selected) return;
-    if (!confirm(`Delete dataset "${selected.name}"? This cannot be undone.`)) return;
-    await invoke("delete_directory", { path: selected.path });
-    refresh();
-    setSelected(null);
-  };
-
-  const currentPair = pairs[currentIndex];
-
-  const resolutions = healthReport?.resolutions as Record<string, number> | undefined;
-  const channels = healthReport?.channels as Record<string, number> | undefined;
-
-  return (
-    <div style={{ display: "flex", gap: 0, height: "100%", overflow: "hidden" }}>
-      <div style={{ flex: 1, minWidth: 180, maxWidth: 280, display: "flex", flexDirection: "column", borderRight: "1px solid var(--border)", overflow: "hidden" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 10px", borderBottom: "1px solid var(--border)" }}>
-          <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text)" }}>Datasets</span>
-          <Btn small onClick={refresh} title="Refresh">↻</Btn>
-        </div>
-        <div style={{ flex: 1, overflow: "auto", padding: "4px 6px" }}>
-          {loading && <div style={{ padding: 10, textAlign: "center", fontSize: 10, color: "var(--dim)" }}>Scanning...</div>}
-          {!loading && datasets.length === 0 && (
-            <div style={{ padding: 16, textAlign: "center", color: "var(--dim)", fontSize: 11, lineHeight: 1.5 }}>
-              No datasets found.<br />Go to Create Dataset tab to add one.
             </div>
-          )}
-          {datasets.map((ds) => (
-            <DatasetListItem key={ds.path} ds={ds} active={selected?.path === ds.path} onClick={() => handleSelect(ds)} />
-          ))}
-        </div>
-      </div>
+          </div>
 
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        {!selected && (
-          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--dim)", fontSize: 12 }}>
-            Select a dataset from the left panel
+          <div className="studio-actions">
+            <button className="btn-secondary" onClick={handleValidate}>
+              <Activity size={14} /> Validate
+            </button>
+            <button className="btn-secondary" onClick={handleHealthReport}>
+              <Eye size={14} /> Health Report
+            </button>
+            <button className="btn-secondary" onClick={handleOpenDirectory}>
+              <FolderOpen size={14} /> Open Directory
+            </button>
+            <button className="btn-danger" onClick={handleDelete}>
+              <Trash2 size={14} /> Delete
+            </button>
+          </div>
+        </header>
+
+        <div className="studio-sub-bar">
+          <div className="view-mode-toggle">
+            <button
+              className={`mode-btn ${viewMode === "slider" ? "active" : ""}`}
+              onClick={() => setViewMode("slider")}
+              title="Split Slider (1)"
+            >
+              <Sliders size={15} /> Split Slider
+            </button>
+            <button
+              className={`mode-btn ${viewMode === "split" ? "active" : ""}`}
+              onClick={() => setViewMode("split")}
+              title="Side-by-Side (2)"
+            >
+              <Columns size={15} /> Side-by-Side
+            </button>
+            <button
+              className={`mode-btn ${viewMode === "diff" ? "active" : ""}`}
+              onClick={() => setViewMode("diff")}
+              title="Difference Layer (3)"
+            >
+              <Layers size={15} /> Overlay
+            </button>
+          </div>
+
+          <div className="zoom-controls">
+            <button onClick={() => setZoomLevel((z) => Math.max(0.5, z - 0.5))} title="Zoom Out">
+              <ZoomOut size={15} />
+            </button>
+            <span className="zoom-indicator">{Math.round(zoomLevel * 100)}%</span>
+            <button onClick={() => setZoomLevel((z) => Math.min(4, z + 0.5))} title="Zoom In">
+              <ZoomIn size={15} />
+            </button>
+            <button
+              onClick={() => {
+                setZoomLevel(1);
+                setPanOffset({ x: 0, y: 0 });
+              }}
+              title="Reset View"
+            >
+              <RotateCcw size={14} />
+            </button>
+          </div>
+
+          <div className="pair-pagination">
+            <button
+              disabled={currentPairIndex <= 1}
+              onClick={() => setPair(currentPairIndex - 1)}
+              className="page-nav-btn"
+            >
+              <ChevronLeft size={16} /> Prev
+            </button>
+            <div className="pair-counter">
+              <input
+                type="number"
+                min={1}
+                max={pairsCount}
+                value={currentPairIndex}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10);
+                  if (val >= 1 && val <= pairsCount) setCurrentPairIndex(val);
+                }}
+              />
+              <span>/ {pairsCount}</span>
+            </div>
+            <button
+              disabled={currentPairIndex >= pairsCount}
+              onClick={() => setPair(currentPairIndex + 1)}
+              className="page-nav-btn"
+            >
+              Next <ChevronRight size={16} />
+            </button>
+          </div>
+        </div>
+
+        {viewMode === "slider" && (
+          <div className="canvas-wrapper">
+            <div
+              className="comparison-slider-container"
+              ref={sliderContainerRef}
+              onMouseDown={() => setIsDraggingSlider(true)}
+            >
+              <div className="image-layer hr-layer">
+                <img
+                  src={currentHrUrl}
+                  alt="HR Ground Truth"
+                  style={imgTransform(true)}
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).src = FALLBACK_IMG;
+                  }}
+                />
+                <span className="badge-tag tag-hr">HR (GT)</span>
+              </div>
+
+              <div
+                className="image-layer lr-layer"
+                style={{
+                  clipPath: `polygon(0 0, ${sliderPosition}% 0, ${sliderPosition}% 100%, 0 100%)`,
+                }}
+              >
+                <img
+                  src={currentLrUrl}
+                  alt="LR Degradation"
+                  style={imgTransform(true)}
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).src = FALLBACK_IMG;
+                  }}
+                />
+                <span className="badge-tag tag-lr">LR Input</span>
+              </div>
+
+              <div className="slider-handle-line" style={{ left: `${sliderPosition}%` }}>
+                <div className="slider-handle-knob">
+                  <Sliders size={14} />
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
-        {selected && (
-          <>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 12px", borderBottom: "1px solid var(--border)", background: "var(--bg1)" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)" }}>{selected.name}</span>
-                <span style={{ fontSize: 10, color: "var(--muted)", fontFamily: "var(--font-mono)" }}>×{selected.scale} · {pairs.length} pairs</span>
+        {viewMode === "split" && (
+          <div className="canvas-wrapper">
+            <div className="side-by-side-container">
+              <div className="split-pane">
+                <span className="badge-tag tag-hr">HR (Ground Truth)</span>
+                <img
+                  src={currentHrUrl}
+                  alt="HR Ground Truth"
+                  style={imgTransform(true)}
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).src = FALLBACK_IMG;
+                  }}
+                />
               </div>
-              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                <Btn small color="var(--green)" onClick={handleValidate}>Validate</Btn>
-                <Btn small color="var(--amber)" onClick={handleHealth} disabled={store.jobStatus === "running"}>Health</Btn>
-                <Btn small onClick={handleOpen}>Open</Btn>
-                <div style={{ flex: 1 }} />
-                <Btn small color="var(--red)" onClick={handleDelete}>Delete</Btn>
+              <div className="split-pane">
+                <span className="badge-tag tag-lr">LR (Degraded)</span>
+                <img
+                  src={currentLrUrl}
+                  alt="LR Degraded"
+                  style={imgTransform(true)}
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).src = FALLBACK_IMG;
+                  }}
+                />
               </div>
             </div>
-
-            {healthReport && (
-              <div style={{ padding: "6px 12px" }}>
-                <Panel title="Health Report" actions={
-                  <button onClick={() => setHealthReport(null)}
-                    style={{ background: "none", border: "none", color: "var(--muted)", fontSize: 12, cursor: "pointer", padding: "0 4px", lineHeight: 1 }}>
-                    ✕
-                  </button>
-                }>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11 }}>
-                    <div>Total images: <span style={{ fontFamily: "var(--font-mono)", fontWeight: 600, color: "var(--green)" }}>{String(healthReport.total_images ?? "?")}</span></div>
-                    <div>Computed threshold: <span style={{ fontFamily: "var(--font-mono)" }}>{String(healthReport.computed_threshold ?? "?")}</span></div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      Black frames: <span style={{ fontFamily: "var(--font-mono)", fontWeight: 600, color: blackFrames.length ? "var(--red)" : "var(--green)" }}>
-                        {blackFrames.length}
-                      </span>
-                      {blackFrames.length > 0 && (
-                        <>
-                          <Btn small onClick={handlePrune} disabled={store.jobStatus === "running"}>
-                            Prune {blackFrames.length}
-                          </Btn>
-                          <button onClick={() => setShowBlackFrames(!showBlackFrames)}
-                            style={{ background: "none", border: "none", color: "var(--muted)", fontSize: 11, cursor: "pointer", padding: 2 }}>
-                            {showBlackFrames ? "▲" : "▼"}
-                          </button>
-                        </>
-                      )}
-                    </div>
-                    {showBlackFrames && blackFrames.length > 0 && (
-                      <div style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--dim)", maxHeight: 100, overflow: "auto", padding: "4px 0" }}>
-                        {blackFrames.map((f) => <div key={f}>{f}</div>)}
-                      </div>
-                    )}
-                    {resolutions && (
-                      <div style={{ fontSize: 10, color: "var(--muted)" }}>
-                        Resolutions: {Object.entries(resolutions).map(([k, v]) => `${k} (${v})`).join(", ")}
-                      </div>
-                    )}
-                    {channels && (
-                      <div style={{ fontSize: 10, color: "var(--muted)" }}>
-                        Channels: {Object.entries(channels).map(([k, v]) => `${k} (${v})`).join(", ")}
-                      </div>
-                    )}
-                  </div>
-                </Panel>
-              </div>
-            )}
-
-            {!healthReport && selected && (
-              <div style={{ padding: "6px 12px" }}>
-                <Panel title="Dataset Info">
-                  <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11 }}>
-                    <div>Pairs: <span style={{ fontFamily: "var(--font-mono)", fontWeight: 600, color: "var(--green)" }}>{selected.pairCount}</span></div>
-                    <div>Scale: <span style={{ fontFamily: "var(--font-mono)" }}>×{selected.scale}</span></div>
-                    <div>Manifest: <span style={{ fontFamily: "var(--font-mono)", color: selected.hasManifest ? "var(--green)" : "var(--amber)" }}>{selected.hasManifest ? "Yes" : "No"}</span></div>
-                    <div style={{ fontSize: 10, color: "var(--dim)", fontStyle: "italic" }}>Run Health Check for resolution and quality data</div>
-                  </div>
-                </Panel>
-              </div>
-            )}
-
-            {store.validationResult && (
-              <div style={{
-                margin: "0 12px 6px",
-                padding: "7px 10px",
-                borderRadius: "var(--radius-sm)",
-                fontSize: 10,
-                background: store.validationResult.valid ? "var(--greenDim)" : "color-mix(in srgb, var(--red) 15%, var(--bg2))",
-                border: `1px solid ${store.validationResult.valid ? "var(--green)" : "color-mix(in srgb, var(--red) 40%, transparent)"}`,
-                color: store.validationResult.valid ? "var(--green)" : "var(--red)",
-                lineHeight: 1.4,
-              }}>
-                Validation: {store.validationResult.valid ? "OK" : "FAILED"} — {store.validationResult.num_pairs} pair(s)
-                {store.validationResult.problems.length > 0 && (
-                  <div style={{ marginTop: 4, color: "var(--muted)" }}>{store.validationResult.problems.join("; ")}</div>
-                )}
-              </div>
-            )}
-
-            {pruneResult && (
-              <div style={{
-                margin: "0 12px 6px",
-                padding: "7px 10px",
-                borderRadius: "var(--radius-sm)",
-                fontSize: 10,
-                background: pruneResult.valid ? "var(--greenDim)" : "color-mix(in srgb, var(--red) 15%, var(--bg2))",
-                border: `1px solid ${pruneResult.valid ? "var(--green)" : "color-mix(in srgb, var(--red) 40%, transparent)"}`,
-                color: pruneResult.valid ? "var(--green)" : "var(--red)",
-                lineHeight: 1.4,
-              }}>
-                Pruned {pruneResult.pruned} frame(s)
-                {pruneResult.problems.length > 0 && (
-                  <div style={{ marginTop: 4, color: "var(--muted)" }}>{pruneResult.problems.join("; ")}</div>
-                )}
-              </div>
-            )}
-
-            {pairs.length > 0 && currentPair && (
-              <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", padding: "6px 12px", gap: 6 }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, flexShrink: 0 }}>
-                  <Btn small onClick={() => setCurrentIndex(Math.max(0, currentIndex - 1))} disabled={currentIndex === 0}>◀ Prev</Btn>
-                  <span style={{ fontSize: 10, color: "var(--muted)", fontFamily: "var(--font-mono)", minWidth: 60, textAlign: "center" }}>
-                    {currentIndex + 1} / {pairs.length}
-                  </span>
-                  <Btn small onClick={() => setCurrentIndex(Math.min(pairs.length - 1, currentIndex + 1))} disabled={currentIndex >= pairs.length - 1}>Next ▶</Btn>
-                </div>
-
-                <div style={{ flex: 1, display: "flex", gap: 12, overflow: "hidden", alignItems: "center", justifyContent: "center" }}>
-                  <div style={{ flex: "0 0 auto", width: "38%", maxHeight: "32vh", display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
-                    <span style={{ fontSize: 9, color: "var(--green)", fontWeight: 600, textTransform: "uppercase", letterSpacing: 1, textAlign: "center" }}>HR</span>
-                    <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", overflow: "hidden" }}>
-                      <img src={convertFileSrc(currentPair.hr)} alt="HR" style={{ maxWidth: "100%", maxHeight: "28vh", objectFit: "contain" }} />
-                    </div>
-                  </div>
-                  <div style={{ flex: "0 0 auto", width: "38%", maxHeight: "32vh", display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
-                    <span style={{ fontSize: 9, color: "var(--amber)", fontWeight: 600, textTransform: "uppercase", letterSpacing: 1, textAlign: "center" }}>LR</span>
-                    <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", overflow: "hidden" }}>
-                      <img src={convertFileSrc(currentPair.lr)} alt="LR" style={{ maxWidth: "100%", maxHeight: "28vh", objectFit: "contain" }} />
-                    </div>
-                  </div>
-                </div>
-
-                <div style={{ flexShrink: 0 }}>
-                  <ThumbStrip pairs={pairs} current={currentIndex} onSelect={setCurrentIndex} />
-                </div>
-              </div>
-            )}
-
-            {pairs.length === 0 && (
-              <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--dim)", fontSize: 12 }}>
-                No image pairs found in this dataset
-              </div>
-            )}
-          </>
+          </div>
         )}
-      </div>
+
+        {viewMode === "diff" && (
+          <div className="canvas-wrapper">
+            <div className="diff-container">
+              <span className="badge-tag tag-diff">Difference / Residual Map</span>
+              <img
+                src={currentHrUrl}
+                alt="Residual Difference"
+                style={{
+                  ...imgTransform(true),
+                  filter: "invert(0.8) contrast(200%)",
+                }}
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).src = FALLBACK_IMG;
+                }}
+              />
+            </div>
+          </div>
+        )}
+
+        {currentDataset && (
+          <div className="health-report-panel">
+            <div className="health-report-header">
+              <span className="health-report-title">Health Report</span>
+              {healthReportLoading && (
+                <span className="health-report-status loading">
+                  <Loader2 size={12} className="spin" /> Loading...
+                </span>
+              )}
+              {!healthReportLoading && healthReport === null && (
+                <span className="health-report-status unchecked">No report</span>
+              )}
+              {!healthReportLoading && healthReport !== null && healthReport.black_frames.length === 0 && (
+                <span className="health-report-status ok">OK</span>
+              )}
+              {!healthReportLoading && healthReport !== null && healthReport.black_frames.length > 0 && (
+                <span className="health-report-status issues">
+                  {healthReport.black_frames.length} black frame{healthReport.black_frames.length !== 1 ? "s" : ""}
+                </span>
+              )}
+              <button className="health-report-run-btn" onClick={handleHealthReport} disabled={jobStatus === "running"}>
+                {jobStatus === "running" && jobType === "health" ? "Running..." : "Run Health Check"}
+              </button>
+            </div>
+            {healthReport !== null && !healthReportLoading && (
+              <div className="health-report-body">
+                <div className="health-report-summary">
+                  <span>Total images: {healthReport.total_images.toLocaleString()}</span>
+                  <span>Threshold: {healthReport.computed_threshold}</span>
+                  <span>Black frames: {healthReport.black_frames.length}</span>
+                </div>
+                {healthReport.black_frames.length > 0 && (
+                  <div className="health-report-blackframes">
+                    <div className="health-report-blackframes-toolbar">
+                      <span className="health-report-blackframes-label">
+                        {selectedBlackFrames.size} of {healthReport.black_frames.length} selected
+                      </span>
+                      <div className="health-report-blackframes-actions">
+                        <button className="btn-text" onClick={selectAllBlackFrames}>Select All</button>
+                        <button className="btn-text" onClick={deselectAllBlackFrames}>Deselect All</button>
+                        <button
+                          className="btn-danger btn-sm"
+                          onClick={handlePrune}
+                          disabled={selectedBlackFrames.size === 0 || jobStatus === "running"}
+                        >
+                          <Trash2 size={12} /> Prune Selected ({selectedBlackFrames.size})
+                        </button>
+                      </div>
+                    </div>
+                    <div className="health-report-blackframes-list">
+                      {healthReport.black_frames.map((filename) => (
+                        <label key={filename} className="health-report-blackframe-item">
+                          <input
+                            type="checkbox"
+                            checked={selectedBlackFrames.has(filename)}
+                            onChange={() => toggleBlackFrame(filename)}
+                          />
+                          <span className="health-report-blackframe-name">{filename}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {pairsCount > 0 && (
+          <div className="thumbnail-filmstrip">
+            <button className="strip-arrow" onClick={() => scrollThumbs("left")}>
+              <ChevronLeft size={16} />
+            </button>
+            <div className="thumb-scroll" ref={thumbScrollRef}>
+              {thumbIndices.map((idx) => (
+                <div
+                  key={idx}
+                  className={`thumb-item ${currentPairIndex === idx ? "active" : ""}`}
+                  onClick={() => setCurrentPairIndex(idx)}
+                >
+                  <img
+                    src={getDatasetImageUrl(currentDataset!.name, "lr", idx - 1)}
+                    alt={`Pair ${idx}`}
+                    loading="lazy"
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).src = FALLBACK_IMG;
+                    }}
+                  />
+                  <span className="thumb-number">#{idx}</span>
+                </div>
+              ))}
+            </div>
+            <button className="strip-arrow" onClick={() => scrollThumbs("right")}>
+              <ChevronRight size={16} />
+            </button>
+          </div>
+        )}
+      </main>
     </div>
+    <JobOverlay />
+    </>
   );
-}
+};

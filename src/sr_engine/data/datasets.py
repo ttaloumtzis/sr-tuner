@@ -27,7 +27,11 @@ def _load_image_tensor(path: Path) -> torch.Tensor:
 
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     tensor = torch.from_numpy(img.astype(np.float32) / 255.0)
-    return tensor.permute(2, 0, 1).contiguous()
+    tensor = tensor.permute(2, 0, 1).contiguous()
+
+    if any(d == 0 for d in tensor.shape):
+        raise ValueError(f"Image loaded with zero-dimension tensor {tuple(tensor.shape)}: {path}")
+    return tensor
 
 
 class PairedImageFolderDataset(Dataset):
@@ -91,8 +95,8 @@ class PairedImageFolderDataset(Dataset):
 
         pairs: list[tuple[Path, Path]] = []
         for entry in manifest_data.get("pairs", []):
-            hr_rel = entry.get("hr")
-            lr_rel = entry.get("lr")
+            hr_rel = entry.get("hr") or entry.get("HR")
+            lr_rel = entry.get("lr") or entry.get("LR")
             if not hr_rel or not lr_rel:
                 continue
 

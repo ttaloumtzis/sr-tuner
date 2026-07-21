@@ -1,9 +1,10 @@
-import logging
 import multiprocessing
 import shutil
 import threading
 import time
 from pathlib import Path
+
+import structlog
 
 from sr_engine.api.callbacks import SSECallback
 from sr_engine.api.event_manager import SSEEventManager
@@ -22,9 +23,10 @@ from sr_engine.engine.metrics_stream import MetricsStream
 from sr_engine.engine.trainer import Trainer, TrainingCancelled
 from sr_engine.models.registry import build_model
 from sr_engine.utils.config import DefaultConfigs, load_config, merge_overrides
+from sr_engine.utils.logging import get_logger
 from sr_engine.workspace import Workspace
 
-log = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 
 class QueueEventBus:
@@ -215,6 +217,7 @@ def run_training(
         return
 
     tasks.start_job(job_id)
+    structlog.contextvars.bind_contextvars(job_id=job_id)
     ctx = multiprocessing.get_context("spawn")
     event_queue = ctx.Queue()
     cancel_event = ctx.Event()
@@ -292,6 +295,7 @@ def run_inference(
 ) -> None:
     """Run inference in a background thread."""
     tasks.start_job(job_id)
+    structlog.contextvars.bind_contextvars(job_id=job_id)
     try:
         model = params.get("model")
         instance = params.get("instance")
@@ -370,6 +374,7 @@ def run_dataset_build(
 ) -> None:
     """Build a dataset in a background thread."""
     tasks.start_job(job_id)
+    structlog.contextvars.bind_contextvars(job_id=job_id)
     t0 = time.time()
     try:
         input_path = Path(params["input"])
@@ -405,7 +410,8 @@ def run_dataset_build(
             if out_path is None:
                 raise ValueError("--out is required for video files")
             out_path.parent.mkdir(parents=True, exist_ok=True)
-            result = build_from_video(input_path, out_path, cfg, reporter=sse_reporter)
+            cancel_event = tasks.get_job(job_id).cancel_event if tasks else None
+            result = build_from_video(input_path, out_path, cfg, reporter=sse_reporter, cancel_event=cancel_event)
 
         events.publish(job_id, {"type": "done", "elapsed_seconds": time.time() - t0, "output": str(result)})
         tasks.complete_job(job_id, {"output": str(result)})
@@ -426,6 +432,7 @@ def run_dataset_merge(
 ) -> None:
     """Merge datasets in a background thread."""
     tasks.start_job(job_id)
+    structlog.contextvars.bind_contextvars(job_id=job_id)
     t0 = time.time()
     try:
         from sr_engine.data.dataset_merge import merge_datasets
@@ -475,6 +482,7 @@ def run_dataset_health(
 ) -> None:
     """Run dataset health check in a background thread."""
     tasks.start_job(job_id)
+    structlog.contextvars.bind_contextvars(job_id=job_id)
     t0 = time.time()
     try:
         from sr_engine.data.dataset_health import check_dataset_health, save_health_report
@@ -503,6 +511,7 @@ def run_dataset_validate(
 ) -> None:
     """Validate a dataset in a background thread."""
     tasks.start_job(job_id)
+    structlog.contextvars.bind_contextvars(job_id=job_id)
     t0 = time.time()
     try:
         from sr_engine.data.dataset_validator import validate
@@ -535,6 +544,7 @@ def run_dataset_prune(
 ) -> None:
     """Prune black frame pairs in a background thread."""
     tasks.start_job(job_id)
+    structlog.contextvars.bind_contextvars(job_id=job_id)
     try:
         from sr_engine.data.dataset_health import prune_black_frames
 

@@ -64,6 +64,12 @@ MAX_THRESHOLD: float = 25.0
 from exceeding 25.0 even if the detected gap is very large, avoiding
 false positives on legitimately dark-but-valid content."""
 
+STD_THRESHOLD: float = 5.0
+"""Minimum pixel-value standard deviation required to consider an image
+as containing visible content. Images below this threshold are
+featureless (true black frames). Prevents low-mean but high-variance
+dark scenes from being incorrectly flagged as black frames."""
+
 FULL_RANGE_FALLBACK: float = 3.5
 """Fallback threshold used when Otsu finds no frames below its threshold
 and the data suggests a full-range (0-255) encoding. 3.5 is tight
@@ -207,9 +213,10 @@ def check_dataset_health(dataset_dir: Path,
 
         color_data = _extract_color_data(img, channels_summary)
         img_mean = float(np.mean(color_data))
+        img_std = float(np.std(color_data))
 
         image_means.append(img_mean)
-        file_metadata.append((path.name, img_mean))
+        file_metadata.append((path.name, img_mean, img_std))
         reporter.update(1)
 
     reporter.finish()
@@ -217,10 +224,12 @@ def check_dataset_health(dataset_dir: Path,
     # 2. Compute the ideal dynamic threshold slice for this exact asset pool
     threshold = _compute_adaptive_threshold(image_means)
 
-    # 3. Separate near-black dead frames using the custom threshold profile
+    # 3. Separate near-black dead frames using the custom threshold profile.
+    #    Require both low mean AND low variance — a dark scene with visible
+    #    content has high pixel std even when the average is low.
     black_filenames = [
-        filename for filename, img_mean in file_metadata
-        if img_mean < threshold
+        filename for filename, img_mean, img_std in file_metadata
+        if img_mean < threshold and img_std < STD_THRESHOLD
     ]
 
     return {
@@ -292,7 +301,8 @@ def prune_black_frames(dataset_dir: Path, black_filenames: list[str],
 
             manifest_data["pairs"] = [
                 p for p in manifest_data.get("pairs", [])
-                if Path(p["hr"]).name not in black_set and Path(p["lr"]).name not in black_set
+                if Path(p.get("hr") or p.get("HR", "")).name not in black_set
+                and Path(p.get("lr") or p.get("LR", "")).name not in black_set
             ]
 
             with open(manifest_path, "w", encoding="utf-8") as f:

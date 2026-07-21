@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi import HTTPException
 
 from sr_engine.utils.config import DefaultConfigs
+from sr_engine.utils.logging import set_log_file
 from sr_engine.workspace import Workspace
 
 
@@ -14,6 +15,7 @@ def init_workspace(path: str) -> Workspace:
     global _workspace, _configs
     _workspace = Workspace(Path(path))
     _configs = DefaultConfigs(workspace=_workspace)
+    set_log_file(_workspace.path)
     return _workspace
 
 

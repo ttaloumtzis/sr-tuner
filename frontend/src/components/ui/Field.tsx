@@ -1,18 +1,18 @@
 import { ReactNode } from "react";
 
 interface FieldProps {
-  label: string;
+  label: ReactNode;
   hint?: string;
   children: ReactNode;
 }
 
 export function Field({ label, hint, children }: FieldProps) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
         <label
           style={{
-            fontSize: 10,
+            fontSize: 9.5,
             color: "var(--muted)",
             textTransform: "uppercase",
             letterSpacing: "0.06em",

@@ -91,7 +91,7 @@ export function JobOverlay() {
             {steps.map((step) => {
               const color = colorMap[step.status] || "var(--dim)";
               const icon = iconMap[step.status] || "\u25CB";
-              const pct = step.total > 0 ? Math.round((step.current / step.total) * 100) : 0;
+              const pct = step.total != null && step.total > 0 ? Math.round((step.current / step.total) * 100) : null;
 
               return (
                 <div key={step.id} style={{
@@ -108,20 +108,20 @@ export function JobOverlay() {
                     </span>
                     {step.status === "active" && (
                       <span style={{ fontSize: 11, color: "var(--muted)", fontFamily: "var(--font-mono)" }}>
-                        {step.current}/{step.total} · {pct}%
+                        {step.total != null ? `${step.current}/${step.total} · ${pct}%` : `${step.current}`}
                       </span>
                     )}
                     {step.status === "done" && (
                       <span style={{ fontSize: 11, color: "var(--green)", fontFamily: "var(--font-mono)" }}>
-                        {step.current}/{step.total}
+                        {step.total != null ? `${step.current}/${step.total}` : `${step.current}`}
                       </span>
                     )}
                   </div>
                   {step.status === "active" && (
-                    <PBar value={step.current} max={step.total || 1} color="var(--amber)" height={5} />
+                    <PBar value={step.current} max={step.total ?? (step.current || 1)} color="var(--amber)" height={5} />
                   )}
                   {step.status === "done" && (
-                    <PBar value={step.total} max={step.total || 1} color="var(--green)" height={5} />
+                    <PBar value={step.total ?? step.current} max={step.total ?? (step.current || 1)} color="var(--green)" height={5} />
                   )}
                 </div>
               );

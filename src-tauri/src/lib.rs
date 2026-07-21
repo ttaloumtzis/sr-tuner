@@ -154,15 +154,21 @@ fn start_python_server(app: tauri::AppHandle) -> Result<(), String> {
         c
     };
 
-    cmd.stdout(Stdio::null())
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
 
     #[cfg(unix)]
     unsafe {
         cmd.pre_exec(|| {
-            // Isolate this process into its own process group so we can
-            // kill *every* descendant in one shot later.
-            libc::setpgid(0, 0);
+            // Create a new session, fully detaching from the controlling
+            // terminal. This prevents terminal-originated stop signals
+            // (SIGTSTP, SIGTTIN, SIGTTOU) from freezing the server.
+            // The child becomes both session leader and process group
+            // leader (PGID = PID), so kill_process_group still works.
+            if libc::setsid() < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
             Ok(())
         });
     }

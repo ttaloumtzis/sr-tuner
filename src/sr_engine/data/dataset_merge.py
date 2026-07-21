@@ -76,6 +76,33 @@ def _read_scale(dataset_dir: Path) -> int:
     return int(float(data.get("config", {}).get("scale", 4)))
 
 
+def _scan_pairs_from_disk(dataset_dir: Path) -> list[dict[str, str]]:
+    """Build pairs list by matching filenames across ``HR/`` and ``LR/`` directories.
+
+    Used as a fallback when the manifest's ``pairs`` array is empty or missing.
+    Matches files by identical basename (e.g. ``HR/000001.png`` ↔ ``LR/000001.png``).
+
+    Args:
+        dataset_dir: Path to a dataset directory containing ``HR/`` and ``LR/``.
+
+    Returns:
+        List of pair dicts with ``hr`` and ``lr`` relative paths.
+    """
+    hr_dir = dataset_dir / "HR"
+    lr_dir = dataset_dir / "LR"
+    pairs: list[dict[str, str]] = []
+    if not hr_dir.is_dir() or not lr_dir.is_dir():
+        return pairs
+    for hr_path in sorted(hr_dir.glob("*.png")):
+        lr_path = lr_dir / hr_path.name
+        if lr_path.is_file():
+            pairs.append({
+                "hr": str(hr_path.relative_to(dataset_dir)),
+                "lr": str(lr_path.relative_to(dataset_dir)),
+            })
+    return pairs
+
+
 def _safe_copy(src: Path, dst_dir: Path, prefix: str) -> Path:
     """Copy a file into a directory with a prefix to avoid name collisions.
 
@@ -194,6 +221,7 @@ def merge_datasets(
             tmp_lr.mkdir(parents=True, exist_ok=False)
 
             total_pairs = 0
+            pairs: list[dict[str, str]] = []
             reporter.start(total=len(source_dirs), desc=f"Merging scale {s} datasets")
 
             for src_dir in source_dirs:
@@ -202,9 +230,17 @@ def merge_datasets(
                 with open(manifest_path, "r", encoding="utf-8") as f:
                     manifest_data = json.load(f)
 
-                for pair in manifest_data.get("pairs", []):
-                    hr_rel = pair.get("hr")
-                    lr_rel = pair.get("lr")
+                source_pairs = manifest_data.get("pairs", [])
+                if not source_pairs:
+                    source_pairs = _scan_pairs_from_disk(src_dir)
+                    log.info(
+                        "Fell back to directory scan for '%s' (%d pairs)",
+                        src_dir.name, len(source_pairs),
+                    )
+
+                for pair in source_pairs:
+                    hr_rel = pair.get("hr") or pair.get("HR")
+                    lr_rel = pair.get("lr") or pair.get("LR")
                     if not hr_rel or not lr_rel:
                         continue
 
@@ -215,20 +251,29 @@ def merge_datasets(
                         log.warning("Skipping missing pair: %s / %s", hr_rel, lr_rel)
                         continue
 
-                    _safe_copy(hr_src, tmp_hr, prefix)
-                    _safe_copy(lr_src, tmp_lr, prefix)
+                    hr_dst = _safe_copy(hr_src, tmp_hr, prefix)
+                    lr_dst = _safe_copy(lr_src, tmp_lr, prefix)
+                    pairs.append({
+                        "hr": str(hr_dst.relative_to(tmp_dir)),
+                        "lr": str(lr_dst.relative_to(tmp_dir)),
+                    })
                     total_pairs += 1
 
                 reporter.update(1)
 
             reporter.finish()
 
+            log.info(
+                "Scale %d merge: %d total pairs from %d source(s)",
+                s, total_pairs, len(source_dirs),
+            )
+
             merged_manifest = {
                 "config": {
                     "scale": s,
                     "sources": [str(d.relative_to(datasets_root)) for d in source_dirs],
                 },
-                "pairs": [],
+                "pairs": pairs,
             }
             (tmp_dir / "manifest.json").write_text(
                 json.dumps(merged_manifest, indent=2, ensure_ascii=False),

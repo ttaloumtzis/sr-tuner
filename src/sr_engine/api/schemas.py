@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 
 # ── Architecture mapping ────────────────────────────────────────────────
 
@@ -107,6 +107,29 @@ class TrainParams(BaseModel):
     perceptual_weight: float | None = None
     warmup_steps: int | None = None
     write_metrics_file: bool = True
+    losses: dict[str, Any] | None = None
+
+    @validator("losses")
+    def validate_losses(cls, v):
+        if v is None:
+            return v
+        valid_types = {"l1", "l2", "vgg", "edge", "style", "fft", "ssim", "lpips"}
+        has_pixel = False
+        for name, cfg in v.items():
+            if not isinstance(cfg, dict) or "type" not in cfg:
+                raise ValueError(f"Loss '{name}' must be a dict with a 'type' field")
+            lt = cfg["type"]
+            if lt not in valid_types:
+                raise ValueError(
+                    f"Loss '{name}': unknown type '{lt}'. Valid: {sorted(valid_types)}"
+                )
+            if cfg.get("weight", 1.0) < 0:
+                raise ValueError(f"Loss '{name}': weight must be >= 0")
+            if lt in ("l1", "l2"):
+                has_pixel = True
+        if not has_pixel:
+            raise ValueError("At least one pixel loss (l1 or l2) is required")
+        return v
 
     def to_overrides(self) -> dict:
         d: dict[str, Any] = {}
@@ -129,8 +152,13 @@ class TrainParams(BaseModel):
                           ("dataset", self.validation_dataset)):
                 if v is not None:
                     d["validation"][k] = v
-        if self.perceptual_weight is not None:
-            d.setdefault("losses", {})["perceptual_weight"] = self.perceptual_weight
+        if self.losses is not None:
+            d["losses"] = self.losses
+        elif self.perceptual_weight is not None:
+            d["losses"] = {
+                "pixel": {"type": "l1", "weight": 1.0},
+                "perceptual": {"type": "vgg", "weight": self.perceptual_weight},
+            }
         return d
 
 # ── Inference ───────────────────────────────────────────────────────────

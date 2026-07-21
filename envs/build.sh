@@ -25,7 +25,7 @@ set -Eeuo pipefail
 declare -Ar TORCH_INDEX=(
     [cpu]="https://download.pytorch.org/whl/cpu"
     [cuda]="https://download.pytorch.org/whl/cu121"
-    [rocm]="https://download.pytorch.org/whl/rocm6.2"
+    [rocm]="https://download.pytorch.org/whl/rocm6.3"
 )
 
 BACKEND=""
@@ -206,9 +206,16 @@ install_backend() {
     info "Installing PyTorch backend: $BACKEND"
     echo "Index: $index"
 
-    retry uv pip install \
-        --index-url "$index" \
-        torch torchvision
+    if [[ "$BACKEND" == "cpu" ]]; then
+        retry uv pip install \
+            --index-url "$index" \
+            torch torchvision
+    else
+        retry uv pip install \
+            --index-url "$index" \
+            --reinstall \
+            torch torchvision
+    fi
 
     success "PyTorch installed."
 }
@@ -284,6 +291,10 @@ main() {
     create_environment
     install_base
     install_backend
+
+    info "Installing optional LPIPS dependency..."
+    uv pip install lpips
+
     verify_environment
 
     success "Environment successfully created."

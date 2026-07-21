@@ -3,21 +3,21 @@ import { basename } from "../lib/path";
 
 export type DatasetSubTab = "create" | "browse" | "merge";
 export type DatasetMode = "image_folder" | "video_extract" | "on_the_fly";
-export type DownscaleKernel = "bicubic" | "bilinear" | "real-world" | "area" | "lanczos" | "nearest";
+export type DownscaleKernel = "bicubic" | "bilinear" | "area" | "lanczos" | "nearest";
 export type ResizeMethod = "area" | "bicubic" | "bilinear" | "lanczos" | "nearest";
 export type JobStatus = "idle" | "running" | "done" | "error";
 
 export interface ExtractionProgress {
   framesDone: number;
-  framesTotal: number;
+  framesTotal: number | null;
   fps: number;
-  etaSec: number;
+  etaSec: number | null;
 }
 
 export interface ProgressStep {
   id: number;
   desc: string;
-  total: number;
+  total: number | null;
   current: number;
   status: "active" | "done" | "pending";
 }
@@ -154,7 +154,7 @@ interface DatasetState {
   setJobStatus: (status: JobStatus) => void;
   setJobError: (err: string | null) => void;
   setJobType: (t: "build" | "health" | "merge" | "prune" | "validate" | null) => void;
-  startProgressStep: (desc: string, total: number) => void;
+  startProgressStep: (desc: string, total: number | null) => void;
   updateProgressStep: (stepId: number, current: number, fps: number, etaSec: number) => void;
   finishProgressStep: (stepId: number) => void;
   clearJob: () => void;
@@ -318,7 +318,7 @@ export const useDatasetStore = create<DatasetState>((set) => ({
       progressSteps: s.progressSteps.map((st) =>
         st.id === stepId ? { ...st, current } : st
       ),
-      extractionProgress: { framesDone: current, framesTotal: s.progressSteps[stepId]?.total ?? 0, fps, etaSec },
+      extractionProgress: { framesDone: current, framesTotal: s.progressSteps[stepId]?.total ?? null, fps, etaSec: etaSec ?? null },
     })),
   finishProgressStep: (stepId) =>
     set((s) => ({

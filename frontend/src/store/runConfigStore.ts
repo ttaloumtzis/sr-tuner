@@ -1,4 +1,6 @@
 import { create } from "zustand";
+import type { TrainLossConfig, LossType } from "../lib/api-types";
+import { getDefaultLosses } from "../lib/api-types";
 
 export interface TrainingSchedule {
   totalEpochs: number;
@@ -28,7 +30,7 @@ interface RunConfigState {
   writeMetricsFile: boolean;
   validationEnabled: boolean;
   validationSplit: number;
-  perceptualWeight: number;
+  lossConfig: TrainLossConfig;
 
   selectedInstance: string | null;
   instanceArchitecture: string | null;
@@ -58,7 +60,10 @@ interface RunConfigState {
   setWriteMetricsFile: (v: boolean) => void;
   setValidationEnabled: (v: boolean) => void;
   setValidationSplit: (v: number) => void;
-  setPerceptualWeight: (v: number) => void;
+  setLossConfig: (v: TrainLossConfig) => void;
+  setLossWeight: (name: string, weight: number) => void;
+  addLoss: (type: LossType, name?: string) => void;
+  removeLoss: (name: string) => void;
   setSelectedInstance: (v: string | null) => void;
   setInstanceArchitecture: (v: string | null) => void;
   setInstanceScale: (v: number | null) => void;
@@ -87,7 +92,7 @@ export const useRunConfigStore = create<RunConfigState>((set) => ({
   writeMetricsFile: true,
   validationEnabled: true,
   validationSplit: 0.1,
-  perceptualWeight: 0.1,
+  lossConfig: getDefaultLosses(),
 
   selectedInstance: null,
   instanceArchitecture: null,
@@ -117,7 +122,27 @@ export const useRunConfigStore = create<RunConfigState>((set) => ({
   setWriteMetricsFile: (v) => set({ writeMetricsFile: v }),
   setValidationEnabled: (v) => set({ validationEnabled: v }),
   setValidationSplit: (v) => set({ validationSplit: v }),
-  setPerceptualWeight: (v) => set({ perceptualWeight: v }),
+  setLossConfig: (v) => set({ lossConfig: v }),
+  setLossWeight: (name, weight) =>
+    set((s) => {
+      if (!s.lossConfig[name]) return s;
+      return { lossConfig: { ...s.lossConfig, [name]: { ...s.lossConfig[name], weight } } };
+    }),
+  addLoss: (type, name) =>
+    set((s) => {
+      const key = name ?? type;
+      if (s.lossConfig[key]) return s;
+      const entry: TrainLossConfig[string] = { type, weight: 0.1 };
+      if (type === "vgg") entry.layers = ["relu5_4"];
+      if (type === "style") entry.layers = ["relu1_2", "relu2_2", "relu3_4", "relu4_4", "relu5_2"];
+      return { lossConfig: { ...s.lossConfig, [key]: entry } };
+    }),
+  removeLoss: (name) =>
+    set((s) => {
+      const next = { ...s.lossConfig };
+      delete next[name];
+      return { lossConfig: next };
+    }),
   setSelectedInstance: (v) => set({ selectedInstance: v }),
   setInstanceArchitecture: (v) => set({ instanceArchitecture: v }),
   setInstanceScale: (v) => set({ instanceScale: v }),

@@ -1,15 +1,19 @@
 import logging
+import structlog
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from starlette.responses import StreamingResponse
 
 from sr_engine.api.event_manager import SSEEventManager
+from sr_engine.api.middleware import RequestLogMiddleware
 from sr_engine.api.task_manager import BackgroundTaskManager
 from sr_engine.api.routes import workspace, models, training, inference, datasets, jobs, env
+from sr_engine.utils.logging import configure_logging, get_logger
 
-log = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 # Global singletons (initialised at startup)
 events = SSEEventManager()
@@ -18,6 +22,8 @@ tasks = BackgroundTaskManager()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    configure_logging()
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     log.info("API server starting up")
     yield
     log.info("API server shutting down")
@@ -29,6 +35,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.add_middleware(RequestLogMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -36,6 +44,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ── Global exception handler ────────────────────────────────────────────
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    log = structlog.get_logger("sr_engine.api.exception")
+    log.exception(
+        "unhandled_exception",
+        path=request.url.path,
+        method=request.method,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
 
 
 # ── SSE event stream ───────────────────────────────────────────────────

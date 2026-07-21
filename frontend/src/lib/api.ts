@@ -1,4 +1,4 @@
-import type { DatasetInfo, JobAccepted, JobStatus, WorkspaceInfo, TrainParams, InferParams, EnvInfo, DatasetBuildParams, DatasetValidateParams, DatasetHealthParams, DatasetMergeParams, ExportParams, ModelInstance, ModelVersion } from "./api-types";
+import type { DatasetInfo, HealthReport, JobAccepted, JobStatus, WorkspaceInfo, TrainParams, InferParams, EnvInfo, DatasetBuildParams, DatasetValidateParams, DatasetHealthParams, DatasetMergeParams, ExportParams, ModelInstance, ModelVersion } from "./api-types";
 
 let BASE_URL = "http://127.0.0.1:8765";
 
@@ -15,6 +15,8 @@ export function getBaseUrl(): string {
   return BASE_URL;
 }
 
+let _recovering503 = false;
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     method,
@@ -22,6 +24,29 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
+    if (res.status === 503 && !_recovering503 && path !== "/api/workspace/init") {
+      _recovering503 = true;
+      try {
+        const { parentFromProjFile } = await import("./path");
+        const project = (await import("../store/projectStore")).useProjectStore.getState().project;
+        if (project) {
+          const projectDir = parentFromProjFile(project.filePath);
+          const initRes = await fetch(`${BASE_URL}/api/workspace/init`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path: projectDir }),
+          });
+          if (initRes.ok) {
+            (await import("../store/uiStore")).useUiStore.getState().setWorkspaceReady(true);
+            return request<T>(method, path, body);
+          }
+        }
+      } catch {
+        // re-init failed — fall through to original error
+      } finally {
+        _recovering503 = false;
+      }
+    }
     const text = await res.text();
     throw new Error(`API ${method} ${path} ${res.status}: ${text}`);
   }
@@ -63,9 +88,15 @@ export const buildDataset = (params: DatasetBuildParams) => request<JobAccepted>
 export const validateDatasetPath = (params: DatasetValidateParams) => request<{ valid: boolean; problems: string[]; num_pairs: number }>("POST", "/api/datasets/validate", params);
 export const startValidateDataset = (params: DatasetValidateParams) => request<JobAccepted>("POST", "/api/datasets/validate-async", params);
 export const healthCheck = (params: DatasetHealthParams) => request<JobAccepted>("POST", "/api/datasets/health", params);
-export const getDatasetHealth = (path: string) => request<Record<string, unknown> | null>("GET", `/api/datasets/health?path=${encodeURIComponent(path)}`);
+export const getDatasetHealth = (path: string) => request<HealthReport | null>("GET", `/api/datasets/health?path=${encodeURIComponent(path)}`);
 export const mergeDatasets = (params: DatasetMergeParams) => request<JobAccepted>("POST", "/api/datasets/merge", params);
 export const pruneBlackFrames = (params: { path: string; black_frames: string[] }) => request<JobAccepted>("POST", "/api/datasets/prune", params);
+export const deleteDataset = (name: string) =>
+  request<{ deleted: string }>("DELETE", `/api/datasets/${encodeURIComponent(name)}`);
+
+export function getDatasetImageUrl(datasetName: string, kind: "hr" | "lr", index: number): string {
+  return `${BASE_URL}/api/datasets/${encodeURIComponent(datasetName)}/image?kind=${kind}&index=${index}`;
+}
 
 // ── Jobs ────────────────────────────────────────────────────────────────
 

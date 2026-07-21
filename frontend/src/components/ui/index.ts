@@ -1,10 +1,16 @@
 export { Btn } from "./Btn";
+export { CollapsibleSection } from "./CollapsibleSection";
 export { Dropdown } from "./Dropdown";
 export type { DropdownOption } from "./Dropdown";
 export { Field } from "./Field";
 export { InfoRow } from "./InfoRow";
+export { InlineAlert } from "./InlineAlert";
 export { Panel } from "./Panel";
 export { PathInput } from "./PathInput";
 export { PBar } from "./PBar";
+export { StackedBar } from "./StackedBar";
+export type { StackedBarSegment } from "./StackedBar";
 export { Tag } from "./Tag";
 export { Toggle } from "./Toggle";
+export { Tooltip } from "./Tooltip";
+export * from "./icons";

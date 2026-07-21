@@ -83,10 +83,12 @@ def validate(dataset_dir: Path,
     expected_lr = set()
 
     for pair in manifest_pairs:
-        if "hr" in pair:
-            expected_hr.add(Path(pair["hr"]).name)
-        if "lr" in pair:
-            expected_lr.add(Path(pair["lr"]).name)
+        hr_key = pair.get("hr") or pair.get("HR")
+        lr_key = pair.get("lr") or pair.get("LR")
+        if hr_key:
+            expected_hr.add(Path(hr_key).name)
+        if lr_key:
+            expected_lr.add(Path(lr_key).name)
 
     # 3. Integrity and Dimensional Scale Checks via Manifest Records
     num_pairs = 0
@@ -95,8 +97,8 @@ def validate(dataset_dir: Path,
     reporter.start(total=len(manifest_pairs), desc="Checking Manifest Alignment & Integrity")
 
     for pair in manifest_pairs:
-        hr_rel = pair.get("hr")
-        lr_rel = pair.get("lr")
+        hr_rel = pair.get("hr") or pair.get("HR")
+        lr_rel = pair.get("lr") or pair.get("LR")
 
         if not hr_rel or not lr_rel:
             problems.append(f"Malformed manifest track entry: missing path mappings in entry: {pair}")
@@ -124,10 +126,18 @@ def validate(dataset_dir: Path,
             problems.append(f"Corrupted Image: LR file '{lr_rel}' is unreadable or malformed.")
             continue
 
-        # C. Check scale metrics strictly
+        # C. Check for zero-dimension images
         hr_h, hr_w = hr_img.shape[:2]
         lr_h, lr_w = lr_img.shape[:2]
 
+        if hr_h == 0 or hr_w == 0 or lr_h == 0 or lr_w == 0:
+            problems.append(
+                f"Zero-dimension image pair: '{Path(hr_rel).name}' "
+                f"HR ({hr_w}x{hr_h}), LR ({lr_w}x{lr_h})."
+            )
+            continue
+
+        # D. Check scale metrics strictly
         if hr_h != lr_h * scale or hr_w != lr_w * scale:
             problems.append(
                 f"Dimension mismatch on '{Path(hr_rel).name}': HR dimensions ({hr_w}x{hr_h}) "

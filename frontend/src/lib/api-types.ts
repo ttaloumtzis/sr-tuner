@@ -27,6 +27,45 @@ export interface DatasetInfo {
   num_pairs: number;
 }
 
+export interface HealthReport {
+  total_images: number;
+  resolutions: Record<string, number>;
+  aspect_ratios: Record<string, number>;
+  channels: Record<string, number>;
+  computed_threshold: number;
+  black_frames: string[];
+}
+
+export type LossType = "l1" | "l2" | "vgg" | "edge" | "style" | "fft" | "ssim" | "lpips";
+
+export interface LossEntry {
+  type: LossType;
+  weight: number;
+  layers?: string[];
+}
+
+export type TrainLossConfig = Record<string, LossEntry>;
+
+const DEFAULT_LOSSES: TrainLossConfig = {
+  pixel: { type: "l1", weight: 1.0 },
+  perceptual: { type: "vgg", weight: 0.1, layers: ["relu5_4"] },
+};
+
+export function getDefaultLosses(): TrainLossConfig {
+  return JSON.parse(JSON.stringify(DEFAULT_LOSSES));
+}
+
+export const LOSS_TYPE_OPTIONS: { value: LossType; label: string; needsLayers: boolean }[] = [
+  { value: "l1", label: "L1 (Charbonnier)", needsLayers: false },
+  { value: "l2", label: "L2 (MSE)", needsLayers: false },
+  { value: "vgg", label: "VGG Perceptual", needsLayers: true },
+  { value: "edge", label: "Edge (Sobel)", needsLayers: false },
+  { value: "style", label: "Style (Gram)", needsLayers: true },
+  { value: "fft", label: "Frequency (FFT)", needsLayers: false },
+  { value: "ssim", label: "SSIM", needsLayers: false },
+  { value: "lpips", label: "LPIPS", needsLayers: false },
+];
+
 export interface TrainParams {
   model_name: string;
   instance: string;
@@ -51,6 +90,7 @@ export interface TrainParams {
   perceptual_weight?: number;
   warmup_steps?: number;
   write_metrics_file?: boolean;
+  losses?: TrainLossConfig;
 }
 
 export interface InferParams {

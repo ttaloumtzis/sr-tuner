@@ -3,6 +3,7 @@
 import sys
 import time
 from pathlib import Path
+from typing import Any
 import click
 import yaml
 
@@ -51,12 +52,22 @@ def train() -> None:
               help="Model config overrides YAML.")
 @click.option("--instance", "-i", type=str, default=None,
               help="Model instance name. Creates a run dir and auto-loads latest model version.")
+@click.option("--losses", type=str, default=None,
+              help="Loss config as JSON: '{\"edge\":{\"type\":\"edge\",\"weight\":0.05}}'")
+@click.option("--perceptual-weight", type=float, default=None, help="Perceptual (VGG) loss weight.")
+@click.option("--edge-weight", type=float, default=None, help="Edge loss weight.")
+@click.option("--style-weight", type=float, default=None, help="Style (Gram) loss weight.")
+@click.option("--frequency-weight", type=float, default=None, help="Frequency (FFT) loss weight.")
+@click.option("--ssim-weight", type=float, default=None, help="SSIM loss weight.")
+@click.option("--lpips-weight", type=float, default=None, help="LPIPS loss weight.")
 @click.pass_context
 def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate,
         seed, weight_decay, betas, max_epochs,
         num_workers, patch_size, save_per_epoch,
         validation_enabled, validation_split, machine, experiment_id, metrics_frequency,
-        bf16, dump_config, model_config, instance, no_workspace_config):
+        bf16, dump_config, model_config, instance, no_workspace_config,
+        losses, perceptual_weight, edge_weight, style_weight, frequency_weight,
+        ssim_weight, lpips_weight):
     """Train a super-resolution model."""
 
     ws, cfg_loader = make_workspace_config_loader(ctx, no_workspace_config)
@@ -125,6 +136,29 @@ def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate,
         overrides.setdefault("validation", {})["enabled"] = validation_enabled
     if validation_split is not None:
         overrides.setdefault("validation", {})["split"] = validation_split
+
+    loss_overrides: dict[str, Any] = {}
+    if losses:
+        try:
+            import json
+            loss_overrides = json.loads(losses)
+        except json.JSONDecodeError as e:
+            raise click.ClickException(f"Invalid --losses JSON: {e}")
+    else:
+        if perceptual_weight is not None:
+            loss_overrides["perceptual"] = {"type": "vgg", "weight": perceptual_weight}
+        if edge_weight is not None:
+            loss_overrides["edge"] = {"type": "edge", "weight": edge_weight}
+        if style_weight is not None:
+            loss_overrides["style"] = {"type": "style", "weight": style_weight}
+        if frequency_weight is not None:
+            loss_overrides["fft"] = {"type": "fft", "weight": frequency_weight}
+        if ssim_weight is not None:
+            loss_overrides["ssim"] = {"type": "ssim", "weight": ssim_weight}
+        if lpips_weight is not None:
+            loss_overrides["lpips"] = {"type": "lpips", "weight": lpips_weight}
+    if loss_overrides:
+        overrides["losses"] = loss_overrides
 
     if instance:
         overrides["model"] = model

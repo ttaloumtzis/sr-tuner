@@ -82,7 +82,7 @@ export function Dropdown({
     background: "var(--bg3)",
     border: `1px solid ${open ? "var(--green)" : "var(--border)"}`,
     borderRadius: "var(--radius-sm)",
-    padding: "6px 10px",
+    padding: "5px 8px",
     fontSize: 12,
     color: selected ? "var(--text)" : "var(--dim)",
     width: "100%",
@@ -116,7 +116,7 @@ export function Dropdown({
                 key={opt.value}
                 onClick={() => select(opt.value)}
                 style={{
-                  padding: "7px 10px",
+                  padding: "6px 9px",
                   fontSize: 12,
                   cursor: "pointer",
                   color: active ? "var(--green)" : "var(--text)",

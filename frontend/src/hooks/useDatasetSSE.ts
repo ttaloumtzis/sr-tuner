@@ -34,7 +34,7 @@ export function useDatasetSSE() {
 
         switch (type) {
           case "progress_start": {
-            const total = (event.total as number) ?? 0;
+            const total = (event.total as number | null) ?? null;
             const desc = (event.desc as string) || "";
             startProgressStep(desc, total);
             stepId = useDatasetStore.getState().progressSteps.length - 1;
@@ -48,8 +48,8 @@ export function useDatasetSSE() {
             stepCurrent += n;
             const elapsed = (performance.now() - stepStartTime) / 1000;
             const fps = elapsed > 0 ? stepCurrent / elapsed : 0;
-            const total = useDatasetStore.getState().progressSteps[stepId]?.total ?? 0;
-            const etaSec = fps > 0 ? (total - stepCurrent) / fps : 0;
+            const total = useDatasetStore.getState().progressSteps[stepId]?.total ?? null;
+            const etaSec = total != null && fps > 0 ? (total - stepCurrent) / fps : null;
             updateProgressStep(stepId, stepCurrent, fps, etaSec);
             break;
           }

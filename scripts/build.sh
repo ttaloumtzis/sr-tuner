@@ -18,7 +18,7 @@
 #   help        Show this help
 #
 # Options:
-#   cpu | cuda | rocm   Sidecar variant for 'sidecar' / 'all' (default: cpu)
+#   cpu | cuda | rocm   Sidecar variant for 'sidecar' / 'all' (default: auto-detect from .venv)
 #   -j, --parallel      Build frontend and sidecar concurrently
 #
 # Examples:
@@ -78,7 +78,7 @@ ${BOLD}Commands:${NC}
   help        Show this help
 
 ${BOLD}Options:${NC}
-  cpu | cuda | rocm   Sidecar variant for 'sidecar' / 'all' (default: cpu)
+  cpu | cuda | rocm   Sidecar variant for 'sidecar' / 'all' (default: auto-detect from .venv)
   -j, --parallel      Build frontend and sidecar concurrently
 
 ${BOLD}Examples:${NC}
@@ -237,17 +237,23 @@ build_tauri() {
 
 # ── Build Sidecar (delegates to build-sidecar.sh) ─────────────────────────────
 build_sidecar() {
-    local variant="${1:-cpu}"
+    # Empty variant = not explicitly requested -> let build-sidecar.sh
+    # auto-detect the backend from .venv instead of assuming cpu.
+    local variant="${1:-}"
 
-    log_section "Building Sidecar ($variant)"
+    log_section "Building Sidecar ${variant:+($variant)}"
 
     if [ ! -d "$PROJECT_DIR/.venv" ]; then
-        log_error "No .venv found — run envs/build.sh --backend $variant first"
+        log_error "No .venv found — run envs/build.sh --backend <cpu|cuda|rocm> first"
         exit 1
     fi
 
     log_step "Running PyInstaller via build-sidecar.sh..."
-    "$SCRIPT_DIR/build-sidecar.sh" --backend "$variant"
+    if [ -n "$variant" ]; then
+        "$SCRIPT_DIR/build-sidecar.sh" --backend "$variant"
+    else
+        "$SCRIPT_DIR/build-sidecar.sh"
+    fi
 }
 
 # ── Development mode ──────────────────────────────────────────────────────────
@@ -274,9 +280,9 @@ clean() {
 
 # ── Parallel build (frontend + sidecar concurrently, then Tauri) ──────────────
 build_parallel() {
-    local variant="${1:-cpu}"
+    local variant="${1:-}"
 
-    log_section "Parallel Build: Frontend + Sidecar ($variant)"
+    log_section "Parallel Build: Frontend + Sidecar ${variant:+($variant)}"
     log_step "Starting both builds concurrently..."
     echo ""
 
@@ -331,7 +337,9 @@ build_parallel() {
 main() {
     local command="${1:-}"
     local parallel=false
-    local variant="cpu"
+    # Empty = not explicitly requested; build_sidecar/build_parallel treat
+    # this as "auto-detect backend from .venv" rather than assuming cpu.
+    local variant=""
 
     # Shift past the command, parse remaining flags
     [[ $# -gt 0 ]] && shift

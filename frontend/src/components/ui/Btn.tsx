@@ -71,7 +71,7 @@ export function Btn({
         color: textColor,
         fontSize: small ? 10 : 12,
         fontWeight: variant === "solid" ? 600 : 400,
-        padding: small ? "3px 9px" : full ? "8px" : "5px 14px",
+        padding: small ? "3px 8px" : full ? "7px" : "4px 12px",
         borderRadius: "var(--radius-sm)",
         cursor: disabled ? "default" : "pointer",
         fontFamily: "var(--font-sans)",

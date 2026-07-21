@@ -57,7 +57,7 @@ function DownsampleMethodSelector() {
   const s = useDatasetStore();
   const options: { id: DownscaleKernel; label: string }[] = [
     { id: "area", label: "Area" }, { id: "bicubic", label: "Bicubic" }, { id: "bilinear", label: "Bilinear" },
-    { id: "lanczos", label: "Lanczos" }, { id: "nearest", label: "Nearest" }, { id: "real-world", label: "Real-World" },
+    { id: "lanczos", label: "Lanczos" }, { id: "nearest", label: "Nearest" },
   ];
   return (
     <div style={{ padding: "7px 10px", background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", display: "flex", flexDirection: "column", gap: 6 }}>
@@ -257,7 +257,7 @@ function VideoExtractMode() {
           prob: s.jitterProb,
         };
       }
-      const resizeMethod = s.kernel === "real-world" ? "area" : s.kernel;
+      const resizeMethod = s.kernel;
       degCfg["resize"] = { method: resizeMethod, antialias: s.antialias };
       configOverrides["degradation"] = degCfg;
 
@@ -352,7 +352,7 @@ function SummaryPanel() {
   const rows: { label: string; value: string }[] = [
     { label: "Mode", value: modeLabel[s.mode] || s.mode },
     { label: "Scale", value: `×${s.scale}` },
-    { label: "Downsample", value: s.kernel === "real-world" ? "Real-World" : s.kernel },
+    { label: "Downsample", value: s.kernel },
   ];
 
   if (s.mode === "video_extract") {
