@@ -16,7 +16,7 @@ from sr_engine.engine.metrics import psnr, ssim
 from sr_engine.engine.metrics_stream import MetricsStream
 from sr_engine.engine.inference import _super_resolve_tensor
 from sr_engine.models.checkpoint import load_checkpoint, save_checkpoint
-from sr_engine.models.losses import L1Loss, PerceptualLoss
+from sr_engine.models.losses import build_composite_loss
 from sr_engine.models.registry import build_model
 from sr_engine.utils.logging import get_logger
 
@@ -215,18 +215,14 @@ class Trainer:
         self.amp_enabled = self.amp_dtype is not None
         self.grad_scaler = torch.amp.GradScaler() if self.amp_dtype == torch.float16 else None
 
-        self.pixel_loss = L1Loss()
-        loss_cfg = train_cfg.get("losses", {})
-        self.perceptual_weight = float(loss_cfg.get("perceptual_weight", 0.0))
-        self.perceptual_loss = (
-            PerceptualLoss(loss_cfg.get("perceptual_layers", ["relu5_4"])).to(self.device)
-            if self.perceptual_weight > 0 else None
+        self.loss_fn = build_composite_loss(
+            train_cfg.get("losses"), self.device,
         )
 
         transform = Compose([
             RandomCrop(
                 patch_size=int(train_cfg.get("patch_size", 128)),
-                scale=int(model_cfg.get("scale", 4)),
+                scale=getattr(self.model, 'scale', int(model_cfg.get('scale', 4))),
             ),
             RandomFlip(),
             RandomRotate(),
@@ -259,7 +255,7 @@ class Trainer:
             )
             val_transform = CenterCrop(
                 patch_size=int(train_cfg.get("patch_size", 128)),
-                scale=int(model_cfg.get("scale", 4)),
+                scale=getattr(self.model, 'scale', int(model_cfg.get('scale', 4))),
             )
             self.train_dataset = _TransformSubset(full_dataset, train_idx.indices, transform)
             self.val_dataset = _TransformSubset(full_dataset, val_idx.indices, val_transform)
@@ -384,12 +380,7 @@ class Trainer:
             enabled=self.amp_enabled,
         ):
             pred = self.model(lr)
-            loss = self.pixel_loss(pred, hr)
-            comp = {"pixel": loss.item()}
-            if self.perceptual_loss:
-                ploss = self.perceptual_loss(pred, hr)
-                loss += self.perceptual_weight * ploss
-                comp["perceptual"] = ploss.item()
+            loss, components = self.loss_fn(pred, hr)
 
         if self.grad_scaler is not None:
             self.grad_scaler.scale(loss).backward()
@@ -400,9 +391,9 @@ class Trainer:
             self.optimizer.step()
 
         self.scheduler.step()
-        comp["total"] = loss.item()
-        comp["lr"] = self.optimizer.param_groups[0]["lr"]
-        return comp
+        components["total"] = loss.item()
+        components["lr"] = self.optimizer.param_groups[0]["lr"]
+        return components
 
     def _validate(self, epoch: int) -> dict[str, Any]:
         """Run validation: compute average PSNR and SSIM over the validation set.

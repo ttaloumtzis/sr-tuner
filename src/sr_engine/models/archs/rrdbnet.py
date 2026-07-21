@@ -65,6 +65,7 @@ class RRDBNet(nn.Module):
             scale: Super-resolution scale factor.
         """
         super().__init__()
+        self.scale = scale
         self.conv_first = nn.Conv2d(num_in_ch, num_feat, 3, 1, 1)
 
         self.body = nn.Sequential(*[RRDB(num_feat, num_grow_ch) for _ in range(num_block)])

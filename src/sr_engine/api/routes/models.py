@@ -18,7 +18,7 @@ def _enrich_instance(ws: Workspace, inst: ModelInstance) -> ModelInstance:
         with open(cfg_path) as f:
             cfg = yaml.safe_load(f) or {}
         inst.architecture = cfg.get("architecture") or inst.architecture
-        inst.scale = cfg.get("scale")
+        inst.scale = cfg.get("scale") or cfg.get("scale_factor")
         inst.config = cfg
     inst.latest_version = ws.latest_model_version(inst.name)
     return inst

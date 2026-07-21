@@ -1,0 +1,67 @@
+/* Layout for Training Setup: main column + fixed-ish sidebar side by side.
+   Collapses to a single stacked column on narrow windows so fields never
+   get squeezed into unusable slivers (see: floating/docked window use case). */
+.ts-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(230px, 300px);
+  align-items: start;
+  gap: 10px;
+  flex: 1;
+  padding: 10px;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.ts-main {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  min-width: 0;
+  height: 100%;
+  padding-right: 2px;
+}
+
+.ts-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  height: 100%;
+  overflow-y: auto;
+}
+
+/* Field grids reflow instead of squeezing — each field keeps a sane
+   minimum width and wraps onto additional rows as space shrinks. They
+   also stop growing past a sane max, so a "16" doesn't end up sitting
+   in a 400px-wide box on an ultrawide window. */
+.ts-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(var(--ts-grid-min, 110px), var(--ts-grid-max, 220px)));
+}
+
+/* Visual container for a related cluster of fields (Schedule, Optimizer,
+   Loss, etc.) so groups read as distinct blocks instead of one long list. */
+.ts-group {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+}
+
+@media (max-width: 860px) {
+  .ts-layout {
+    grid-template-columns: minmax(0, 1fr);
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  .ts-main,
+  .ts-sidebar {
+    overflow: visible;
+    height: auto;
+  }
+  .ts-sidebar {
+    order: 2;
+  }
+}
