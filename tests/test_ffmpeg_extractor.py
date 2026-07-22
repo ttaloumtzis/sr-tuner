@@ -44,7 +44,10 @@ class TestProbe:
             fps="30000/1001", nb_frames="150", duration="5.0",
         )
 
-        with patch("subprocess.run") as mock_run:
+        with (
+            patch("subprocess.run") as mock_run,
+            patch("shutil.which", return_value="/usr/bin/ffprobe"),
+        ):
             mock_run.return_value = MagicMock(stdout=ffprobe_out, returncode=0)
             info = FFmpegExtractor().probe(video)
 
@@ -66,7 +69,10 @@ class TestProbe:
             nb_frames="N/A", duration="10.0", fps="30/1",
         )
 
-        with patch("subprocess.run") as mock_run:
+        with (
+            patch("subprocess.run") as mock_run,
+            patch("shutil.which", return_value="/usr/bin/ffprobe"),
+        ):
             mock_run.return_value = MagicMock(stdout=ffprobe_out, returncode=0)
             info = FFmpegExtractor().probe(video)
 
@@ -78,7 +84,10 @@ class TestProbe:
         video.touch()
         no_stream_json = json.dumps({"streams": []})
 
-        with patch("subprocess.run") as mock_run:
+        with (
+            patch("subprocess.run") as mock_run,
+            patch("shutil.which", return_value="/usr/bin/ffprobe"),
+        ):
             mock_run.return_value = MagicMock(stdout=no_stream_json, returncode=0)
             with pytest.raises(ValueError, match="No video stream"):
                 FFmpegExtractor().probe(video)
@@ -88,7 +97,10 @@ class TestProbe:
         video = tmp_path / "test.mkv"
         video.touch()
 
-        with patch("subprocess.run") as mock_run:
+        with (
+            patch("subprocess.run") as mock_run,
+            patch("shutil.which", return_value="/usr/bin/ffprobe"),
+        ):
             mock_run.return_value = MagicMock(stdout="", returncode=1, stderr="error")
             with pytest.raises(RuntimeError, match="ffprobe failed"):
                 FFmpegExtractor().probe(video)
@@ -196,6 +208,7 @@ class TestExtract:
         info = VideoInfo("h264", "yuv420p", 8, 30.0, 10, 0.333, 64, 64)
 
         with (
+            patch("shutil.which", return_value="/usr/bin/ffmpeg"),
             patch.object(FFmpegExtractor, "select_decoder", return_value=None),
             patch("subprocess.Popen") as mock_popen,
         ):
@@ -223,6 +236,7 @@ class TestExtract:
         info = VideoInfo("h264", "yuv420p", 8, 30.0, 10, 0.333, 64, 64)
 
         with (
+            patch("shutil.which", return_value="/usr/bin/ffmpeg"),
             patch.object(FFmpegExtractor, "select_decoder", return_value=None),
             patch("subprocess.Popen") as mock_popen,
         ):
@@ -254,6 +268,7 @@ class TestExtract:
         cancel_event.set()
 
         with (
+            patch("shutil.which", return_value="/usr/bin/ffmpeg"),
             patch.object(FFmpegExtractor, "select_decoder", return_value=None),
             patch("subprocess.Popen") as mock_popen,
         ):
