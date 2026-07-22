@@ -63,8 +63,8 @@ Windows: run [rustup-init.exe](https://rustup.rs/) or `winget install Rustlang.R
 # Linux / macOS
 ./envs/build.sh --backend cpu       # or --backend cuda / --backend rocm
 
-# Windows (PowerShell) — ROCm not supported here, use cpu or cuda
-.\envs\build.ps1 -Backend cpu       # or -Backend cuda
+# Windows (PowerShell)
+.\envs\build.ps1 -Backend cpu       # or -Backend cuda, -Backend rocm
 ```
 
 This creates `.venv` via `uv sync`, installs the matching PyTorch wheel, and verifies the install (device detection, a micro forward/backward pass).
@@ -81,16 +81,38 @@ sudo apt install -y build-essential libwebkit2gtk-4.1-dev librsvg2-dev patchelf 
 **macOS** — `brew install python@3.12 uv node rust`
 
 **Windows:**
-- ROCm isn't supported — use `-Backend cpu` or `-Backend cuda`.
+- All three backends (cpu, cuda, rocm) are supported. For AMD ROCm support on native Windows, see [AMD ROCm on Windows](#amd-rocm-on-windows).
 - WSL is recommended: run `./envs/build.sh` inside Ubuntu on WSL for full bash compatibility. Frontend and desktop app run from Windows and connect to the API server in WSL.
 - Tauri build needs [MSVC Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/), WebView2 (bundled in Win10 1803+), and the Rust MSVC toolchain. Output: `.msi`/`.exe` in `src-tauri/target/release/bundle/`.
 - Activate the venv with `.venv\Scripts\Activate.ps1`, not `source .venv/bin/activate`.
 - `nvidia-smi` uses `,` as a decimal separator on some European-locale systems — the GPU polling code normalizes this before parsing.
 - **ffmpeg must be on PATH** for frame extraction from video — `shutil.which("ffmpeg")` finds it automatically. Download from [ffmpeg.org](https://ffmpeg.org/download.html) and add the `bin/` directory to your system PATH.
 
+### AMD ROCm on Windows
+
+ROCm on Windows is only available via the AMD Adrenalin driver (24.12.1+),
+which bundles its own Python 3.12 and a custom PyTorch build with ROCm
+support. Official PyTorch ROCm wheels from `download.pytorch.org` are
+Linux-only and do not work on Windows.
+
+Key details:
+
+- **Python 3.12 only** — the Adrenalin tool uses Python 3.12, which is
+  within the project's `>=3.11,<3.13` range.
+- Create your environment with the Adrenalin GUI, then point uv at it by
+  placing or symlinking the `.venv` in the project root. The build script
+  automatically skips PyTorch install for `--backend rocm`:
+  ```powershell
+  .\envs\build.ps1 -Backend rocm
+  ```
+  This runs `uv sync --no-dev` for project dependencies while preserving
+  the Adrenalin-provided PyTorch, then verifies ROCm is working.
+- All subsequent commands (`.\scripts\build.ps1`, `srengine`, etc.) work
+  identically to a CUDA or CPU setup.
+
 ## Building the desktop app
 
-`scripts/build.sh` is the single entry point for frontend, sidecar, and Tauri builds.
+`scripts/build.sh` (Linux/macOS) or `scripts/build.ps1` (Windows) is the single entry point for frontend, sidecar, and Tauri builds.
 
 | Command | Does |
 |---|---|
@@ -106,8 +128,9 @@ sudo apt install -y build-essential libwebkit2gtk-4.1-dev librsvg2-dev patchelf 
 | `check` | Verify prerequisites |
 | `help` | Show usage |
 
-Options: `-j`/`--parallel` builds frontend and sidecar concurrently.
+Options: `-j`/`--parallel` / `-Parallel` builds frontend and sidecar concurrently.
 
+**Linux / macOS**
 ```bash
 ./scripts/build.sh                # frontend + Tauri
 ./scripts/build.sh dev            # hot-reload dev mode
@@ -117,9 +140,19 @@ Options: `-j`/`--parallel` builds frontend and sidecar concurrently.
 ./scripts/build.sh sidecar cuda   # CUDA sidecar only
 ```
 
+**Windows (PowerShell)**
+```powershell
+.\scripts\build.ps1               # frontend + Tauri
+.\scripts\build.ps1 dev           # hot-reload dev mode
+.\scripts\build.ps1 check         # verify prerequisites
+.\scripts\build.ps1 all           # clean + full build, sidecar backend auto-detected
+.\scripts\build.ps1 all rocm -j   # clean + full build, ROCm sidecar, parallel
+.\scripts\build.ps1 sidecar cuda  # CUDA sidecar only
+```
+
 **Dev mode** runs the Python backend via `uv run uvicorn` straight from `.venv` — Python changes are picked up on restart, no packaging step.
 
-**Release builds** package the backend as a standalone binary via `scripts/build-sidecar.sh`, so the app runs on any machine without Python or `.venv` installed. This script never modifies your dev `.venv` — it copies it into a scratch directory, installs PyInstaller there, builds, and discards the copy.
+**Release builds** package the backend as a standalone binary via `scripts/build-sidecar.sh` (Linux/macOS) or `scripts/build-sidecar.ps1` (Windows), so the app runs on any machine without Python or `.venv` installed. The sidecar script never modifies your dev `.venv` — it copies it into a scratch directory, installs PyInstaller there, builds, and discards the copy.
 
 ### Running the built app
 

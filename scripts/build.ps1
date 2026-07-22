@@ -10,7 +10,7 @@
     help. Default (empty) builds frontend + Tauri.
 
 .PARAMETER Backend
-    Sidecar backend: cpu or cuda (rocm is Linux-only).
+    Sidecar backend: cpu, cuda, or rocm (auto-detected from .venv if omitted).
 
 .PARAMETER Parallel
     Build frontend and sidecar concurrently (-j also works).
@@ -34,7 +34,7 @@ param(
     [string]$Command = "",
 
     [Parameter(Position=1)]
-    [ValidateSet("cpu", "cuda")]
+    [ValidateSet("cpu", "cuda", "rocm")]
     [string]$Backend = "",
 
     [Alias("j")]
@@ -172,7 +172,7 @@ function check_prereqs {
     if (Test-Path "$ProjectDir\.venv") {
         ok "Python virtual environment (.venv)"
     } else {
-        warn "No .venv found — run: envs\build.ps1 -Backend cpu"
+        warn "No .venv found — run: envs\build.ps1 -Backend <cpu|cuda|rocm>"
     }
 
     # Visual Studio Build Tools (for Rust)
@@ -226,7 +226,7 @@ function build_sidecar {
     section "Building Sidecar $(if ($Variant) { "($Variant)" })"
 
     if (-not (Test-Path "$ProjectDir\.venv")) {
-        die "No .venv found — run envs\build.ps1 -Backend <cpu|cuda> first"
+        die "No .venv found — run envs\build.ps1 -Backend <cpu|cuda|rocm> first"
     }
 
     step "Running PyInstaller via build-sidecar.ps1..."
@@ -343,7 +343,7 @@ foreach ($arg in $ExtraArgs) {
         "--help"   { $Help      = $true }
         "cpu"      { if ([string]::IsNullOrEmpty($Backend)) { $Backend = "cpu" } }
         "cuda"     { if ([string]::IsNullOrEmpty($Backend)) { $Backend = "cuda" } }
-        "rocm"     { warn "ROCm is Linux-only. Use 'cuda' or 'cpu' on Windows." }
+        "rocm"     { if ([string]::IsNullOrEmpty($Backend)) { $Backend = "rocm" } }
     }
 }
 

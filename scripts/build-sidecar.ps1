@@ -15,7 +15,7 @@
     builds, then deletes the scratch venv. Your dev environment stays untouched.
 
 .PARAMETER Backend
-    Force torch backend: cpu or cuda (default: auto-detect from .venv).
+    Force torch backend: cpu, cuda, or rocm (default: auto-detect from .venv).
 
 .PARAMETER KeepTemp
     Don't delete the scratch build venv (debugging).
@@ -30,7 +30,7 @@
 #>
 
 param(
-    [ValidateSet("cpu", "cuda")]
+    [ValidateSet("cpu", "cuda", "rocm")]
     [string]$Backend = "",
 
     [switch]$KeepTemp,
@@ -61,7 +61,7 @@ function check_requirements {
     $null = Get-Command uv -ErrorAction Stop
 
     if (-not (Test-Path $VenvDir)) {
-        die "No .venv found at $VenvDir — run envs\build.ps1 -Backend <cpu|cuda> first."
+        die "No .venv found at $VenvDir — run envs\build.ps1 -Backend <cpu|cuda|rocm> first."
     }
 
     $pythonExe = "$VenvDir\Scripts\python.exe"

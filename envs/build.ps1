@@ -5,7 +5,9 @@
     and verifies the installation.
 
 .PARAMETER Backend
-    PyTorch backend: cpu or cuda (rocm is Linux-only).
+    PyTorch backend: cpu, cuda, or rocm. ROCm on Windows requires PyTorch
+    pre-installed via AMD Adrenalin — the build script skips PyTorch install
+    automatically for this backend.
 
 .PARAMETER Clean
     Remove .venv and uv.lock before building.
@@ -13,11 +15,12 @@
 .EXAMPLE
     .\envs\build.ps1 -Backend cpu
     .\envs\build.ps1 -Backend cuda -Clean
+    .\envs\build.ps1 -Backend rocm
 #>
 
 param(
     [Parameter(Mandatory)]
-    [ValidateSet("cpu", "cuda")]
+    [ValidateSet("cpu", "cuda", "rocm")]
     [string]$Backend,
 
     [switch]$Clean
@@ -56,7 +59,7 @@ if ($Clean) {
 # ── Create venv ───────────────────────────────────────────────────────────
 info "Creating virtual environment..."
 Push-Location $ProjectDir
-uv venv
+uv venv --allow-existing
 if (-not $?) { die "uv venv failed" }
 
 # ── Install base deps ─────────────────────────────────────────────────────
@@ -65,28 +68,33 @@ uv sync --no-dev
 if (-not $?) { die "uv sync failed" }
 
 # ── Install PyTorch ───────────────────────────────────────────────────────
-$index = $TorchIndex[$Backend]
-info "Installing PyTorch backend: $Backend"
-"Index: $index"
+if ($Backend -eq "rocm") {
+    info "ROCm on Windows: PyTorch must be pre-installed via AMD Adrenalin."
+    info "Skipping PyTorch installation — verifying existing install..."
+} else {
+    $index = $TorchIndex[$Backend]
+    info "Installing PyTorch backend: $Backend"
+    "Index: $index"
 
-$installArgs = @("pip", "install", "--index-url", $index)
-if ($Backend -eq "cuda") {
-    $installArgs += "--reinstall"
-}
-$installArgs += @("torch", "torchvision")
-
-$attempts = 3
-for ($i = 1; $i -le $attempts; $i++) {
-    uv @installArgs
-    if ($?) { break }
-    if ($i -lt $attempts) {
-        warn "Attempt $i failed. Retrying in 5s..."
-        Start-Sleep -Seconds 5
-    } else {
-        die "Failed to install PyTorch after $attempts attempts"
+    $installArgs = @("pip", "install", "--index-url", $index)
+    if ($Backend -ne "cpu") {
+        $installArgs += "--reinstall"
     }
+    $installArgs += @("torch", "torchvision")
+
+    $attempts = 3
+    for ($i = 1; $i -le $attempts; $i++) {
+        uv @installArgs
+        if ($?) { break }
+        if ($i -lt $attempts) {
+            warn "Attempt $i failed. Retrying in 5s..."
+            Start-Sleep -Seconds 5
+        } else {
+            die "Failed to install PyTorch after $attempts attempts"
+        }
+    }
+    ok "PyTorch installed."
 }
-ok "PyTorch installed."
 
 # ── Install LPIPS ─────────────────────────────────────────────────────────
 info "Installing optional LPIPS dependency..."
@@ -114,6 +122,14 @@ elif backend == 'cuda':
     print('✓ CUDA backend verified')
     print('CUDA Version:', torch.version.cuda)
     print('GPU         :', torch.cuda.get_device_name(0))
+elif backend == 'rocm':
+    if not torch.cuda.is_available():
+        raise RuntimeError('ROCm/HIP unavailable. PyTorch with ROCm must be installed via AMD Adrenalin.')
+    if torch.version.hip is None:
+        raise RuntimeError('ROCm/HIP not available. PyTorch with ROCm must be installed via AMD Adrenalin.')
+    print('✓ ROCm backend verified')
+    print('HIP Version  :', torch.version.hip)
+    print('GPU          :', torch.cuda.get_device_name(0))
 print('=' * 60)
 '@
 

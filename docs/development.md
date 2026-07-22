@@ -209,7 +209,7 @@ Current coverage targets (enforced by CI):
 
 - The Python codebase is fully cross-platform (uses `pathlib.Path` throughout, no platform-specific conditionals).
 - All Python dependencies (PyTorch, opencv-python, FastAPI, etc.) support Windows natively.
-- The build script `envs/build.ps1` supports CPU and CUDA backends. ROCm is Linux-only.
+- The build script `envs/build.ps1` supports CPU, CUDA, and ROCm backends. For AMD ROCm on Windows, see [AMD ROCm on Windows](../README.md#amd-rocm-on-windows).
 - On Windows, activate the virtual environment with `.venv\Scripts\Activate.ps1` (not `source .venv/bin/activate`).
 - `ruff check src/`, `pytest`, and all other dev tools work identically on Windows.
 - For Tauri desktop builds, see [Desktop Application](desktop.md#building-on-windows).

@@ -180,10 +180,10 @@ The `envs/build.sh` script configures PyTorch for the target backend:
 |---------|-------|-------|---------|
 | CPU     | ✓     | ✓     | ✓       |
 | CUDA    | ✓     | —     | ✓       |
-| ROCm    | ✓     | —     | —       |
+| ROCm    | ✓     | —     | ✓ (via AMD Adrenalin) |
 
-- **ROCm is Linux-only.** Use the CUDA or CPU backend on Windows.
-- On Windows, use `.\envs\build.ps1 -Backend cpu` or `.\envs\build.ps1 -Backend cuda`.
+- On Windows, use `.\envs\build.ps1 -Backend cpu`, `-Backend cuda`, or `-Backend rocm`.
+- For AMD ROCm on Windows, see [AMD ROCm on Windows](../README.md#amd-rocm-on-windows).
 
 Verification via `envs/verify_env.py`:
 - Checks PyTorch imports without error
