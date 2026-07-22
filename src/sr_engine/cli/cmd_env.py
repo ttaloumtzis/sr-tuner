@@ -1,6 +1,5 @@
 """CLI commands for environment diagnostics."""
 
-from pathlib import Path
 import click
 import torch
 

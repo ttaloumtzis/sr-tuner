@@ -1,7 +1,6 @@
 """CLI commands for model utilities (export, info, instances)."""
 
 import json
-import sys
 from pathlib import Path
 
 import click
@@ -198,7 +197,7 @@ def info(ctx, model: Path | None, instance: str | None) -> None:
         cfg = yaml.safe_load(
             (model_inst.path / "config.yaml").read_text(encoding="utf-8")
         )
-        click.echo(f"Arch config:")
+        click.echo("Arch config:")
         for k, v in cfg.items():
             click.echo(f"  {k}: {v}")
 
@@ -212,7 +211,6 @@ def info(ctx, model: Path | None, instance: str | None) -> None:
             if meta_file.exists():
                 meta = json.loads(meta_file.read_text(encoding="utf-8"))
                 run = meta.get("run", "?")
-                ts = meta.get("timestamp", "")
                 click.echo(f"  {v.name}  (run: {run})")
             else:
                 click.echo(f"  {v.name}")

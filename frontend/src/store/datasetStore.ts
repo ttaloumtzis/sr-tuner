@@ -155,7 +155,7 @@ interface DatasetState {
   setJobError: (err: string | null) => void;
   setJobType: (t: "build" | "health" | "merge" | "prune" | "validate" | null) => void;
   startProgressStep: (desc: string, total: number | null) => void;
-  updateProgressStep: (stepId: number, current: number, fps: number, etaSec: number) => void;
+  updateProgressStep: (stepId: number, current: number, fps: number, etaSec: number | null) => void;
   finishProgressStep: (stepId: number) => void;
   clearJob: () => void;
   setMergeResults: (results: { scale: number; output_path: string; source_datasets: string[] }[] | null) => void;

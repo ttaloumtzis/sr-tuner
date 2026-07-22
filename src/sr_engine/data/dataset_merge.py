@@ -169,7 +169,7 @@ def merge_datasets(
         datasets = [d for d in dataset_dirs if _is_dataset_dir(d)]
         if not datasets:
             raise ValueError(
-                f"None of the specified directories are valid datasets. "
+                "None of the specified directories are valid datasets. "
                 "Each must contain HR/, LR/, and manifest.json."
             )
     else:

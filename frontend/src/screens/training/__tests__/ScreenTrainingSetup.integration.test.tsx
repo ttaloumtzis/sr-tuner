@@ -40,7 +40,7 @@ describe("Training Setup (26.9)", () => {
   }
 
   function getLaunchButton() {
-    return screen.queryByRole("button", { name: /launch training/i });
+    return screen.queryByRole("button", { name: /launch/i });
   }
 
   it("Launch button is disabled before prerequisites are met", async () => {

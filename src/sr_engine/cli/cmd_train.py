@@ -83,7 +83,7 @@ def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate,
                 "or set --workspace explicitly."
             )
         try:
-            model_inst = ws.get_model_instance(instance)
+            ws.get_model_instance(instance)
         except FileNotFoundError:
             raise click.ClickException(
                 f"Model instance '{instance}' not found in workspace. "

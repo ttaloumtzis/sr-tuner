@@ -1,15 +1,15 @@
 """SwinIR architecture — Swin Transformer-based image restoration."""
 
 import logging
-import math
 from typing import Optional
-
-log = logging.getLogger(__name__)
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
 from ..registry import register
+
+log = logging.getLogger(__name__)
 
 
 class MLP(nn.Module):
@@ -187,7 +187,6 @@ class SwinTransformerLayer(nn.Module):
 
         x = x.permute(0, 2, 3, 1).contiguous()
         windows = window_partition(x, self.window_size)
-        nW = windows.shape[0]
 
         attn_mask = self._compute_attention_mask(B, Hp, Wp, x.device) if self.shift_size > 0 else None
         attn_windows = self.attn(windows, mask=attn_mask)
