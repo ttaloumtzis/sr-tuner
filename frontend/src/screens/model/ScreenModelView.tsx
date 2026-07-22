@@ -1,35 +1,13 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { Panel } from "../../components/ui/Panel";
 import { Btn } from "../../components/ui/Btn";
+import { InfoRow } from "../../components/ui/InfoRow";
 import { useModelStore } from "../../store/modelStore";
 import { listInstances, getInstanceVersions, deleteInstance } from "../../lib/api";
 import { useToast } from "../../components/shell/ToastProvider";
 import type { Architecture } from "../../lib/srproj";
 import type { ModelInstance, ModelVersion } from "../../lib/api-types";
 import { estimateParams, formatParamCount, formatWeightMB } from "./templates";
-
-function DetailRow({ label, value, mono = true }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div style={{ display: "flex", justifyContent: "space-between", padding: "2px 0" }}>
-      <span style={{ fontSize: 11, color: "var(--muted)" }}>{label}</span>
-      <span style={{
-        fontSize: 11, fontWeight: 600, color: "var(--text)",
-        fontFamily: mono ? "var(--font-mono)" : undefined,
-      }}>
-        {value}
-      </span>
-    </div>
-  );
-}
-
-function SizeRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div style={{ display: "flex", justifyContent: "space-between", padding: "2px 0" }}>
-      <span style={{ fontSize: 11, color: "var(--muted)" }}>{label}</span>
-      <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text)", fontFamily: "var(--font-mono)" }}>{value}</span>
-    </div>
-  );
-}
 
 function CfgChip({ label, value }: { label: string; value: string }) {
   return (
@@ -80,6 +58,14 @@ function VersionCard({ version, fmtTimestamp }: { version: ModelVersion; fmtTime
 }
 
 function DeleteConfirmScrim({ name, onConfirm, onCancel }: { name: string; onConfirm: () => void; onCancel: () => void }) {
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onCancel]);
+
   return (
     <div style={{
       position: "absolute", inset: 0, background: "rgba(0,0,0,0.6)",
@@ -189,13 +175,13 @@ function ModelDetailPanel({ model, versions, loadingVersions, scaleLabel, onRefr
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, overflow: "hidden" }}>
       <Panel title={model.name} style={{ flexShrink: 0 }}>
-        <DetailRow label="Architecture" value={model.architecture === "swinir" ? "SwinIR" : "RRDB-ESRGAN"} />
-        <DetailRow label="Scale" value={scaleLabel(model)} />
-        <DetailRow label="Latest Version" value={model.latest_version ?? "—"} />
-        <div style={{ borderTop: "1px solid var(--border)", margin: "6px 0", paddingTop: 6 }}>
-          <SizeRow label="Parameters" value={formatParamCount(paramsM)} />
-          <SizeRow label="Weights (f32)" value={`${formatWeightMB(paramsM)} MB`} />
-          <SizeRow label="Weights (f16)" value={`${(parseFloat(formatWeightMB(paramsM)) / 2).toFixed(1)} MB`} />
+        <InfoRow label="Architecture" value={model.architecture === "swinir" ? "SwinIR" : "RRDB-ESRGAN"} />
+        <InfoRow label="Scale" value={scaleLabel(model)} />
+        <InfoRow label="Latest Version" value={model.latest_version ?? "—"} mono />
+        <div style={{ marginTop: 2 }}>
+          <InfoRow label="Parameters" value={formatParamCount(paramsM)} mono />
+          <InfoRow label="Weights (f32)" value={`${formatWeightMB(paramsM)} MB`} mono />
+          <InfoRow label="Weights (f16)" value={`${(parseFloat(formatWeightMB(paramsM)) / 2).toFixed(1)} MB`} mono />
         </div>
       </Panel>
 
@@ -268,20 +254,29 @@ export function ScreenModelView() {
     return () => clearInterval(interval);
   }, [fetchInstances]);
 
+  // Depends on `selectedName` (a stable primitive) rather than `selectedModel` (an object
+  // that gets a fresh identity every time the 5s instance poll refreshes `instances`, even
+  // when nothing actually changed). Depending on the object previously re-fetched versions
+  // every 5 seconds regardless of whether the selection changed.
   useEffect(() => {
-    if (selectedModel) {
-      fetchVersions(selectedModel.name);
+    if (selectedName) {
+      fetchVersions(selectedName);
     } else {
       setVersions([]);
     }
-  }, [selectedModel, fetchVersions]);
+  }, [selectedName, fetchVersions]);
 
   const handleDeleteConfirm = async () => {
     if (!deletingName) return;
-    await deleteInstance(deletingName).catch(() => {});
-    show("success", `Model "${deletingName}" deleted`);
-    if (selectedName === deletingName) setSelectedName(null);
+    const name = deletingName;
     setDeletingName(null);
+    try {
+      await deleteInstance(name);
+      show("success", `Model "${name}" deleted`);
+      if (selectedName === name) setSelectedName(null);
+    } catch (e: any) {
+      show("error", e?.message ?? `Failed to delete "${name}"`);
+    }
     fetchInstances();
   };
 

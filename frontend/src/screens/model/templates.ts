@@ -128,7 +128,11 @@ export function formatParamCount(paramsM: number): string {
 }
 
 export function formatWeightMB(paramsM: number): string {
-  return ((paramsM * 4) / 1024).toFixed(1);
+  // fp32 = 4 bytes/param. paramsM is millions of params, so paramsM * 4 = MB directly
+  // (1e6 params * 4 bytes = 4e6 bytes = 4 MB). Previously this divided by an extra 1024,
+  // which under-reported weight size by ~1000x (e.g. a 16.7M-param model showed "0.1 MB"
+  // instead of ~66.8 MB).
+  return (paramsM * 4).toFixed(1);
 }
 
 export function doesConfigMatchTemplate(

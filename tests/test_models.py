@@ -9,6 +9,11 @@ import torch
 
 from sr_engine.models.archs.rrdbnet import RRDBNet
 from sr_engine.models.archs.swinir import SwinIR
+from sr_engine.models.checkpoint import (
+    check_shape_compat,
+    compat_load_state_dict,
+    strip_keys_not_in_model,
+)
 from sr_engine.models.registry import build_model, register
 
 
@@ -179,5 +184,62 @@ class TestSwinIRExtended:
             'upsampler.2.weight': torch.randn(3, 3, 3, 3),
             'upsampler.2.bias': torch.randn(3),
         }
-        with pytest.raises(ValueError, match="old single-stage"):
+        with pytest.raises(ValueError, match="does not match"):
             model.load_state_dict(old_sd)
+
+    def test_old_scale1_checkpoint_can_load(self):
+        """Old-format scale=1 checkpoint should load (shapes match)."""
+        model = SwinIR(scale=1)
+        sd = SwinIR(scale=1).state_dict()
+        sd['upsampler.2.weight'] = torch.randn(3, 3, 3, 3)
+        sd['upsampler.2.bias'] = torch.randn(3)
+        original_w = sd['upsampler.0.weight'].clone()
+        model.load_state_dict(sd)
+        assert torch.equal(model.state_dict()['upsampler.0.weight'], original_w)
+        assert 'upsampler.2.weight' not in model.state_dict()
+
+    def test_old_scale1_checkpoint_with_rgb_mean(self):
+        """Old-format scale=1 checkpoint loads even when model has rgb_mean."""
+        model = SwinIR(scale=1, rgb_mean=[0.4488, 0.4371, 0.4040])
+        sd = SwinIR(scale=1).state_dict()
+        sd['upsampler.2.weight'] = torch.randn(3, 3, 3, 3)
+        sd['upsampler.2.bias'] = torch.randn(3)
+        model.load_state_dict(sd)
+        assert 'rgb_mean' in model.state_dict()
+
+    def test_swinir_model_format(self):
+        """SwinIR should declare model_format."""
+        assert SwinIR.model_format == "swinir-v2"
+
+    def test_rrdbnet_model_format(self):
+        """RRDBNet should declare model_format."""
+        assert RRDBNet.model_format == "rrdb_esrgan-v1"
+
+    def test_compat_load_strips_old_keys(self):
+        """compat_load_state_dict strips upsampler keys not in current model."""
+        from sr_engine.models.checkpoint import compat_load_state_dict
+        model = SwinIR(scale=1)
+        sd = SwinIR(scale=1).state_dict()
+        sd['upsampler.2.weight'] = torch.randn(3, 3, 3, 3)
+        sd['upsampler.2.bias'] = torch.randn(3)
+        sd['upsampler.99.weight'] = torch.randn(1, 1, 1, 1)
+        original_w = sd['upsampler.0.weight'].clone()
+        cleaned, effective_strict = compat_load_state_dict(
+            model, sd, compat_prefixes=("upsampler.",)
+        )
+        assert 'upsampler.2.weight' not in cleaned
+        assert 'upsampler.99.weight' not in cleaned
+        assert torch.equal(cleaned['upsampler.0.weight'], original_w)
+        model.load_state_dict(cleaned, strict=effective_strict)
+
+    def test_compat_load_rejects_shape_mismatch(self):
+        """compat_load_state_dict should raise on shape mismatch."""
+        model = SwinIR(scale=1)
+        sd = {
+            'upsampler.0.weight': torch.randn(3, 3, 3, 3),
+            'upsampler.0.bias': torch.randn(3),
+        }
+        with pytest.raises(ValueError, match="does not match"):
+            compat_load_state_dict(
+                model, sd, compat_prefixes=("upsampler.",)
+            )

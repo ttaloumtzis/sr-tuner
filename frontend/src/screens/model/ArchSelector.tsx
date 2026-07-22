@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { ConfigField } from "./ConfigFieldRow";
 import type { Architecture } from "../../lib/srproj";
 
@@ -65,17 +66,20 @@ function Stat({ label, value }: { label: string; value: string }) {
 }
 
 function ArchCard({ def, active, onClick }: { def: ArchDef; active: boolean; onClick: () => void }) {
+  const [hovered, setHovered] = useState(false);
   return (
     <button
       onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       style={{
         display: "flex", flexDirection: "column", gap: 6,
         padding: 12, borderRadius: 8, cursor: "pointer",
-        background: active ? "var(--bg3)" : "var(--bg2)",
-        border: `1px solid ${active ? "var(--green)" : "var(--border)"}`,
+        background: active ? "var(--bg3)" : hovered ? "var(--bg3)" : "var(--bg2)",
+        border: `1px solid ${active ? "var(--green)" : hovered ? "var(--border2)" : "var(--border)"}`,
         transition: "var(--transition-fast)",
         textAlign: "left", width: "100%",
-        opacity: active ? 1 : 0.7,
+        opacity: active ? 1 : hovered ? 0.9 : 0.7,
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -89,7 +93,7 @@ function ArchCard({ def, active, onClick }: { def: ArchDef; active: boolean; onC
       </div>
       <span style={{ fontSize: 10, color: "var(--green)", fontWeight: 600, letterSpacing: "0.3px" }}>{def.tag}</span>
       <span style={{ fontSize: 11, color: "var(--muted)", lineHeight: 1.4 }}>{def.description}</span>
-      <div style={{ display: "flex", gap: 12, marginTop: 2 }}>
+      <div style={{ display: "flex", gap: 12, marginTop: 2 }} title="Reference figures at default settings — actual values depend on the config you choose below">
         <Stat label="VRAM" value={def.vram} />
         <Stat label="Params" value={def.params} />
       </div>

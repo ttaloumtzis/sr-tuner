@@ -1,18 +1,10 @@
 import { useDatasetStore, type DatasetSubTab } from "../../store/datasetStore";
 import { useDatasetSSE } from "../../hooks/useDatasetSSE";
 import { JobOverlay } from "../../components/dataset/JobOverlay";
+import { SubTabPill } from "../../components/ui/SubTabPill";
 import { ScreenDatasetCreate } from "./ScreenDatasetCreate";
 import { ScreenBrowseDatasets } from "./ScreenBrowseDatasets";
 import { ScreenMergeDatasets } from "./ScreenMergeDatasets";
-
-function SubTabPill({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
-  return (
-    <button onClick={onClick} role="tab" aria-selected={active}
-      style={{ background: active ? "var(--green)" : "var(--bg3)", border: `1px solid ${active ? "var(--green)" : "var(--border)"}`, color: active ? "#0d0f11" : "var(--muted)", fontSize: 11, fontWeight: active ? 600 : 400, padding: "4px 16px", borderRadius: 12, cursor: "pointer", transition: "var(--transition-fast)", whiteSpace: "nowrap" }}>
-      {label}
-    </button>
-  );
-}
 
 export function ScreenDatasetSetup() {
   const subTab = useDatasetStore((s) => s.subTab);

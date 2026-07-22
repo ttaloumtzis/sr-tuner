@@ -350,6 +350,7 @@ class Trainer:
         path = self.checkpoint_dir / f"epoch_{epoch:03d}.pt"
         ckpt_config = {
             **self.model_cfg,
+            "model_format": getattr(self.model, "model_format", "unknown"),
             "training_dtype": str(self.amp_dtype),
         }
         save_checkpoint(

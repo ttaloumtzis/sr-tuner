@@ -10,6 +10,7 @@ export { PathInput } from "./PathInput";
 export { PBar } from "./PBar";
 export { StackedBar } from "./StackedBar";
 export type { StackedBarSegment } from "./StackedBar";
+export { SubTabPill } from "./SubTabPill";
 export { Tag } from "./Tag";
 export { Toggle } from "./Toggle";
 export { Tooltip } from "./Tooltip";

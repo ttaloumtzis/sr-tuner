@@ -44,6 +44,8 @@ class RRDBNet(nn.Module):
     upsamples with nearest-neighbour interpolation plus a convolution.
     """
 
+    model_format = "rrdb_esrgan-v1"
+
     def __init__(
         self,
         num_in_ch: int = 3,

@@ -1,4 +1,5 @@
 import { useId } from "react";
+import { Tooltip } from "../../components/ui/Tooltip";
 
 export interface SliderField {
   type: "slider";
@@ -34,7 +35,41 @@ interface ConfigFieldRowProps {
   onChange: (value: unknown) => void;
 }
 
+/** Short explanations for the more jargon-heavy architecture knobs. Shown as a hover
+ *  tooltip next to the field label so people tuning a model don't have to leave the app. */
+const FIELD_HINTS: Partial<Record<string, string>> = {
+  scale: "Upscaling factor applied to the input image (e.g. 4x turns a 256px image into 1024px).",
+  num_feat: "Width of the network — more features capture finer detail at the cost of VRAM and speed.",
+  num_block: "Depth of the network — more RRDB blocks improve quality but slow down training and inference.",
+  num_grow_ch: "Growth rate inside each dense block. Higher values add capacity with a smaller cost than num_feat.",
+  embed_dim: "Width of the transformer's token embeddings — the SwinIR equivalent of num_feat.",
+  window_size: "Size of the local attention window. Must evenly divide the input patch size.",
+  mlp_ratio: "Expansion factor of the feed-forward layer inside each transformer block.",
+  upsampler: "Method used to reconstruct the final high-resolution image from features.",
+  img_range: "Pixel value range the network is trained to expect (usually 1.0 for [0,1]-normalized inputs).",
+  num_in_ch: "Number of channels in the input image (3 for RGB, 1 for grayscale).",
+  num_out_ch: "Number of channels in the output image.",
+  depths: "Comma-separated transformer block count per stage, e.g. 6,6,6,6,6,6 for six stages of six blocks.",
+  num_heads: "Comma-separated attention head count per stage. Auto-derived from Embedding Dim.",
+  rgb_mean: "Per-channel mean used to normalize inputs before training. Leave blank to use the dataset default.",
+};
+
+function FieldLabel({ text, fieldKey }: { text: string; fieldKey: string }) {
+  const hint = FIELD_HINTS[fieldKey];
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>
+      {text}
+      {hint && <Tooltip text={hint} />}
+    </span>
+  );
+}
+
 export function ConfigFieldRow({ field, value, onChange }: ConfigFieldRowProps) {
+  // Called unconditionally so the hook order stays stable regardless of field.type
+  // (previously this was called only inside the "slider" branch, after two earlier
+  // conditional returns — a rules-of-hooks violation).
+  const sliderId = useId();
+
   if (field.type === "text") {
     const textValue = String(value ?? "");
     const placeholder =
@@ -45,7 +80,7 @@ export function ConfigFieldRow({ field, value, onChange }: ConfigFieldRowProps) 
           : "6,6,6,6,6,6";
     return (
       <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        <span style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>{field.label}</span>
+        <FieldLabel text={field.label} fieldKey={field.key} />
         <input
           type="text"
           value={textValue}
@@ -63,7 +98,7 @@ export function ConfigFieldRow({ field, value, onChange }: ConfigFieldRowProps) 
   if (field.type === "dropdown") {
     return (
       <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        <span style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>{field.label}</span>
+        <FieldLabel text={field.label} fieldKey={field.key} />
         <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
           {field.options.map((opt) => {
             const active = value === opt;
@@ -90,13 +125,12 @@ export function ConfigFieldRow({ field, value, onChange }: ConfigFieldRowProps) 
     );
   }
   if (field.type === "slider") {
-    const id = useId();
     return (
       <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        <span style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>{field.label}</span>
+        <FieldLabel text={field.label} fieldKey={field.key} />
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <input
-            id={id}
+            id={sliderId}
             type="range"
             min={field.min}
             max={field.max}
@@ -125,7 +159,11 @@ export function ConfigFieldRow({ field, value, onChange }: ConfigFieldRowProps) 
   return null;
 }
 
-export function InfoRow({ label, value }: { label: string; value: string }) {
+/** Read-only, code-styled row used to display derived/computed values (e.g. the num_heads
+ *  CSV auto-generated from Embedding Dim + Depths). Distinct from the shared `ui/InfoRow`,
+ *  which is a plain label/value list row — this one has a monospace "code box" look and was
+ *  previously also named `InfoRow`, which shadowed the shared component of the same name. */
+export function CodeRow({ label, value }: { label: string; value: string }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
       <span style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>{label}</span>

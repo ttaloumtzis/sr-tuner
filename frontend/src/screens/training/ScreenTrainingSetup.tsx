@@ -542,6 +542,8 @@ export function ScreenTrainingSetup() {
     { label: "CUDA overhead", value: vramBreakdown.overheadGb, color: VRAM_SEGMENT_COLORS["CUDA overhead"] },
   ];
 
+  const totalLossWeight = Object.values(s.lossConfig).reduce((sum, e) => sum + (e.weight || 0), 0);
+
   const launchSummary = [
     s.instanceArchitecture,
     s.selectedDataset,
@@ -606,8 +608,9 @@ export function ScreenTrainingSetup() {
               {s.instanceVersions.length > 0 && (
                 <div style={{
                   display: "flex", alignItems: "center", gap: 7, padding: "6px 9px",
-                  background: s.resumeFrom ? "var(--green-dim)" : "var(--bg2)",
-                  border: `1px solid ${s.resumeFrom ? "var(--green)" : "var(--border)"}`,
+                  background: "var(--bg2)",
+                  border: "1px solid var(--border)",
+                  borderLeft: `3px solid ${s.resumeFrom ? "var(--green)" : "var(--border2)"}`,
                   borderRadius: "var(--radius-sm)",
                 }}>
                   <IconRewind size={12} color={s.resumeFrom ? "var(--green)" : "var(--muted)"} />
@@ -766,7 +769,11 @@ export function ScreenTrainingSetup() {
             <GroupLabel>Optimizer</GroupLabel>
             <div className="ts-grid" style={{ "--ts-grid-min": "90px", "--ts-grid-max": "160px" } as CSSProperties}>
               <Field label="Seed"><NumInput value={s.seed} onChange={s.setSeed} min={0} /></Field>
-              <Field label="Learning Rate"><NumInput value={s.learningRate} onChange={s.setLearningRate} min={0} step={1e-5} /></Field>
+              <div style={{ gridColumn: "span 2" }}>
+                <Field label={<LabelWithHint label="Learning Rate" hint="Step size the optimizer takes each update. Too high can destabilize training; too low slows convergence." />}>
+                  <NumInput value={s.learningRate} onChange={s.setLearningRate} min={0} step={1e-5} />
+                </Field>
+              </div>
               <Field label={<LabelWithHint label="Weight Decay" hint="L2 regularization strength applied by the Adam optimizer." />}>
                 <NumInput value={s.weightDecay} onChange={s.setWeightDecay} min={0} step={0.01} />
               </Field>
@@ -784,9 +791,19 @@ export function ScreenTrainingSetup() {
                     padding: "8px 10px", background: "var(--bg2)",
                     border: "1px solid var(--border)", borderRadius: "var(--radius-sm)",
                   }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
-                      <span style={{ fontSize: 10, fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", flex: 1 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                      <span style={{ fontSize: 10, fontWeight: 600, color: "var(--muted)", textTransform: "uppercase" }}>
                         {name}
+                      </span>
+                      <div style={{ flex: 1, height: 4, borderRadius: 2, background: "var(--bg3)", overflow: "hidden" }}>
+                        <div style={{
+                          height: "100%",
+                          width: `${totalLossWeight > 0 ? Math.min(100, (entry.weight / totalLossWeight) * 100) : 0}%`,
+                          background: "var(--green)", borderRadius: 2, transition: "width 0.15s",
+                        }} />
+                      </div>
+                      <span style={{ fontSize: 9.5, color: "var(--dim)", fontFamily: "var(--font-mono)", flexShrink: 0, width: 32, textAlign: "right" }}>
+                        {totalLossWeight > 0 ? `${Math.round((entry.weight / totalLossWeight) * 100)}%` : "—"}
                       </span>
                       {!(name === "pixel" && ["l1", "l2"].includes(entry.type)) && (
                         <button
@@ -916,14 +933,21 @@ export function ScreenTrainingSetup() {
             <div style={{ borderTop: "1px solid var(--border)", paddingTop: 10 }}>
               <EstimateRow label="VRAM est." value={`${vramBreakdown.totalGb.toFixed(1)} GB${gpuTotalVramGb ? ` / ${gpuTotalVramGb.toFixed(0)} GB` : ""}`} color={isOom ? "var(--red, #ef4444)" : undefined} />
               {vramBreakdown.totalGb > 0 && (
-                <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 7 }}>
                   <StackedBar segments={vramSegments} />
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 10px" }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                     {vramSegments.filter((seg) => seg.value > 0).map((seg) => (
-                      <div key={seg.label} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                        <span style={{ width: 6, height: 6, borderRadius: 2, background: seg.color, flexShrink: 0 }} />
-                        <span style={{ fontSize: 9, color: "var(--muted)" }}>{seg.label}</span>
-                        <span style={{ fontSize: 9, color: "var(--dim)", fontFamily: "var(--font-mono)" }}>{seg.value.toFixed(2)}g</span>
+                      <div key={seg.label} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ width: 7, height: 7, borderRadius: 2, background: seg.color, flexShrink: 0 }} />
+                        <span style={{
+                          fontSize: 10, color: "var(--muted)", flex: 1, minWidth: 0,
+                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                        }}>
+                          {seg.label}
+                        </span>
+                        <span style={{ fontSize: 10, color: "var(--text)", fontFamily: "var(--font-mono)", flexShrink: 0 }}>
+                          {seg.value.toFixed(2)} GB
+                        </span>
                       </div>
                     ))}
                   </div>

@@ -4,6 +4,8 @@ import json
 import subprocess
 from unittest.mock import MagicMock, patch
 
+import cv2
+import numpy as np
 import pytest
 
 from sr_engine.data.ffmpeg_extractor import (
@@ -186,7 +188,10 @@ class TestExtract:
         out_dir.mkdir(parents=True, exist_ok=True)
         # Simulate FFmpeg creating PNG files before extraction
         for i in range(5):
-            (out_dir / f"{i:06d}.png").touch()
+            cv2.imwrite(
+                str(out_dir / f"{i:06d}.png"),
+                np.random.randint(0, 256, (64, 64, 3), dtype=np.uint8),
+            )
 
         info = VideoInfo("h264", "yuv420p", 8, 30.0, 10, 0.333, 64, 64)
 
@@ -198,6 +203,7 @@ class TestExtract:
             proc_mock.poll.return_value = 0  # process already finished
             proc_mock.wait.return_value = 0
             proc_mock.returncode = 0
+            proc_mock.communicate.return_value = (None, "")
             mock_popen.return_value = proc_mock
 
             paths = FFmpegExtractor().extract(
@@ -223,6 +229,10 @@ class TestExtract:
             proc_mock = MagicMock()
             proc_mock.poll.return_value = None  # process still running
             proc_mock.wait.side_effect = [subprocess.TimeoutExpired("cmd", 3600), 0]
+            proc_mock.communicate.side_effect = [
+                subprocess.TimeoutExpired("cmd", 3600),
+                (None, ""),
+            ]
             mock_popen.return_value = proc_mock
 
             with pytest.raises(RuntimeError, match="timed out"):
@@ -251,6 +261,7 @@ class TestExtract:
             proc_mock.poll.return_value = None
             proc_mock.wait.return_value = 0
             proc_mock.returncode = 0
+            proc_mock.communicate.return_value = (None, "")
             mock_popen.return_value = proc_mock
 
             with pytest.raises(CancelledError, match="cancelled"):

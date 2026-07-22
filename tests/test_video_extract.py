@@ -66,6 +66,7 @@ class TestExtractFrames:
             proc_mock.poll.return_value = 0
             proc_mock.wait.return_value = 0
             proc_mock.returncode = 0
+            proc_mock.communicate.return_value = (None, "")
             mock_popen.return_value = proc_mock
             try:
                 extract_frames(
@@ -109,6 +110,7 @@ class TestExtractFrames:
             proc_mock.poll.return_value = None
             proc_mock.wait.return_value = 0
             proc_mock.returncode = 0
+            proc_mock.communicate.return_value = (None, "")
             mock_popen.return_value = proc_mock
 
             with pytest.raises(CancelledError, match="cancelled"):
@@ -141,6 +143,7 @@ class TestExtractFrames:
             proc_mock.poll.return_value = 1  # non-zero exit
             proc_mock.wait.return_value = 1
             proc_mock.returncode = 1
+            proc_mock.communicate.return_value = (None, "")
             mock_popen.return_value = proc_mock
 
             paths = extract_frames(

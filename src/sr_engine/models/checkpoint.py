@@ -1,10 +1,93 @@
 """Checkpoint save/load, EMA state handling, and export utilities."""
 
+import logging
 from pathlib import Path
 
 import torch
 
 from .registry import build_model
+
+log = logging.getLogger(__name__)
+
+
+def check_shape_compat(state_dict: dict, model_sd: dict, model_name: str = "model") -> None:
+    """Raise ``ValueError`` if any shared key has a different shape.
+
+    Args:
+        state_dict: Checkpoint state dictionary.
+        model_sd: Current model state dictionary.
+        model_name: Name of the model (for error messages).
+    """
+    for k in list(state_dict.keys()):
+        if k in model_sd and state_dict[k].shape != model_sd[k].shape:
+            raise ValueError(
+                f"Key '{k}' shape {state_dict[k].shape} in checkpoint does not "
+                f"match {model_name} shape {model_sd[k].shape}. This checkpoint "
+                "was saved from a different architecture version."
+            )
+
+
+def strip_keys_not_in_model(state_dict: dict, model_sd: dict,
+                            prefixes: tuple[str, ...]) -> dict:
+    """Remove keys from *state_dict* that start with *prefixes* but don't exist in *model_sd*.
+
+    Args:
+        state_dict: Checkpoint state dictionary (modified in place).
+        model_sd: Current model state dictionary.
+        prefixes: Module name prefixes to check (e.g. ``("upsampler.",)``).
+
+    Returns:
+        Cleaned state dictionary.
+    """
+    cleaned = dict(state_dict)
+    for k in list(cleaned.keys()):
+        if any(k.startswith(p) for p in prefixes) and k not in model_sd:
+            del cleaned[k]
+            log.info("Discarded key '%s' not in current model", k)
+    return cleaned
+
+
+def compat_load_state_dict(
+    model: torch.nn.Module,
+    state_dict: dict,
+    strict: bool = True,
+    compat_prefixes: tuple[str, ...] | None = None,
+    optional_buffers: list[str] | None = None,
+) -> tuple[dict, bool]:
+    """Clean *state_dict* for backward-compatible loading.
+
+    Strips keys under *compat_prefixes* not in *model*, checks shape
+    compatibility, and handles missing *optional_buffers*.
+
+    Returns ``(cleaned_state_dict, effective_strict)`` so the caller can
+    pass them to ``model.load_state_dict()`` — this avoids recursion when
+    the model has its own ``load_state_dict`` override.
+
+    Args:
+        model: Target model instance.
+        state_dict: Checkpoint state dictionary.
+        strict: Whether to enforce strict key matching.
+        compat_prefixes: Module name prefixes whose unknown keys are
+            safe to discard (e.g. ``("upsampler.",)``).
+        optional_buffers: Buffer names that may be absent from older
+            checkpoints (e.g. ``["rgb_mean"]``). When strict and a buffer
+            is missing, ``strict`` is downgraded to ``False``.
+
+    Returns:
+        ``(cleaned_state_dict, effective_strict)``.
+    """
+    model_sd = model.state_dict()
+
+    if compat_prefixes:
+        state_dict = strip_keys_not_in_model(state_dict, model_sd, compat_prefixes)
+
+    check_shape_compat(state_dict, model_sd, type(model).__name__)
+
+    optional_buffers = optional_buffers or []
+    if strict and any(b in model_sd and b not in state_dict for b in optional_buffers):
+        strict = False
+
+    return state_dict, strict
 
 
 def save_checkpoint(

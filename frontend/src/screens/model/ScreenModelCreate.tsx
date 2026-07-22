@@ -1,12 +1,14 @@
 import { useState, useMemo, useCallback } from "react";
 import { Panel } from "../../components/ui/Panel";
 import { Btn } from "../../components/ui/Btn";
+import { InfoRow } from "../../components/ui/InfoRow";
+import { SubTabPill } from "../../components/ui/SubTabPill";
 import { useModelStore } from "../../store/modelStore";
 import { createInstance } from "../../lib/api";
 import { useToast } from "../../components/shell/ToastProvider";
 import type { Architecture } from "../../lib/srproj";
 import { ArchSelector, ARCH_DEFS } from "./ArchSelector";
-import { ConfigFieldRow, InfoRow } from "./ConfigFieldRow";
+import { ConfigFieldRow, CodeRow } from "./ConfigFieldRow";
 import {
   getTemplateValues,
   getTemplateDefaultId,
@@ -18,36 +20,10 @@ import {
   formatParamCount,
   formatWeightMB,
   parseCSV,
+  doesConfigMatchTemplate,
   type ModelTemplateId,
   type TemplateDef,
 } from "./templates";
-
-function SubTabPill({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
-  return (
-    <button onClick={onClick} role="tab" aria-selected={active}
-      style={{
-        background: active ? "var(--green)" : "var(--bg3)",
-        border: `1px solid ${active ? "var(--green)" : "var(--border)"}`,
-        color: active ? "#0d0f11" : "var(--muted)",
-        fontSize: 11, fontWeight: active ? 600 : 400,
-        padding: "4px 16px", borderRadius: 12,
-        cursor: "pointer", transition: "var(--transition-fast)",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {label}
-    </button>
-  );
-}
-
-function SizeRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div style={{ display: "flex", justifyContent: "space-between", padding: "2px 0" }}>
-      <span style={{ fontSize: 11, color: "var(--muted)" }}>{label}</span>
-      <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text)", fontFamily: "var(--font-mono)" }}>{value}</span>
-    </div>
-  );
-}
 
 function TemplateCard({ tpl, active, recommended, onClick }: {
   tpl: TemplateDef;
@@ -86,15 +62,12 @@ function TemplateCard({ tpl, active, recommended, onClick }: {
   );
 }
 
-function ConfigPanel({ fields, values, onChange, arch, innerTab }: {
+function ConfigPanel({ fields, values, onChange, arch }: {
   fields: import("./ConfigFieldRow").ConfigField[];
   values: Record<string, unknown>;
   onChange: (key: string, value: unknown) => void;
   arch: Architecture;
-  innerTab: "template" | "advanced";
 }) {
-  if (innerTab === "template") return null;
-
   const isSwinir = arch === "swinir";
   const displayFields = isSwinir
     ? fields.filter(f => f.key !== "depths" && f.key !== "num_heads")
@@ -120,8 +93,8 @@ function ConfigPanel({ fields, values, onChange, arch, innerTab }: {
         ))}
         {isSwinir && (
           <>
-            <InfoRow label="Depths" value={String(values.depths ?? "")} />
-            <InfoRow label="Num Heads" value={derivedHeads ?? ""} />
+            <CodeRow label="Depths" value={String(values.depths ?? "")} />
+            <CodeRow label="Num Heads" value={derivedHeads ?? ""} />
           </>
         )}
       </div>
@@ -176,7 +149,6 @@ function buildYaml(values: Record<string, unknown>, name: string, arch: Architec
   lines.push(`name: ${name || arch}`);
   lines.push(`type: ${arch === "rrdb_esrgan" ? "rrdbnet" : arch}`);
   for (const [key, value] of Object.entries(values)) {
-    if (key === "num_in_ch" || key === "num_out_ch") continue;
     if (key === "depths" || key === "num_heads") {
       const arr = parseCSV(String(value));
       lines.push(`${key}: [${arr.join(", ")}]`);
@@ -218,13 +190,18 @@ export function ScreenModelCreate() {
   const [configValues, setConfigValues] = useState<Record<string, unknown>>(
     () => ({ ...getTemplateValues(arch, getTemplateDefaultId(arch)), scale: 4 }),
   );
-  const [selectedTemplate, setSelectedTemplate] = useState<ModelTemplateId | "custom">(
-    getTemplateDefaultId(arch),
-  );
   const [modelNameInput, setModelNameInput] = useState("");
   const [copied, setCopied] = useState(false);
 
   const def = useMemo(() => ARCH_DEFS.find((d) => d.id === arch) ?? ARCH_DEFS[0], [arch]);
+
+  // Derived rather than tracked separately, so the highlighted template card can never
+  // go stale relative to the actual config values (previously, editing a field on the
+  // Advanced tab left the old template shown as "active" even after the config diverged).
+  const selectedTemplate = useMemo(
+    () => doesConfigMatchTemplate(arch, configValues),
+    [arch, configValues],
+  );
 
   const paramsM = useMemo(() => estimateParams(arch, configValues), [arch, configValues]);
 
@@ -242,14 +219,12 @@ export function ScreenModelCreate() {
     setArch(newArch);
     const vals = getTemplateValues(newArch, getTemplateDefaultId(newArch));
     setConfigValues({ ...vals, scale: 4 });
-    setSelectedTemplate(getTemplateDefaultId(newArch));
     setInnerTab("template");
   }, [setArch]);
 
   const handleTemplateSelect = useCallback((id: ModelTemplateId) => {
     const vals = getTemplateValues(arch, id);
     setConfigValues((prev) => ({ ...vals, scale: prev.scale ?? 4 }));
-    setSelectedTemplate(id);
   }, [arch]);
 
   const handleChange = useCallback((key: string, value: unknown) => {
@@ -309,6 +284,15 @@ export function ScreenModelCreate() {
         <div style={{ display: "flex", gap: 6 }}>
           <SubTabPill label="Templates" active={innerTab === "template"} onClick={() => setInnerTab("template")} />
           <SubTabPill label="Advanced" active={innerTab === "advanced"} onClick={() => setInnerTab("advanced")} />
+          {selectedTemplate === "custom" && innerTab === "template" && (
+            <span style={{
+              alignSelf: "center", fontSize: 10, color: "var(--amber)",
+              background: "var(--amber-dim)", border: "1px solid var(--amber)",
+              borderRadius: 8, padding: "2px 8px", fontWeight: 600,
+            }}>
+              Custom config
+            </span>
+          )}
         </div>
         <div style={{ display: "flex", gap: 16, flex: 1, minHeight: 0, overflow: "hidden" }}>
           <div style={{ flex: 1, overflowY: "auto" }}>
@@ -343,7 +327,6 @@ export function ScreenModelCreate() {
                 values={configValues}
                 onChange={handleChange}
                 arch={arch}
-                innerTab={innerTab}
               />
             )}
           </div>
@@ -365,9 +348,9 @@ export function ScreenModelCreate() {
             </label>
             <Btn variant="solid" onClick={handleCreateInstance} disabled={!modelNameInput.trim()}>Create Instance</Btn>
             <div style={{ borderTop: "1px solid var(--border)", paddingTop: 6 }}>
-              <SizeRow label="Parameters" value={formatParamCount(paramsM)} />
-              <SizeRow label="Weights (f32)" value={`${weightFp32MB} MB`} />
-              <SizeRow label="Weights (f16)" value={`${weightFp16MB} MB`} />
+              <InfoRow label="Parameters" value={formatParamCount(paramsM)} mono />
+              <InfoRow label="Weights (f32)" value={`${weightFp32MB} MB`} mono />
+              <InfoRow label="Weights (f16)" value={`${weightFp16MB} MB`} mono />
             </div>
             <YamlPanel yaml={yaml} copied={copied} onCopy={handleCopyYaml} />
           </div>

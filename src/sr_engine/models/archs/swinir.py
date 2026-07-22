@@ -1,7 +1,10 @@
 """SwinIR architecture — Swin Transformer-based image restoration."""
 
+import logging
 import math
 from typing import Optional
+
+log = logging.getLogger(__name__)
 
 import torch
 import torch.nn as nn
@@ -295,6 +298,8 @@ def _build_upsampler(embed_dim: int, num_out_ch: int, scale: int) -> nn.Sequenti
 class SwinIR(nn.Module):
     """SwinIR model — shallow feature extraction, RSTB body, upsampler."""
 
+    model_format = "swinir-v2"
+
     def __init__(
         self,
         num_in_ch: int = 3,
@@ -367,16 +372,14 @@ class SwinIR(nn.Module):
             )
 
     def load_state_dict(self, state_dict, strict=True):
-        old_keys = ['upsampler.0.weight', 'upsampler.0.bias',
-                    'upsampler.2.weight', 'upsampler.2.bias']
-        if any(k in state_dict for k in old_keys):
-            raise ValueError(
-                "This SwinIR checkpoint uses the old single-stage upsampler. "
-                "v0.2+ uses multi-stage ×2 upsampling at embed_dim throughout. "
-                "The old checkpoints are not loadable due to structural changes "
-                "in the reconstruction head. Retrain from scratch."
-            )
-        return super().load_state_dict(state_dict, strict=strict)
+        from ..checkpoint import compat_load_state_dict
+        cleaned, effective_strict = compat_load_state_dict(
+            self, state_dict,
+            strict=strict,
+            compat_prefixes=("upsampler.",),
+            optional_buffers=["rgb_mean"],
+        )
+        return super().load_state_dict(cleaned, strict=effective_strict)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Apply shallow conv, RSTB body, and upsampler.
