@@ -21,4 +21,6 @@ experiments/
 frontend/node_modules/
 src-tauri/target/
 src-tauri/binaries/*
-*.logfrontend/src.zip
+*.log
+frontend/src.zip
+SR_Tuner*.AppImage

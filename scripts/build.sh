@@ -219,7 +219,7 @@ build_tauri() {
     log_section "Building Tauri App"
     log_step "Compiling Rust + creating platform bundles..."
     cd "$PROJECT_DIR"
-    cargo tauri build
+    NO_STRIP=1 cargo tauri build
 
     echo ""
     local bundle_dir="$PROJECT_DIR/src-tauri/target/release/bundle"

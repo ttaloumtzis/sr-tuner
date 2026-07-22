@@ -1,18 +1,18 @@
 <#
 .SYNOPSIS
     SR Engine Environment Builder (Windows)
-.DESCRIPTION
-    Creates a uv virtual environment, installs project dependencies, and
-    installs the backend-specific PyTorch wheel (CPU or CUDA).
-    ROCm is not supported on Windows.
+    Creates a uv virtual environment, installs project deps + PyTorch,
+    and verifies the installation.
+
 .PARAMETER Backend
-    PyTorch backend: "cpu" or "cuda".
+    PyTorch backend: cpu or cuda (rocm is Linux-only).
+
 .PARAMETER Clean
     Remove .venv and uv.lock before building.
+
 .EXAMPLE
     .\envs\build.ps1 -Backend cpu
-    .\envs\build.ps1 -Backend cuda
-    .\envs\build.ps1 -Backend cpu -Clean
+    .\envs\build.ps1 -Backend cuda -Clean
 #>
 
 param(
@@ -24,139 +24,108 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
 
 $TorchIndex = @{
     cpu  = "https://download.pytorch.org/whl/cpu"
     cuda = "https://download.pytorch.org/whl/cu121"
 }
 
-$ProjectDir = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
+$ScriptDir = $PSScriptRoot
+$ProjectDir = Split-Path -Parent $ScriptDir
 
-function Info  { Write-Host "`n==> $args" }
-function Success { Write-Host "`n[v] $args" -ForegroundColor Green }
-function Warn  { Write-Host "`n[!] $args" -ForegroundColor Yellow }
-function Die   { Write-Host "`n[x] $args" -ForegroundColor Red; exit 1 }
+function info  { Write-Host "`n==> $($args -join ' ')" -ForegroundColor Cyan }
+function ok    { Write-Host "`n✓ $($args -join ' ')" -ForegroundColor Green }
+function warn  { Write-Host "`n⚠ $($args -join ' ')" -ForegroundColor Yellow }
+function die   { Write-Host "`n✗ $($args -join ' ')" -ForegroundColor Red; exit 1 }
 
-# ── Requirements ─────────────────────────────────────────────────────────
+# ── Banner ────────────────────────────────────────────────────────────────
+info "SR Engine Environment Builder"
+"Backend : $Backend"
 
-function CheckRequirements {
-    Info "Checking prerequisites..."
-
-    $null = Get-Command uv -ErrorAction Stop
-    $null = Get-Command python -ErrorAction Stop
-
-    if ($Backend -eq "rocm") {
-        Die "ROCm is not supported on Windows. Use -Backend cpu or -Backend cuda."
-    }
-
-    Success "Prerequisites found."
-}
+# ── Prerequisites ─────────────────────────────────────────────────────────
+$null = Get-Command uv -ErrorAction Stop
 
 # ── Clean ─────────────────────────────────────────────────────────────────
-
-function CleanEnvironment {
-    if (-not $Clean) { return }
-
-    Info "Removing existing environment..."
-    $venv = Join-Path $ProjectDir ".venv"
-    $lock = Join-Path $ProjectDir "uv.lock"
-    if (Test-Path $venv) { Remove-Item -Recurse -Force $venv }
-    if (Test-Path $lock) { Remove-Item -Force $lock }
+if ($Clean) {
+    info "Removing existing environment..."
+    Remove-Item -Recurse -Force "$ProjectDir\.venv" -ErrorAction SilentlyContinue
+    Remove-Item -Force "$ProjectDir\uv.lock" -ErrorAction SilentlyContinue
 }
 
 # ── Create venv ───────────────────────────────────────────────────────────
-
-function CreateEnvironment {
-    Info "Creating virtual environment..."
-    Push-Location $ProjectDir
-    try {
-        uv venv
-    } finally {
-        Pop-Location
-    }
-}
+info "Creating virtual environment..."
+Push-Location $ProjectDir
+uv venv
+if (-not $?) { die "uv venv failed" }
 
 # ── Install base deps ─────────────────────────────────────────────────────
+info "Installing project dependencies (excluding dev group)..."
+uv sync --no-dev
+if (-not $?) { die "uv sync failed" }
 
-function InstallBase {
-    Info "Installing project dependencies (excluding dev group)..."
-    Push-Location $ProjectDir
-    try {
-        uv sync --no-dev
-    } finally {
-        Pop-Location
+# ── Install PyTorch ───────────────────────────────────────────────────────
+$index = $TorchIndex[$Backend]
+info "Installing PyTorch backend: $Backend"
+"Index: $index"
+
+$installArgs = @("pip", "install", "--index-url", $index)
+if ($Backend -eq "cuda") {
+    $installArgs += "--reinstall"
+}
+$installArgs += @("torch", "torchvision")
+
+$attempts = 3
+for ($i = 1; $i -le $attempts; $i++) {
+    uv @installArgs
+    if ($?) { break }
+    if ($i -lt $attempts) {
+        warn "Attempt $i failed. Retrying in 5s..."
+        Start-Sleep -Seconds 5
+    } else {
+        die "Failed to install PyTorch after $attempts attempts"
     }
 }
+ok "PyTorch installed."
 
-# ── Retry helper ──────────────────────────────────────────────────────────
+# ── Install LPIPS ─────────────────────────────────────────────────────────
+info "Installing optional LPIPS dependency..."
+uv pip install lpips
 
-function Retry {
-    param([scriptblock]$Block)
-    $attempts = 3
-    $delay = 5
-    for ($i = 1; $i -le $attempts; $i++) {
-        try {
-            & $Block
-            return
-        } catch {
-            if ($i -lt $attempts) {
-                Warn "Attempt $i failed. Retrying in ${delay}s..."
-                Start-Sleep -Seconds $delay
-            } else {
-                throw
-            }
-        }
-    }
+# ── Verify ────────────────────────────────────────────────────────────────
+info "Running backend verification..."
+$verifyCode = @'
+import torch, sys
+backend = sys.argv[1]
+print()
+print('=' * 60)
+print('Torch Version:', torch.__version__)
+print('Backend      :', backend)
+print()
+if backend == 'cpu':
+    if torch.cuda.is_available():
+        raise RuntimeError('GPU backend detected while CPU backend requested.')
+    print('✓ CPU backend verified')
+elif backend == 'cuda':
+    if not torch.cuda.is_available():
+        raise RuntimeError('CUDA is unavailable.')
+    if torch.version.cuda is None:
+        raise RuntimeError('CUDA wheel not installed.')
+    print('✓ CUDA backend verified')
+    print('CUDA Version:', torch.version.cuda)
+    print('GPU         :', torch.cuda.get_device_name(0))
+print('=' * 60)
+'@
+
+$tempScript = [System.IO.Path]::GetTempFileName() + ".py"
+try {
+    Set-Content -Path $tempScript -Value $verifyCode
+    uv run python $tempScript $Backend
+    if (-not $?) { die "Backend verification failed" }
+} finally {
+    Remove-Item -Force $tempScript -ErrorAction SilentlyContinue
 }
 
-# ── Install torch ─────────────────────────────────────────────────────────
-
-function InstallBackend {
-    $index = $TorchIndex[$Backend]
-
-    Info "Installing PyTorch backend: $Backend"
-    Write-Host "Index: $index"
-
-    Push-Location $ProjectDir
-    try {
-        Retry -Block {
-            uv pip install --index-url $index torch torchvision
-        }
-    } finally {
-        Pop-Location
-    }
-
-    Success "PyTorch installed."
-}
-
-# ── Verify ─────────────────────────────────────────────────────────────────
-
-function VerifyEnvironment {
-    Info "Running backend verification..."
-    Push-Location $ProjectDir
-    try {
-        uv run python envs/verify_env.py
-    } finally {
-        Pop-Location
-    }
-}
-
-# ── Main ──────────────────────────────────────────────────────────────────
-
-function Main {
-    Write-Host "`n=== SR Engine Environment Builder ===" -ForegroundColor Cyan
-    Write-Host "Backend : $Backend"
-
-    CheckRequirements
-    CleanEnvironment
-    CreateEnvironment
-    InstallBase
-    InstallBackend
-    VerifyEnvironment
-
-    Write-Host "`n[v] Environment successfully created." -ForegroundColor Green
-    Write-Host "`nActivate with:" -ForegroundColor Yellow
-    Write-Host "`n    .venv\Scripts\Activate.ps1`n" -ForegroundColor Yellow
-}
-
-Main
+ok "Environment successfully created."
+Write-Host "`nActivate with:`n"
+Write-Host "    .venv\Scripts\Activate.ps1`n"
