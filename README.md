@@ -17,131 +17,261 @@ Super-resolution engine for training and running deep learning models on images 
 - **Desktop GUI** — React/TypeScript + Tauri 2
 - **CLI** — Click-based, with standalone command aliases
 
-## Prerequisites
+## Requirements
 
-Only install what you actually need:
+Only install what you actually need. Dependencies that are **auto-installed by build scripts** are listed separately below.
+
+### Manual prerequisites
 
 | Component | Runtime | Needed for |
-|---|---|---|
+| --------- | ------- | ---------- |
 | CLI + API server | Python ≥3.11, <3.13 + [uv](https://docs.astral.sh/uv/) | ML operations, dataset pipeline, REST API |
+| CLI + API server (GPU) | NVIDIA driver ≥535 (CUDA) or ROCm 6.3 (AMD) | GPU-accelerated training and inference (see [GPU backend prerequisites](#gpu-backend-prerequisites)) |
 | Desktop GUI | Node.js ≥18 + npm | Frontend dev and builds |
-| Desktop shell | Rust (edition 2021) | Building the native Tauri binary + bundling the Python backend (PyInstaller is installed automatically by the build script — no manual install needed) |
+| Desktop shell | Rust ≥1.77 (edition 2021) via [rustup](https://rustup.rs/) | Building the native Tauri binary |
+| Frame extraction | `ffmpeg` on PATH | Video frame extraction for dataset building |
 
-### 1. Install runtimes
+---
 
-**Python + uv**
-```bash
-# Linux / macOS
-curl -fsSL https://astral.sh/uv/install.sh | bash
-# Windows (PowerShell)
-powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
-Requires Python 3.11 or 3.12. Linux: `apt install python3.11 python3.11-venv`. macOS: `brew install python@3.12`. Windows: [python.org](https://www.python.org/downloads/).
+#### Linux
 
-**Node.js 18+**
-```bash
-# Linux / macOS (nvm)
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.0/install.sh | bash
-nvm install 18
-```
-```powershell
-# Windows (nvm-windows)
-winget install nvm-windows
-nvm install 18 && nvm use 18
-```
-
-**Rust**
-```bash
-# Linux / macOS
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
-Windows: run [rustup-init.exe](https://rustup.rs/) or `winget install Rustlang.Rustup`.
-
-### 2. Build the Python environment
-
-```bash
-# Linux / macOS
-./envs/build.sh --backend cpu       # or --backend cuda / --backend rocm
-
-# Windows (PowerShell)
-.\envs\build.ps1 -Backend cpu       # or -Backend cuda, -Backend rocm
-```
-
-This creates `.venv` via `uv sync`, installs the matching PyTorch wheel, and verifies the install (device detection, a micro forward/backward pass).
-
-> **ROCm users:** `--backend rocm` installs PyTorch's wheel for a specific ROCm release (currently pinned in `envs/build.sh` — check the `TORCH_INDEX` map). This must match the ROCm version installed on your system; HIP's runtime ABI is not guaranteed compatible across major versions (e.g. 6.x → 7.x). Check your installed version with `cat /opt/rocm/.info/version`, and update the pin in `envs/build.sh` if it's out of date.
-
-### Per-platform notes
-
-**Linux** — Tauri build requires:
+| Dep | Notes |
+| --- | ----- |
+| Python 3.11 or 3.12 | `sudo apt install python3.12 python3.12-venv` (Ubuntu 24.04+) or `python3.11` for older distros. Or use `uv python install 3.12` |
+| `uv` | [astral.sh/uv](https://docs.astral.sh/uv/) — `curl -fsSL https://astral.sh/uv/install.sh \| bash` |
+| Node.js 18+ | [nvm](https://github.com/nvm-sh/nvm) recommended: `nvm install 18` |
+| Rust ≥1.77 | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` then `rustup default stable` |
+| Tauri system deps | See table below by distro |
+| `ffmpeg` | `sudo apt install ffmpeg` / `sudo pacman -S ffmpeg` / `sudo dnf install ffmpeg` |
+| `pkg-config` | Used by `build.sh check` to verify system libraries — recommended but not required to build |
 
 | Distro | Install command |
-|---|---|
-| Debian / Ubuntu | `sudo apt install -y build-essential libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev fuse` |
+| ------ | --------------- |
+| Debian / Ubuntu | `sudo apt install -y build-essential libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev fuse libayatana-appindicator3-dev` |
 | Arch / CachyOS / Manjaro | `sudo pacman -S webkit2gtk-4.1 patchelf fuse2` |
-| Fedora | `sudo dnf install webkit2gtk4.1-devel patchelf fuse` |
+| Fedora | `sudo dnf install webkit2gtk4.1-devel patchelf fuse gcc-c++` |
+
+> **`libayatana-appindicator3-dev`** (Debian/Ubuntu only) is needed for system tray support in the Tauri app. The app compiles without it; the package is optional.
+
+> **Rust toolchain on Linux:** If Rust was installed via a system package (`apt`/`dnf`), run `rustup default stable` to set the default toolchain. The `rustup`-based install from `rustup.rs` does this automatically.
 
 > **AppImage bundling notes (all distros):**
 > - `patchelf` is required by `linuxdeploy` to patch ELF rpaths inside the AppImage.
 > - `fuse` (or `fuse2` on Arch) is needed to run `linuxdeploy` itself (it's distributed as an AppImage).
-> - **Arch / CachyOS only:** Python wheels may link against hash-versioned library sonames
->   while system packages use plain names. If `linuxdeploy` fails with
->   `Could not find dependency: libavif-<hash>.so`, create a compat symlink:
->   ```bash
->   sudo ln -s /usr/lib/libavif.so.16.4.2 /usr/lib/libavif-8a7f9d56.so.16.4.2
->   ```
+> - **Arch / CachyOS only:** Python wheels may link against hash-versioned library sonames while system packages use plain names. If `linuxdeploy` fails with `Could not find dependency: libavif-<hash>.so`, create a compat symlink (see [Commands → Linux fixes](#linux-fixes)).
 
-**macOS** — `brew install python@3.12 uv node rust`
+---
 
-**Windows:**
-- All three backends (cpu, cuda, rocm) are supported. For AMD ROCm support on native Windows, see [AMD ROCm on Windows](#amd-rocm-on-windows).
-- WSL is recommended: run `./envs/build.sh` inside Ubuntu on WSL for full bash compatibility. Frontend and desktop app run from Windows and connect to the API server in WSL.
-- Tauri build needs [MSVC Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/), WebView2 (bundled in Win10 1803+), and the Rust MSVC toolchain. Output: `.msi`/`.exe` in `src-tauri/target/release/bundle/`.
+#### macOS
+
+| Dep | Install |
+| --- | ------- |
+| Xcode Command Line Tools | `xcode-select --install` |
+| Python 3.12 | `brew install python@3.12` — or `uv python install 3.12` |
+| `uv` | `brew install uv` — or `curl -fsSL https://astral.sh/uv/install.sh \| bash` |
+| Node.js 18+ | `brew install node` — or `nvm install 18` |
+| Rust ≥1.77 | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
+| `ffmpeg` | `brew install ffmpeg` (CLI-only use). The desktop app bundles ffmpeg automatically via PyInstaller. |
+
+> **Apple Silicon (M1/M2/M3):** Homebrew installs to `/opt/homebrew`. PyTorch has native MPS acceleration — no CUDA/ROCm setup needed. All tools work natively on ARM64.
+
+---
+
+#### Windows
+
+| Dep | Install |
+| --- | ------- |
+| Python 3.11 or 3.12 | [python.org](https://www.python.org/downloads/) — check "Add to PATH" during install |
+| `uv` | `powershell -c "irm https://astral.sh/uv/install.ps1 \| iex"` |
+| Node.js 18+ | `winget install nvm-windows` then `nvm install 18 && nvm use 18` |
+| Rust (MSVC toolchain) | `winget install Rustlang.Rustup` |
+| VS Build Tools | [visualstudio.microsoft.com/visual-cpp-build-tools/](https://visualstudio.microsoft.com/visual-cpp-build-tools/) — select "Desktop development with C++" workload |
+| WebView2 | Bundled with Windows 10 1803+ and Windows 11. **Windows Server / LTSC / pre-1803:** install [manually](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) |
+| `ffmpeg` | Download from [ffmpeg.org](https://ffmpeg.org/download.html) and add to PATH |
+
+**Windows-specific setup:**
+
+- **PowerShell execution policy:** `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` — required to run `.ps1` build scripts.
+- **Long path support:** Enable to avoid MAX_PATH (260 char) issues with `uv` and PyInstaller:
+  ```powershell
+  New-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem -Name LongPathsEnabled -Value 1 -PropertyType DWORD -Force
+  ```
+  (Run as Administrator, then reboot.)
+- **WSL recommended** for the backend build: run `envs/build.sh` inside Ubuntu-on-WSL for full bash compatibility. The frontend and desktop app run from Windows and connect to the API server in WSL.
 - Activate the venv with `.venv\Scripts\Activate.ps1`, not `source .venv/bin/activate`.
 - `nvidia-smi` uses `,` as a decimal separator on some European-locale systems — the GPU polling code normalizes this before parsing.
-- **ffmpeg must be on PATH** for frame extraction from video — `shutil.which("ffmpeg")` finds it automatically. Download from [ffmpeg.org](https://ffmpeg.org/download.html) and add the `bin/` directory to your system PATH.
 
-### AMD ROCm on Windows
+##### AMD ROCm on Windows
 
-ROCm on Windows is only available via the AMD Adrenalin driver (24.12.1+),
-which bundles its own Python 3.12 and a custom PyTorch build with ROCm
-support. Official PyTorch ROCm wheels from `download.pytorch.org` are
-Linux-only and do not work on Windows.
+ROCm on Windows is only available via the AMD Adrenalin driver (24.12.1+), which bundles its own Python 3.12 and a custom PyTorch build with ROCm support. Official PyTorch ROCm wheels from `download.pytorch.org` are Linux-only and do not work on Windows.
 
-Key details:
+- **Python 3.12 only** — the Adrenalin tool uses Python 3.12, which is within the project's `>=3.11,<3.13` range.
+- Create your environment with the Adrenalin GUI, then point `uv` at it by placing or symlinking the `.venv` in the project root. The build script automatically skips the PyTorch install for `--backend rocm` and just runs `uv sync --no-dev` for project dependencies, preserving the Adrenalin-provided PyTorch.
+- All subsequent commands (`build.ps1`, `srengine`, etc.) work identically to a CUDA or CPU setup.
 
-- **Python 3.12 only** — the Adrenalin tool uses Python 3.12, which is
-  within the project's `>=3.11,<3.13` range.
-- Create your environment with the Adrenalin GUI, then point uv at it by
-  placing or symlinking the `.venv` in the project root. The build script
-  automatically skips PyTorch install for `--backend rocm`:
-  ```powershell
-  .\envs\build.ps1 -Backend rocm
-  ```
-  This runs `uv sync --no-dev` for project dependencies while preserving
-  the Adrenalin-provided PyTorch, then verifies ROCm is working.
-- All subsequent commands (`.\scripts\build.ps1`, `srengine`, etc.) work
-  identically to a CUDA or CPU setup.
+---
 
-## Building the desktop app
+### GPU backend prerequisites
 
-`scripts/build.sh` (Linux/macOS) or `scripts/build.ps1` (Windows) is the single entry point for frontend, sidecar, and Tauri builds.
+The `envs/build.sh` script installs PyTorch from a backend-specific index URL. The installed PyTorch wheel must match the GPU runtime on your system.
 
-| Command | Does |
-|---|---|
-| *(none)* | Build frontend + Tauri |
-| `all` | Clean + build everything, including the sidecar |
-| `frontend` | Frontend only |
-| `tauri` | Tauri only (frontend must already be built) |
-| `sidecar [cpu\|cuda\|rocm]` | Build the Python sidecar. Omit the backend to auto-detect from `.venv` |
-| `dev` | Vite + Tauri hot-reload dev server |
-| `clean` | Remove frontend dist, sidecar build artifacts, and stale Tauri bundle output (`.deb`/`.rpm`/`.AppImage`/`.dmg`) |
-| `deep-clean` | `clean` + wipe the full Cargo `target/` (next build is slow) |
-| `rebuild` | `clean` + frontend + Tauri (no sidecar) |
-| `check` | Verify prerequisites |
-| `help` | Show usage |
+| Backend | Driver / Runtime required | PyTorch index (from `envs/build.sh`) |
+| ------- | ------------------------- | ------------------------------------ |
+| `cpu` | None (runs on any system) | `https://download.pytorch.org/whl/cpu` |
+| `cuda` | NVIDIA driver ≥535 (supports CUDA 12.1) | `https://download.pytorch.org/whl/cu121` |
+| `rocm` | ROCm 6.3 runtime — verify with `cat /opt/rocm/.info/version` | `https://download.pytorch.org/whl/rocm6.3` |
 
-Options: `-j`/`--parallel` / `-Parallel` builds frontend and sidecar concurrently.
+> **ROCm on Linux:** The PyTorch ROCm wheel must match the ROCm version installed on your system. HIP's runtime ABI is not guaranteed compatible across major versions (e.g. 6.x → 7.x). If the pin in `envs/build.sh` is outdated for your ROCm version, update the `TORCH_INDEX` map in that file.
+
+---
+
+### Auto-installed dependencies
+
+These are handled automatically by build scripts — no manual install needed:
+
+| Dep | Installed by | Notes |
+| --- | ------------ | ----- |
+| Tauri CLI (`cargo-tauri` ^2) | `scripts/build.sh check` / `build.ps1` | Installed via `cargo install tauri-cli --version "^2"` |
+| PyTorch + torchvision | `envs/build.sh` / `build.ps1` | From the backend-specific index URL |
+| LPIPS | `envs/build.sh` / `build.ps1` | Perceptual loss metric |
+| npm packages | `scripts/build.sh frontend` / `npm install` | React, Vite, TypeScript, Tauri API plugins |
+| PyInstaller | `scripts/build-sidecar.sh` / `build-sidecar.ps1` | Installed into a disposable scratch venv, never touches your dev `.venv` |
+
+---
+
+### Release builds only
+
+These are only needed when running `envs/build-release.sh` for CI or release packaging:
+
+| Dep | Distro | Purpose |
+| --- | ------ | ------- |
+| `zsync` | All Linux | AppImage delta updates |
+| `appimage-builder` | All Linux | AppImage packaging (installed via pip into a temp venv) |
+
+---
+
+### Docker alternative
+
+Pre-built Docker images for CUDA and ROCm are available in `envs/docker/`:
+
+- `envs/docker/Dockerfile.cuda` — based on `nvidia/cuda:12.1-runtime-ubuntu22.04`
+- `envs/docker/Dockerfile.rocm` — based on `rocm/dev-ubuntu-22.04:6.2`
+
+These handle all system dependencies and Python environment setup inside the container. Use them if you prefer not to install runtimes on your host machine.
+
+---
+
+## Commands
+
+All commands below are copy-paste ready — hover a block and click the copy icon.
+
+### Install runtimes
+
+**Python + uv — Linux / macOS**
+```bash
+curl -fsSL https://astral.sh/uv/install.sh | bash
+```
+
+**Python + uv — Windows (PowerShell)**
+```powershell
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+**Python 3.12 — Linux (apt)**
+```bash
+# Ubuntu 24.04+ / Debian testing
+sudo apt install python3.12 python3.12-venv
+# Older distros: use python3.11 or let uv manage Python for you
+```
+
+**Python (any version) — all platforms (uv-managed)**
+```bash
+uv python install 3.12
+```
+This avoids installing Python via a system package manager. uv downloads and manages the interpreter inside `.venv`.
+
+**Node.js 18+ — Linux / macOS (nvm)**
+```bash
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.0/install.sh | bash
+nvm install 18
+```
+
+**Node.js 18+ — Windows (nvm-windows)**
+```powershell
+winget install nvm-windows
+nvm install 18 && nvm use 18
+```
+
+**Rust — Linux / macOS**
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+# If installed via system package (apt/dnf), also run:
+# rustup default stable
+```
+
+**Rust — Windows**
+```powershell
+winget install Rustlang.Rustup
+```
+
+**Windows — PowerShell execution policy** (first-time setup)
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+**Windows — enable long paths** (admin PowerShell, then reboot)
+```powershell
+New-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem -Name LongPathsEnabled -Value 1 -PropertyType DWORD -Force
+```
+
+### Linux system packages
+
+```bash
+# Debian / Ubuntu
+sudo apt install -y build-essential libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev fuse libayatana-appindicator3-dev
+```
+```bash
+# Arch / CachyOS / Manjaro
+sudo pacman -S webkit2gtk-4.1 patchelf fuse2
+```
+```bash
+# Fedora
+sudo dnf install webkit2gtk4.1-devel patchelf fuse gcc-c++
+```
+
+<a id="linux-fixes"></a>
+**Arch/CachyOS AppImage fix** (only if `linuxdeploy` fails with `Could not find dependency: libavif-<hash>.so`):
+```bash
+sudo ln -s /usr/lib/libavif.so.16.4.2 /usr/lib/libavif-8a7f9d56.so.16.4.2
+```
+
+### macOS system packages
+
+```bash
+brew install python@3.12 uv node
+# Rust is installed via rustup (see "Install runtimes" above)
+```
+
+### Build the Python environment
+
+**Linux / macOS**
+```bash
+./envs/build.sh --backend cpu       # or --backend cuda / --backend rocm
+```
+
+**Windows (PowerShell)**
+```powershell
+.\envs\build.ps1 -Backend cpu       # or -Backend cuda, -Backend rocm
+```
+
+**Windows, AMD ROCm (Adrenalin-managed venv)**
+```powershell
+.\envs\build.ps1 -Backend rocm
+```
+
+This creates `.venv` via `uv sync`, installs the matching PyTorch wheel, and verifies the install (device detection, a micro forward/backward pass).
+
+### Build the desktop app
 
 **Linux / macOS**
 ```bash
@@ -163,25 +293,42 @@ Options: `-j`/`--parallel` / `-Parallel` builds frontend and sidecar concurrentl
 .\scripts\build.ps1 sidecar cuda  # CUDA sidecar only
 ```
 
+| Command                   | Does                                                                                                             |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| *(none)*                  | Build frontend + Tauri                                                                                           |
+| `all`                     | Clean + build everything, including the sidecar                                                                  |
+| `frontend`                | Frontend only                                                                                                    |
+| `tauri`                   | Tauri only (frontend must already be built)                                                                      |
+| `sidecar [cpu\|cuda\|rocm]` | Build the Python sidecar. Omit the backend to auto-detect from `.venv`                                          |
+| `dev`                     | Vite + Tauri hot-reload dev server                                                                               |
+| `clean`                   | Remove frontend dist, sidecar build artifacts, and stale Tauri bundle output (`.deb`/`.rpm`/`.AppImage`/`.dmg`) |
+| `deep-clean`              | `clean` + wipe the full Cargo `target/` (next build is slow)                                                    |
+| `rebuild`                 | `clean` + frontend + Tauri (no sidecar)                                                                          |
+| `check`                   | Verify prerequisites                                                                                              |
+| `help`                    | Show usage                                                                                                       |
+
+Options: `-j`/`--parallel` / `-Parallel` builds frontend and sidecar concurrently.
+
 **Dev mode** runs the Python backend via `uv run uvicorn` straight from `.venv` — Python changes are picked up on restart, no packaging step.
 
 **Release builds** package the backend as a standalone binary via `scripts/build-sidecar.sh` (Linux/macOS) or `scripts/build-sidecar.ps1` (Windows), so the app runs on any machine without Python or `.venv` installed. The sidecar script never modifies your dev `.venv` — it copies it into a scratch directory, installs PyInstaller there, builds, and discards the copy.
 
-### Running the built app
+### Run the built app
 
-Output lands in `src-tauri/target/release/bundle/`.
-
-**Linux**
+**Linux — AppImage**
 ```bash
-# AppImage — no install needed
 chmod +x "src-tauri/target/release/bundle/appimage/SR Tuner_0.1.0_amd64.AppImage"
 "src-tauri/target/release/bundle/appimage/SR Tuner_0.1.0_amd64.AppImage"
+```
 
-# .deb
+**Linux — .deb**
+```bash
 sudo dpkg -i "src-tauri/target/release/bundle/deb/SR Tuner_0.1.0_amd64.deb"
 sr-tuner
+```
 
-# .rpm
+**Linux — .rpm**
+```bash
 sudo rpm -i "src-tauri/target/release/bundle/rpm/SR Tuner-0.1.0-1.x86_64.rpm"
 sr-tuner
 ```
@@ -189,49 +336,55 @@ sr-tuner
 **macOS**
 ```bash
 open "src-tauri/target/release/bundle/dmg/SR Tuner_0.1.0_x64.dmg"
-# drag SR Tuner.app into Applications, then:
+```
+```bash
+# after dragging SR Tuner.app into Applications:
 open -a "SR Tuner"
 ```
-First launch may need a Gatekeeper bypass since the build isn't notarized: `xattr -cr "/Applications/SR Tuner.app"`, or right-click → Open.
+```bash
+# first launch only, if Gatekeeper blocks the unnotarized build:
+xattr -cr "/Applications/SR Tuner.app"
+```
 
-**Windows**
+**Windows — .msi**
 ```powershell
-# .msi — double-click, or silently:
 msiexec /i "src-tauri\target\release\bundle\msi\SR Tuner_0.1.0_x64_en-US.msi" /quiet
+```
 
-# or run the standalone .exe directly
+**Windows — standalone .exe**
+```powershell
 & "src-tauri\target\release\SR Tuner.exe"
 ```
 
-**Dev mode**, any OS:
+**Dev mode, any OS**
 ```bash
 ./scripts/build.sh dev
 ```
 
-## Quick Start
+### Quick start — CLI
 
-### Datasets
+**Build a dataset**
 ```bash
 srengine dataset build --input video.mp4 --out ./datasets/my_set
 ```
-Also: validation, health checks (corrupt-image detection, black-frame pruning), and merging datasets grouped by scale factor.
 
-### Training
+**Train a model**
 ```bash
 srengine train run --model rrdb_esrgan --dataset ./datasets/my_set
 ```
 
-### Inference
+**Run inference**
 ```bash
 srengine infer run --model checkpoints/model.pth --input input.png --output output.png
 ```
 
-### API server
+**Start the API server**
 ```bash
 srengine serve start   # FastAPI on :8765, required by the desktop GUI
 ```
 
 ### Python API
+
 ```python
 from sr_engine.models.registry import build_model
 from sr_engine.data.datasets import PairedImageFolderDataset
@@ -243,7 +396,17 @@ infer_image(model_checkpoint="checkpoints/model.pth", input_path="input.png",
             output_path="output.png", device="cuda")
 ```
 
-Full CLI reference: [`docs/cli-reference.md`](docs/cli-reference.md). All commands support `--help`.
+### Development
+
+```bash
+uv sync --group dev        # pytest, ruff
+uv run pytest tests/
+uv run ruff check src/
+```
+
+PyInstaller isn't a dev dependency — `scripts/build-sidecar.sh` installs it into a disposable scratch venv only when packaging a release, so it never pollutes `.venv`.
+
+Full CLI reference: [`docs/cli-reference.md`](https://github.com/ttaloumtzis/sr-tuner/blob/main/docs/cli-reference.md). All commands support `--help`.
 
 ## Project Structure
 
@@ -264,36 +427,26 @@ Full CLI reference: [`docs/cli-reference.md`](docs/cli-reference.md). All comman
 └── docs/                # Documentation
 ```
 
-Architecture details: [`docs/architecture.md`](docs/architecture.md).
+Architecture details: [`docs/architecture.md`](https://github.com/ttaloumtzis/sr-tuner/blob/main/docs/architecture.md).
 
 ## Configuration
 
 Defaults ship in `src/sr_engine/utils/configs/` and are copied to the workspace on `workspace init`. Override by editing the workspace copies or passing a custom YAML via `--config`.
 
-| Config file | Contents |
-|---|---|
-| `configs/train/base.yaml` | Training hyperparameters (batch size, LR, epochs, loss weights, mixed precision) |
-| `configs/datasets/video_pairs.yaml` | Degradation pipeline (blur, noise, JPEG, JPEG2000, color jitter, resize) |
-| `configs/models/swinir.yaml` | SwinIR architecture |
-| `configs/models/rrdb_esrgan.yaml` | RRDB-ESRGAN architecture |
+| Config file                         | Contents                                                                          |
+| ------------------------------------ | ------------------------------------------------------------------------------- |
+| `configs/train/base.yaml`           | Training hyperparameters (batch size, LR, epochs, loss weights, mixed precision) |
+| `configs/datasets/video_pairs.yaml` | Degradation pipeline (blur, noise, JPEG, JPEG2000, color jitter, resize)         |
+| `configs/models/swinir.yaml`        | SwinIR architecture                                                              |
+| `configs/models/rrdb_esrgan.yaml`   | RRDB-ESRGAN architecture                                                          |
 
 ## Supported Models
 
-| Name | Registry key | Architecture | Scale |
-|---|---|---|---|
-| RRDB-ESRGAN | `rrdb_esrgan` | Residual-in-Residual Dense Blocks + nearest-neighbour upsampler | 4× (configurable) |
-| SwinIR | `swinir` | Swin Transformer + pixel-shuffle upsampler | 4× (configurable) |
-
-## Development
-
-```bash
-uv sync --group dev        # pytest, ruff
-uv run pytest tests/
-uv run ruff check src/
-```
-
-PyInstaller isn't a dev dependency — `scripts/build-sidecar.sh` installs it into a disposable scratch venv only when packaging a release, so it never pollutes `.venv`.
+| Name        | Registry key  | Architecture                                                     | Scale              |
+| ----------- | ------------- | ------------------------------------------------------------------ | -------------------- |
+| RRDB-ESRGAN | `rrdb_esrgan` | Residual-in-Residual Dense Blocks + nearest-neighbour upsampler   | 4× (configurable) |
+| SwinIR      | `swinir`      | Swin Transformer + pixel-shuffle upsampler                        | 4× (configurable) |
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](https://github.com/ttaloumtzis/sr-tuner/blob/main/LICENSE).
