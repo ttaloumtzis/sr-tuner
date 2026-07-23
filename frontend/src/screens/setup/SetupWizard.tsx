@@ -49,12 +49,12 @@ export function SetupWizard({ onComplete }: { onComplete: () => void }) {
     return null;
   }
 
-  const handleInstallStart = async (backend: string, envType: "venv" | "sidecar") => {
+  const handleInstallStart = async (backend: string, envType: "venv" | "sidecar", rocmVenvPath?: string) => {
     setWizardStep(4);
     setInstallError(null);
     setInstallationDone(false);
     try {
-      await invoke("install_env", { backend, envType });
+      await invoke("install_env", { backend, envType, rocmVenvPath: rocmVenvPath ?? null });
     } catch (err) {
       setInstallError(String(err));
     }

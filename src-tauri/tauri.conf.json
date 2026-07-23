@@ -26,7 +26,7 @@
         "enable": true,
         "scope": ["**"]
       },
-      "csp": "default-src 'self'; connect-src 'self' http://localhost:8765 http://127.0.0.1:8765; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' asset: https: data:"
+      "csp": "default-src 'self'; connect-src 'self' http://localhost:8765 http://127.0.0.1:8765; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' asset: https: data: http://localhost:8765"
     }
   },
   "bundle": {

@@ -35,6 +35,14 @@ pub struct EnvMeta {
     pub installed_at: String,
 }
 
+#[derive(Serialize, Clone)]
+pub struct RocmVenvInfo {
+    pub valid: bool,
+    pub hip_version: Option<String>,
+    pub python_version: Option<String>,
+    pub error: Option<String>,
+}
+
 pub struct InstallState {
     pub child_pid: Mutex<Option<u32>>,
     pub cancelled: AtomicBool,
@@ -106,7 +114,8 @@ pub fn get_env_dir() -> PathBuf {
         let home = std::env::var("HOME")
             .or_else(|_| std::env::var("USERPROFILE"))
             .unwrap_or_else(|_| ".".to_string());
-        PathBuf::from(home).join(".sr-tuner").join("env")
+        let dir_name = if cfg!(windows) { "sr-tuner" } else { ".sr-tuner" };
+        PathBuf::from(home).join(dir_name).join("env")
     }
 }
 
@@ -191,7 +200,41 @@ fn probe_gpus(_os: &str) -> (bool, bool, bool) {
 #[cfg(target_os = "windows")]
 fn probe_gpus(_os: &str) -> (bool, bool, bool) {
     let cuda = command_exists("nvidia-smi.exe") || command_exists("nvidia-smi");
-    (cuda, false, false)
+    let rocm = has_amd_gpu_windows();
+    (cuda, rocm, false)
+}
+
+#[cfg(target_os = "windows")]
+fn has_amd_gpu_windows() -> bool {
+    // Tier 1: PowerShell WMI query for GPU vendor name
+    if let Ok(output) = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "& { (Get-CimInstance Win32_VideoController).Name -join '|' }",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+    {
+        let name = String::from_utf8_lossy(&output.stdout).to_lowercase();
+        if name.contains("amd") || name.contains("radeon") || name.contains("advanced micro") {
+            return true;
+        }
+    }
+    // Tier 2: AMD display driver file (no PowerShell needed)
+    if Path::new(r"C:\Windows\System32\Drivers\amdkmdap.sys").exists() {
+        return true;
+    }
+    // Tier 3: AMD ROCm registry key
+    Command::new("reg")
+        .args(["query", "HKLM\\SOFTWARE\\AMD\\ROCm"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
@@ -213,6 +256,7 @@ fn supported_backends(os: &str, cuda: bool, rocm: bool, mps: bool) -> Vec<String
         }
         "windows" => {
             if cuda { v.push("cuda".into()); }
+            if rocm { v.push("rocm".into()); }
             v.push("cpu".into());
         }
         _ => v.push("cpu".into()),
@@ -233,9 +277,65 @@ fn default_backend(os: &str, cuda: bool, rocm: bool, mps: bool) -> String {
         }
         "windows" => {
             if cuda { return "cuda".into(); }
+            if rocm { return "rocm".into(); }
             "cpu".into()
         }
         _ => "cpu".into(),
+    }
+}
+
+// ── Verify ROCm venv (Windows) ──────────────────────────────────────
+
+pub fn verify_rocm_venv(venv_path: &str) -> RocmVenvInfo {
+    let python = if cfg!(windows) {
+        Path::new(venv_path).join("Scripts").join("python.exe")
+    } else {
+        Path::new(venv_path).join("bin").join("python")
+    };
+
+    if !python.exists() {
+        return RocmVenvInfo {
+            valid: false,
+            hip_version: None,
+            python_version: None,
+            error: Some(format!(
+                "Python not found at {} — create the venv first",
+                python.display()
+            )),
+        };
+    }
+
+    let py_ver = Command::new(&python)
+        .args(["-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok().map(|s| s.trim().to_string()));
+
+    let hip_ver = Command::new(&python)
+        .args(["-c", "import torch; v = torch.version.hip; print(v or '')"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .ok()
+        .and_then(|o| {
+            let s = String::from_utf8(o.stdout).ok()?;
+            let v = s.trim().to_string();
+            if v.is_empty() { None } else { Some(v) }
+        });
+
+    let is_valid = hip_ver.is_some();
+
+    RocmVenvInfo {
+        valid: is_valid,
+        hip_version: hip_ver,
+        python_version: py_ver,
+        error: if !is_valid {
+            Some("ROCm PyTorch not found — run AMD Adrenalin to create the venv with PyTorch support".into())
+        } else {
+            None
+        },
     }
 }
 
@@ -613,21 +713,103 @@ fn install_sr_package(
     )
 }
 
+// ── ROCm install for Windows (user pre-created venv via AMD Adrenalin) ──
+
+#[cfg(windows)]
+fn install_rocm_windows(
+    app: &AppHandle,
+    istate: &InstallState,
+    env_dir: &Path,
+    venv_path: &str,
+    backend: &str,
+    env_type: &str,
+) -> Result<(), String> {
+    let venv_dir = Path::new(venv_path);
+    let python_bin = venv_dir.join("Scripts").join("python.exe");
+
+    // Re-verify the venv (belt-and-suspenders — frontend already checked)
+    let info = verify_rocm_venv(venv_path);
+    if !info.valid {
+        return Err(info.error.unwrap_or_else(|| "Venv verification failed".into()));
+    }
+    if let Some(ref pv) = info.python_version {
+        match pv.as_str() {
+            "3.11" | "3.12" => {}
+            _ => return Err(format!("Python {pv} is not supported (need 3.11 or 3.12)")),
+        }
+    }
+
+    // If installed marker exists but venv is valid, it's a retry — clear marker
+    if env_dir.join("installed").exists() {
+        std::fs::remove_file(env_dir.join("installed")).ok();
+        std::fs::remove_file(env_dir.join("env.json")).ok();
+    }
+    std::fs::create_dir_all(env_dir)
+        .map_err(|e| format!("Cannot create env dir: {e}"))?;
+
+    // Install sr_engine package (skips torch — already present in the venv)
+    install_sr_package(app, istate, &python_bin)?;
+
+    // Install lpips
+    run_step(
+        app,
+        istate,
+        Command::new("uv").args([
+            "pip",
+            "install",
+            "--python",
+            &python_bin.to_string_lossy(),
+            "lpips",
+        ]),
+        "Installing LPIPS",
+    )?;
+
+    // Write metadata + marker
+    let meta = EnvMeta {
+        app_version: env!("CARGO_PKG_VERSION").to_string(),
+        backend: backend.to_string(),
+        env_type: env_type.to_string(),
+        env_path: venv_dir.to_string_lossy().to_string(),
+        installed_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs().to_string())
+            .unwrap_or_else(|_| "unknown".to_string()),
+    };
+
+    let json =
+        serde_json::to_string_pretty(&meta).map_err(|e| format!("Serialize env meta: {e}"))?;
+    std::fs::write(env_dir.join("env.json"), &json)
+        .map_err(|e| format!("Write env.json: {e}"))?;
+    std::fs::write(env_dir.join("installed"), "")
+        .map_err(|e| format!("Write installed marker: {e}"))?;
+
+    app.emit("install-done", &meta).ok();
+    Ok(())
+}
+
+#[allow(unused_variables)]
 pub fn install_env(
     app: AppHandle,
     state: &AppHandle,
     backend: String,
     env_type: String,
+    rocm_venv_path: Option<String>,
 ) -> Result<(), String> {
     let istate = state.state::<InstallState>();
 
-    // Atomically read & reset the cancellation flag. If it was already set,
-    // honour it immediately (e.g. user cancelled before this thread started).
     if istate.cancelled.swap(false, Ordering::SeqCst) {
         return Err("Installation cancelled".into());
     }
 
     let env_dir = get_env_dir();
+
+    // ROCm on Windows: user pre-created the venv via AMD Adrenalin
+    #[cfg(windows)]
+    if backend == "rocm" {
+        let venv_path = rocm_venv_path
+            .unwrap_or_else(|| env_dir.join("venv").to_string_lossy().to_string());
+        return install_rocm_windows(&app, &istate, &env_dir, &venv_path, &backend, &env_type);
+    }
 
     // Clean any leftover state from a previous run so uv venv never sees an
     // existing directory (which would make it exit with code 2).

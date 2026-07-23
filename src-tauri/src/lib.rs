@@ -347,10 +347,16 @@ fn probe_system() -> env_installer::SystemInfo {
 }
 
 #[tauri::command]
-fn install_env(app: tauri::AppHandle, backend: String, env_type: String) -> Result<(), String> {
+fn install_env(
+    app: tauri::AppHandle,
+    backend: String,
+    env_type: String,
+    rocm_venv_path: Option<String>,
+) -> Result<(), String> {
     let app2 = app.clone();
     std::thread::spawn(move || {
-        let result = env_installer::install_env(app2.clone(), &app2, backend, env_type);
+        let result =
+            env_installer::install_env(app2.clone(), &app2, backend, env_type, rocm_venv_path);
         if let Err(e) = result {
             let _ = app2.emit("install-error", &e);
         }
@@ -366,6 +372,11 @@ fn cancel_install(app: tauri::AppHandle) {
 #[tauri::command]
 fn get_env_dir() -> String {
     env_installer::get_env_dir().to_string_lossy().to_string()
+}
+
+#[tauri::command]
+fn verify_rocm_venv(venv_path: String) -> env_installer::RocmVenvInfo {
+    env_installer::verify_rocm_venv(&venv_path)
 }
 
 // ── App entry point ───────────────────────────────────────────────────────
@@ -407,6 +418,7 @@ pub fn run() {
             install_env,
             cancel_install,
             get_env_dir,
+            verify_rocm_venv,
             list_dir,
             read_text_file,
             write_text_file,
