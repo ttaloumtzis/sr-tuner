@@ -20,16 +20,8 @@
 # Options:
 #   cpu | cuda | rocm   Sidecar variant for 'sidecar' / 'all' (default: auto-detect from .venv)
 #   -j, --parallel      Build frontend and sidecar concurrently
-#
-# Examples:
-#   ./scripts/build.sh                   # frontend + Tauri
-#   ./scripts/build.sh dev               # hot-reload dev mode
-#   ./scripts/build.sh check             # verify prerequisites
-#   ./scripts/build.sh all               # clean + all (cpu sidecar)
-#   ./scripts/build.sh all rocm -j       # clean + all ROCm, parallel
-#   ./scripts/build.sh sidecar cuda      # CUDA sidecar only
-#   ./scripts/build.sh rebuild           # clean + frontend + tauri
-#   ./scripts/build.sh clean             # remove all artifacts
+#   --bundle <type>     Bundle target: appimage, deb, rpm, or comma-separated (default: all)
+#   --rebuild-env       Rebuild Python .venv from scratch via envs/build.sh (requires cpu|cuda|rocm)
 
 set -euo pipefail
 
@@ -80,16 +72,21 @@ ${BOLD}Commands:${NC}
 ${BOLD}Options:${NC}
   cpu | cuda | rocm   Sidecar variant for 'sidecar' / 'all' (default: auto-detect from .venv)
   -j, --parallel      Build frontend and sidecar concurrently
+  --bundle <type>     Bundle target: appimage, deb, rpm, or comma-separated (default: all)
+  --rebuild-env       Rebuild Python .venv from scratch (requires cpu|cuda|rocm)
 
 ${BOLD}Examples:${NC}
-  ./scripts/build.sh                   # frontend + Tauri
-  ./scripts/build.sh dev               # hot-reload dev mode
-  ./scripts/build.sh check             # verify prerequisites
-  ./scripts/build.sh all               # clean + all (cpu sidecar)
-  ./scripts/build.sh all rocm -j       # clean + all ROCm, parallel
-  ./scripts/build.sh sidecar cuda      # CUDA sidecar only
-  ./scripts/build.sh rebuild           # clean + frontend + tauri
-  ./scripts/build.sh clean             # remove all artifacts
+  ./scripts/build.sh                    # frontend + Tauri
+  ./scripts/build.sh dev                # hot-reload dev mode
+  ./scripts/build.sh check              # verify prerequisites
+  ./scripts/build.sh all                # clean + all (cpu sidecar)
+  ./scripts/build.sh all rocm -j        # clean + all ROCm, parallel
+  ./scripts/build.sh all rocm --bundle appimage  # AppImage only
+  ./scripts/build.sh all rocm --bundle appimage --rebuild-env  # full pipeline
+  ./scripts/build.sh tauri --bundle deb           # just .deb
+  ./scripts/build.sh sidecar cuda       # CUDA sidecar only
+  ./scripts/build.sh rebuild            # clean + frontend + tauri
+  ./scripts/build.sh clean              # remove all artifacts
 
 EOF
 }
@@ -214,31 +211,63 @@ build_frontend() {
     log_info "Frontend ready → frontend/dist/"
 }
 
+# ── Rebuild Python Environment ────────────────────────────────────────────────
+rebuild_environment() {
+    local backend="${1:-}"
+    if [ -z "$backend" ]; then
+        log_error "--rebuild-env requires a backend: cpu, cuda, or rocm"
+        exit 1
+    fi
+    log_section "Rebuilding Python Environment ($backend)"
+    log_step "Running envs/build.sh --backend $backend --clean..."
+    "$SCRIPT_DIR/../envs/build.sh" --backend "$backend" --clean
+    log_info "Environment rebuilt."
+}
+
 # ── Build Tauri App ───────────────────────────────────────────────────────────
 build_tauri() {
+    local bundles="${1:-}"
+    local bundles_flag=""
+    if [ -n "$bundles" ]; then
+        bundles_flag="--bundles $bundles"
+    fi
+
     log_section "Building Tauri App"
-    log_step "Compiling Rust + creating platform bundles..."
+    if [ -n "$bundles_flag" ]; then
+        log_step "Compiling Rust + creating bundles: $bundles..."
+    else
+        log_step "Compiling Rust + creating all platform bundles..."
+    fi
     cd "$PROJECT_DIR"
-    NO_STRIP=1 cargo tauri build
+    # shellcheck disable=SC2086
+    NO_STRIP=1 cargo tauri build $bundles_flag
 
     echo ""
     local bundle_dir="$PROJECT_DIR/src-tauri/target/release/bundle"
     log_info "Build complete! Output:"
     if [[ "$PLATFORM" == "linux" ]]; then
-        echo "    AppImage → $bundle_dir/appimage/"
-        echo "    .deb     → $bundle_dir/deb/"
-        echo "    .rpm     → $bundle_dir/rpm/"
+        if [ -z "$bundles" ] || [[ "$bundles" == *"appimage"* ]]; then
+            echo "    AppImage → $bundle_dir/appimage/"
+        fi
+        if [ -z "$bundles" ] || [[ "$bundles" == *"deb"* ]]; then
+            echo "    .deb     → $bundle_dir/deb/"
+        fi
+        if [ -z "$bundles" ] || [[ "$bundles" == *"rpm"* ]]; then
+            echo "    .rpm     → $bundle_dir/rpm/"
+        fi
         echo "    Binary   → $PROJECT_DIR/src-tauri/target/release/sr-tuner"
     else
-        echo "    .dmg     → $bundle_dir/dmg/"
-        echo "    .app     → $bundle_dir/macos/"
+        if [ -z "$bundles" ] || [[ "$bundles" == *"dmg"* ]]; then
+            echo "    .dmg     → $bundle_dir/dmg/"
+        fi
+        if [ -z "$bundles" ] || [[ "$bundles" == *"app"* ]]; then
+            echo "    .app     → $bundle_dir/macos/"
+        fi
     fi
 }
 
 # ── Build Sidecar (delegates to build-sidecar.sh) ─────────────────────────────
 build_sidecar() {
-    # Empty variant = not explicitly requested -> let build-sidecar.sh
-    # auto-detect the backend from .venv instead of assuming cpu.
     local variant="${1:-}"
 
     log_section "Building Sidecar ${variant:+($variant)}"
@@ -281,6 +310,7 @@ clean() {
 # ── Parallel build (frontend + sidecar concurrently, then Tauri) ──────────────
 build_parallel() {
     local variant="${1:-}"
+    local bundles="${2:-}"
 
     log_section "Parallel Build: Frontend + Sidecar ${variant:+($variant)}"
     log_step "Starting both builds concurrently..."
@@ -330,30 +360,45 @@ build_parallel() {
     fi
 
     echo ""
-    build_tauri
+    build_tauri "$bundles"
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 main() {
     local command="${1:-}"
     local parallel=false
-    # Empty = not explicitly requested; build_sidecar/build_parallel treat
-    # this as "auto-detect backend from .venv" rather than assuming cpu.
     local variant=""
+    local bundles=""
+    local rebuild_env=false
 
     # Shift past the command, parse remaining flags
     [[ $# -gt 0 ]] && shift
-    for arg in "$@"; do
-        case "$arg" in
-            -j|--parallel)  parallel=true  ;;
-            cpu|cuda|rocm)  variant="$arg" ;;
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -j|--parallel)  parallel=true  ; shift ;;
+            cpu|cuda|rocm)  variant="$1"   ; shift ;;
+            --bundle)
+                if [[ $# -lt 2 ]]; then
+                    log_error "--bundle requires an argument (e.g. appimage, deb)"
+                    exit 1
+                fi
+                bundles="$2"; shift 2 ;;
+            --rebuild-env)  rebuild_env=true; shift ;;
             *)
-                log_error "Unknown option: $arg"
+                log_error "Unknown option: $1"
                 show_help
                 exit 1
                 ;;
         esac
     done
+
+    if $rebuild_env; then
+        if [ -z "$variant" ]; then
+            log_error "--rebuild-env requires a backend: cpu|cuda|rocm"
+            exit 1
+        fi
+        rebuild_environment "$variant"
+    fi
 
     case "$command" in
         help|--help|-h) show_help ;;
@@ -361,26 +406,26 @@ main() {
         dev)       dev_mode ;;
         clean)     clean ;;
         frontend)  build_frontend ;;
-        tauri)     build_tauri ;;
+        tauri)     build_tauri "$bundles" ;;
         sidecar)   build_sidecar "$variant" ;;
         all)
             clean
             if $parallel; then
-                build_parallel "$variant"
+                build_parallel "$variant" "$bundles"
             else
                 build_frontend
                 build_sidecar "$variant"
-                build_tauri
+                build_tauri "$bundles"
             fi
             ;;
         rebuild)
             clean
             build_frontend
-            build_tauri
+            build_tauri "$bundles"
             ;;
         "")
             build_frontend
-            build_tauri
+            build_tauri "$bundles"
             ;;
         *)
             log_error "Unknown command: $command"

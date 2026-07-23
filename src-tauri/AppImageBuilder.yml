@@ -1,0 +1,61 @@
+version: 1
+script:
+  - mkdir -p "$TARGET_APPDIR/usr/bin"
+  - mkdir -p "$TARGET_APPDIR/usr/share/applications"
+  - mkdir -p "$TARGET_APPDIR/usr/share/icons/hicolor/32x32/apps"
+  - mkdir -p "$TARGET_APPDIR/usr/share/icons/hicolor/128x128/apps"
+  - mkdir -p "$TARGET_APPDIR/usr/share/icons/hicolor/256x256/apps"
+  - cp "$SOURCE_DIR/target/release/sr-tuner" "$TARGET_APPDIR/usr/bin/sr-tuner"
+  - cp "$SOURCE_DIR/icons/32x32.png" "$TARGET_APPDIR/usr/share/icons/hicolor/32x32/apps/sr-tuner.png"
+  - cp "$SOURCE_DIR/icons/128x128.png" "$TARGET_APPDIR/usr/share/icons/hicolor/128x128/apps/sr-tuner.png"
+  - cp "$SOURCE_DIR/icons/128x128@2x.png" "$TARGET_APPDIR/usr/share/icons/hicolor/256x256/apps/sr-tuner.png"
+  - |
+    cat > "$TARGET_APPDIR/usr/share/applications/sr-tuner.desktop" << 'EOF'
+    [Desktop Entry]
+    Name=SR Tuner
+    Exec=sr-tuner
+    Icon=sr-tuner
+    Type=Application
+    Categories=Graphics;Utility;
+    Terminal=false
+    EOF
+
+AppDir:
+  app_info:
+    id: sr-tuner
+    name: SR Tuner
+    icon: sr-tuner
+    version: 0.1.0
+    exec: usr/bin/sr-tuner
+
+  files:
+    include:
+      - src-tauri/target/release/sr-tuner
+    exclude:
+      - usr/share/man
+      - usr/share/doc
+      - home/*
+
+  after_bundle:
+    - rm -rf "$TARGET_APPDIR/src-tauri"
+
+  after_runtime:
+    - |+
+      cat > "$TARGET_APPDIR/AppRun" << 'EOF'
+      #!/bin/bash
+      HERE="$(dirname "$(readlink -f "$0")")"
+      export LD_LIBRARY_PATH="$HERE/usr/lib:$LD_LIBRARY_PATH"
+      exec "$HERE/runtime/default/lib64/ld-linux-x86-64.so.2" \
+        --library-path "$LD_LIBRARY_PATH" \
+        "$HERE/usr/bin/sr-tuner" "$@"
+      EOF
+    - chmod +x "$TARGET_APPDIR/AppRun"
+
+  runtime:
+    env:
+      WEBKIT_DISABLE_COMPOSITING_MODE: '1'
+
+AppImage:
+  arch: x86_64
+  update-information: None
+  file_name: SR_Tuner-{{VERSION}}-{{ARCH}}.AppImage

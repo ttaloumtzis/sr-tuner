@@ -1,6 +1,6 @@
 import type { DatasetInfo, HealthReport, JobAccepted, JobStatus, WorkspaceInfo, TrainParams, InferParams, EnvInfo, DatasetBuildParams, DatasetValidateParams, DatasetHealthParams, DatasetMergeParams, ExportParams, ModelInstance, ModelVersion } from "./api-types";
 
-let BASE_URL = "http://127.0.0.1:8765";
+let BASE_URL = "http://localhost:8765";
 
 export async function initApiUrl(): Promise<void> {
   try {

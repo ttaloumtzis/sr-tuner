@@ -24,3 +24,8 @@ src-tauri/binaries/*
 *.log
 frontend/src.zip
 SR_Tuner*.AppImage
+*.zsync
+AppDir/
+AppDirsrc-tauri/
+appimage-build/
+.test-sr-tuner/

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { SSEEvent } from "../lib/api-types";
+import type { SSEEvent, SystemInfo } from "../lib/api-types";
 
 export type TabId =
   | "dataset"
@@ -20,6 +20,18 @@ interface UiState {
   comparisonRunIds: string[];
   workspaceReady: boolean;
   workspaceError: string | null;
+
+  // Wizard state
+  showWizard: boolean;
+  wizardStep: number;
+  systemInfo: SystemInfo | null;
+  selectedBackend: string;
+  selectedEnvType: "venv" | "sidecar";
+  installationLog: string[];
+  installProgress: number;
+  installError: string | null;
+  installationDone: boolean;
+
   setActiveTab: (tab: TabId) => void;
   setDisplayedRunId: (id: string | null) => void;
   setServerConnected: (connected: boolean) => void;
@@ -31,6 +43,16 @@ interface UiState {
   setComparisonRunIds: (ids: string[]) => void;
   setWorkspaceReady: (ready: boolean) => void;
   setWorkspaceError: (error: string | null) => void;
+  setShowWizard: (v: boolean) => void;
+  setWizardStep: (v: number) => void;
+  setSystemInfo: (v: SystemInfo | null) => void;
+  setSelectedBackend: (v: string) => void;
+  setSelectedEnvType: (v: "venv" | "sidecar") => void;
+  appendInstallLog: (line: string) => void;
+  setInstallProgress: (v: number) => void;
+  setInstallError: (v: string | null) => void;
+  setInstallationDone: (v: boolean) => void;
+  resetWizard: () => void;
 }
 
 export const useUiStore = create<UiState>((set) => ({
@@ -43,6 +65,17 @@ export const useUiStore = create<UiState>((set) => ({
   comparisonRunIds: [],
   workspaceReady: false,
   workspaceError: null,
+
+  showWizard: false,
+  wizardStep: 0,
+  systemInfo: null,
+  selectedBackend: "",
+  selectedEnvType: "venv",
+  installationLog: [],
+  installProgress: 0,
+  installError: null,
+  installationDone: false,
+
   setActiveTab: (tab) => set({ activeTab: tab }),
   setDisplayedRunId: (id) => set({ displayedRunId: id }),
   setServerConnected: (connected) => set({ isServerConnected: connected }),
@@ -63,4 +96,27 @@ export const useUiStore = create<UiState>((set) => ({
   setComparisonRunIds: (ids) => set({ comparisonRunIds: ids }),
   setWorkspaceReady: (ready) => set({ workspaceReady: ready }),
   setWorkspaceError: (error) => set({ workspaceError: error }),
+
+  setShowWizard: (v) => set({ showWizard: v }),
+  setWizardStep: (v) => set({ wizardStep: v }),
+  setSystemInfo: (v) => set({ systemInfo: v, selectedBackend: v?.default_backend ?? "" }),
+  setSelectedBackend: (v) => set({ selectedBackend: v }),
+  setSelectedEnvType: (v) => set({ selectedEnvType: v }),
+  appendInstallLog: (line) =>
+    set((s) => ({ installationLog: [...s.installationLog, line] })),
+  setInstallProgress: (v) => set({ installProgress: v }),
+  setInstallError: (v) => set({ installError: v }),
+  setInstallationDone: (v) => set({ installationDone: v }),
+  resetWizard: () =>
+    set({
+      showWizard: false,
+      wizardStep: 0,
+      systemInfo: null,
+      selectedBackend: "",
+      selectedEnvType: "venv",
+      installationLog: [],
+      installProgress: 0,
+      installError: null,
+      installationDone: false,
+    }),
 }));

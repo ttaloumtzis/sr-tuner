@@ -42,7 +42,7 @@ KEEP_TMP=false
 FORCE=false
 
 BUILD_VENV=""
-BUILD_MODE="--onefile"
+BUILD_MODE="--onedir"
 EXTRA_BINARIES=()
 EXTRA_DATA=()
 ROCM_NEEDS_ALIAS=false
@@ -228,14 +228,11 @@ install_pyinstaller() {
 setup_rocm_extras() {
     [[ "$BACKEND" == "rocm" ]] || return 0
 
-    # ROCm is huge — --onedir avoids the slow serial archive step and gives
-    # instant startup (no extraction to a tmpdir on every launch).
-    BUILD_MODE="--onedir"
     export LD_LIBRARY_PATH="/opt/rocm/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
     local site_packages torch_hip_lib needed_soname candidate
-    site_packages="$(find "$BUILD_VENV/lib" -maxdepth 1 -type d -name 'python3.*' | head -n1)/site-packages"
-    torch_hip_lib="$(find "$site_packages/torch/lib" -maxdepth 1 -name 'libtorch_hip.so' 2>/dev/null | head -n1)"
+    site_packages="$(find "$BUILD_VENV/lib" -maxdepth 1 -type d -name 'python3.*' | head -n1)/site-packages" || true
+    torch_hip_lib="$(find "$site_packages/torch/lib" -maxdepth 1 -name 'libtorch_hip.so' 2>/dev/null | head -n1)" || true
 
     if [[ -z "$torch_hip_lib" ]]; then
         warn "Could not find torch/lib/libtorch_hip.so in .venv — is this really a ROCm torch build? Skipping HIP runtime bundling."
@@ -245,7 +242,7 @@ setup_rocm_extras() {
     # Ask the ACTUAL torch build what libamdhip64 SONAME it links against,
     # instead of guessing the newest lib on the system. This is what exposed
     # a rocm6.2-vs-rocm7.2 mismatch here previously.
-    needed_soname="$(ldd "$torch_hip_lib" 2>/dev/null | awk '/libamdhip64\.so/ {print $1; exit}')"
+    needed_soname="$(ldd "$torch_hip_lib" 2>/dev/null | awk '/libamdhip64\.so/ {print $1; exit}')" || true
     if [[ -z "$needed_soname" ]]; then
         warn "Could not determine the required libamdhip64 SONAME from $torch_hip_lib. Skipping HIP runtime bundling."
         return 0
@@ -260,7 +257,7 @@ setup_rocm_extras() {
         echo "Bundling matching ROCm HIP runtime: $candidate"
     else
         local fallback
-        fallback="$(find /opt/rocm/lib -maxdepth 1 -name 'libamdhip64.so*' 2>/dev/null | sort -V | tail -n1)"
+        fallback="$(find /opt/rocm/lib -maxdepth 1 -name 'libamdhip64.so*' 2>/dev/null | sort -V | tail -n1)" || true
         [[ -n "$fallback" ]] \
             || die "torch needs $needed_soname but no libamdhip64.so* exists under /opt/rocm/lib at all."
 
@@ -293,7 +290,7 @@ run_pyinstaller() {
 
     cd "$PROJECT_DIR"
 
-    "$BUILD_VENV/bin/python" -m PyInstaller "$BUILD_MODE" \
+    "$BUILD_VENV/bin/python" -m PyInstaller "$BUILD_MODE" -y \
         --name sr-engine \
         --add-data "$PROJECT_DIR/src/sr_engine/utils/configs:sr_engine/utils/configs" \
         "${EXTRA_DATA[@]}" \
@@ -340,6 +337,43 @@ resolve_triple() {
 }
 
 ################################################################################
+# Fix unresolved soname aliases in the bundled output
+# PyInstaller bundles the exact files but may miss soname symlinks
+# (e.g., torchvision needs libamdhip64.so.6 but only libamdhip64.so exists)
+################################################################################
+
+fix_rocm_sonames() {
+    local lib_dir="$1"
+    local fixed=0
+    while IFS= read -r -d '' sofile; do
+        local dir
+        dir="$(dirname "$sofile")"
+        while IFS= read -r soname; do
+            [[ -z "$soname" ]] && continue
+            # Skip standard system libs
+            case "$soname" in
+                libc.so*|libm.so*|libpthread*|librt.so*|libdl.so*|libutil.so*|libstdc++.so*|libgcc_s.so*|libz.so*|libresolv.so*|libnss_*|libBrokenLocale*|libanl.so*|libcrypt.so*|ld-linux*|ld64.so*)
+                    continue ;;
+            esac
+            if ! find "$lib_dir" -name "$soname" -print -quit | grep -q .; then
+                local base="${soname%%.so*}.so"
+                local candidate target_dir
+                candidate="$(find "$lib_dir" -name "${base}*" -not -name "$soname" -print -quit 2>/dev/null)"
+                if [[ -n "$candidate" && ! -L "$(dirname "$candidate")/$soname" ]]; then
+                    target_dir="$(dirname "$candidate")"
+                    ln -sf "$(basename "$candidate")" "$target_dir/$soname"
+                    warn "  Soname alias: $soname → $(basename "$candidate")"
+                    fixed=$((fixed + 1))
+                fi
+            fi
+        done < <(readelf -d "$sofile" 2>/dev/null | awk '/NEEDED/{print $NF}' | tr -d '[]' || true)
+    done < <(find "$lib_dir" -name '*.so*' -type f -print0 2>/dev/null || true)
+    if [[ $fixed -gt 0 ]]; then
+        warn "Created $fixed soname aliases for ROCm library compatibility"
+    fi
+}
+
+################################################################################
 # Install result into src-tauri/binaries/
 ################################################################################
 
@@ -367,6 +401,9 @@ package_output() {
                 warn "Created compat symlink: $ROCM_NEEDED_SONAME → $ROCM_FALLBACK_NAME (unverified ABI compatibility)"
             fi
         fi
+
+        # Fix unresolved soname aliases (e.g., libamdhip64.so.6 needed by torchvision)
+        fix_rocm_sonames "$BINARIES_DIR/sr-engine-${triple}/_internal"
 
         out_size="$(du -sh "$BINARIES_DIR/sr-engine-${triple}" | cut -f1)"
     else

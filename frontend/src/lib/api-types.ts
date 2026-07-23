@@ -121,6 +121,27 @@ export interface JobStatus {
   config?: Record<string, unknown>;
 }
 
+export interface SystemInfo {
+  os: string;
+  os_distro: string | null;
+  cuda_available: boolean;
+  rocm_available: boolean;
+  mps_available: boolean;
+  has_ffmpeg: boolean;
+  has_uv: boolean;
+  has_python3: boolean;
+  supported_backends: string[];
+  default_backend: string;
+}
+
+export interface EnvMeta {
+  app_version: string;
+  backend: string;
+  env_type: string;
+  env_path: string;
+  installed_at: string;
+}
+
 export interface EnvInfo {
   torch_version: string;
   device: string;

@@ -1,10 +1,12 @@
 use std::path::Path;
 use std::sync::Mutex;
 use std::process::{Child, Command, Stdio};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
+
+mod env_installer;
 
 // ── Managed state ─────────────────────────────────────────────────────────
 
@@ -131,14 +133,34 @@ fn start_python_server(app: tauri::AppHandle) -> Result<(), String> {
         }
     }
 
+    // Priority 1: installed env from wizard (~/.sr-tuner/env/env.json)
+    if let Some(meta) = env_installer::read_env_meta() {
+        let current = env!("CARGO_PKG_VERSION");
+        if meta.app_version != current {
+            env_installer::maybe_update_env(&app, &meta)
+                .map_err(|e| format!("Env update failed: {e}"))?;
+            // Re-read updated meta
+            let meta = env_installer::read_env_meta()
+                .ok_or_else(|| "Failed to read updated env.json".to_string())?;
+            let child = env_installer::launch_from_env(&meta)?;
+            if let Ok(mut guard) = state.0.lock() {
+                *guard = Some(child);
+            }
+            return Ok(());
+        }
+        let child = env_installer::launch_from_env(&meta)?;
+        if let Ok(mut guard) = state.0.lock() {
+            *guard = Some(child);
+        }
+        return Ok(());
+    }
+
+    // Priority 2: bundled sidecar (release) or dev sidecar build
     let mut cmd = if let Some(sidecar_path) = find_sidecar_binary(&app) {
-        // Sidecar found — resolve the actual binary (handles both --onefile
-        // and --onedir layouts). No arguments needed; the entry script
-        // hard-codes host/port.
         let exe = resolve_sidecar_exe(&sidecar_path);
         Command::new(exe)
     } else {
-        // No sidecar available — fall back to `uv run uvicorn` (dev mode).
+        // Priority 3: fall back to `uv run uvicorn` (dev mode).
         let mut c = Command::new("uv");
         c.args([
             "run",
@@ -161,11 +183,6 @@ fn start_python_server(app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(unix)]
     unsafe {
         cmd.pre_exec(|| {
-            // Create a new session, fully detaching from the controlling
-            // terminal. This prevents terminal-originated stop signals
-            // (SIGTSTP, SIGTTIN, SIGTTOU) from freezing the server.
-            // The child becomes both session leader and process group
-            // leader (PGID = PID), so kill_process_group still works.
             if libc::setsid() < 0 {
                 return Err(std::io::Error::last_os_error());
             }
@@ -195,7 +212,7 @@ fn stop_python_server(app: tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 fn get_server_url() -> String {
-    "http://127.0.0.1:8765".to_string()
+    "http://localhost:8765".to_string()
 }
 
 // ── Filesystem commands ──────────────────────────────────────────────────
@@ -317,6 +334,40 @@ fn list_image_files(path: String) -> Result<Vec<String>, String> {
     Ok(files)
 }
 
+// ── Environment installer commands ───────────────────────────────────────
+
+#[tauri::command]
+fn check_first_run() -> bool {
+    env_installer::is_first_run()
+}
+
+#[tauri::command]
+fn probe_system() -> env_installer::SystemInfo {
+    env_installer::probe_system()
+}
+
+#[tauri::command]
+fn install_env(app: tauri::AppHandle, backend: String, env_type: String) -> Result<(), String> {
+    let app2 = app.clone();
+    std::thread::spawn(move || {
+        let result = env_installer::install_env(app2.clone(), &app2, backend, env_type);
+        if let Err(e) = result {
+            let _ = app2.emit("install-error", &e);
+        }
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn cancel_install(app: tauri::AppHandle) {
+    env_installer::cancel_install(&app);
+}
+
+#[tauri::command]
+fn get_env_dir() -> String {
+    env_installer::get_env_dir().to_string_lossy().to_string()
+}
+
 // ── App entry point ───────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -325,14 +376,11 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(ServerState(Mutex::new(None)))
+        .manage(env_installer::InstallState::new())
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                // Keep the window alive so JS cleanup (project save, training
-                // cancel) can complete asynchronously.
                 api.prevent_close();
 
-                // Kill the server in a background thread so the Tauri event
-                // loop stays responsive for JS cleanup.
                 let state = window.state::<ServerState>();
                 if let Ok(mut guard) = state.0.lock() {
                     if let Some(mut child) = guard.take() {
@@ -343,8 +391,6 @@ pub fn run() {
                     }
                 }
 
-                // Give JS (useSaveTrigger etc.) 10 seconds to finish its own
-                // cleanup and call destroy(). If JS never responds, force-close.
                 let win = window.clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_secs(10));
@@ -356,6 +402,11 @@ pub fn run() {
             start_python_server,
             stop_python_server,
             get_server_url,
+            check_first_run,
+            probe_system,
+            install_env,
+            cancel_install,
+            get_env_dir,
             list_dir,
             read_text_file,
             write_text_file,

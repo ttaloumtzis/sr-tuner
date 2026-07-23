@@ -74,9 +74,22 @@ This creates `.venv` via `uv sync`, installs the matching PyTorch wheel, and ver
 ### Per-platform notes
 
 **Linux** — Tauri build requires:
-```bash
-sudo apt install -y build-essential libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev
-```
+
+| Distro | Install command |
+|---|---|
+| Debian / Ubuntu | `sudo apt install -y build-essential libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev fuse` |
+| Arch / CachyOS / Manjaro | `sudo pacman -S webkit2gtk-4.1 patchelf fuse2` |
+| Fedora | `sudo dnf install webkit2gtk4.1-devel patchelf fuse` |
+
+> **AppImage bundling notes (all distros):**
+> - `patchelf` is required by `linuxdeploy` to patch ELF rpaths inside the AppImage.
+> - `fuse` (or `fuse2` on Arch) is needed to run `linuxdeploy` itself (it's distributed as an AppImage).
+> - **Arch / CachyOS only:** Python wheels may link against hash-versioned library sonames
+>   while system packages use plain names. If `linuxdeploy` fails with
+>   `Could not find dependency: libavif-<hash>.so`, create a compat symlink:
+>   ```bash
+>   sudo ln -s /usr/lib/libavif.so.16.4.2 /usr/lib/libavif-8a7f9d56.so.16.4.2
+>   ```
 
 **macOS** — `brew install python@3.12 uv node rust`
 

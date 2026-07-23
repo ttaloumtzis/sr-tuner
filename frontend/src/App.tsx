@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { ToastProvider } from "./components/shell/ToastProvider";
 
 import { TabBar } from "./components/shell/TabBar";
@@ -11,6 +12,7 @@ import { useSSEConnection } from "./hooks/useSSEConnection";
 import { useTrainingSSE } from "./hooks/useTrainingSSE";
 import { initApiUrl, initWorkspace } from "./lib/api";
 import { ProjectScreen } from "./screens/ProjectScreen";
+import { SetupWizard } from "./screens/setup/SetupWizard";
 import { parentFromProjFile } from "./lib/path";
 import { ScreenDatasetSetup } from "./screens/dataset/ScreenDatasetSetup";
 import { ScreenModelConfig } from "./screens/model/ScreenModelConfig";
@@ -93,6 +95,8 @@ export default function App() {
   const isServerConnected = useUiStore((s) => s.isServerConnected);
   const workspaceReady = useUiStore((s) => s.workspaceReady);
   const workspaceError = useUiStore((s) => s.workspaceError);
+  const showWizard = useUiStore((s) => s.showWizard);
+  const setShowWizard = useUiStore((s) => s.setShowWizard);
   const setWorkspaceReady = useUiStore((s) => s.setWorkspaceReady);
   const setWorkspaceError = useUiStore((s) => s.setWorkspaceError);
 
@@ -101,12 +105,17 @@ export default function App() {
     (async () => {
       try {
         const { invoke } = await import("@tauri-apps/api/core");
+        const firstRun = await invoke<boolean>("check_first_run");
+        if (firstRun) {
+          setShowWizard(true);
+          return; // wizard will start server after completion
+        }
         await invoke("start_python_server");
       } catch (err) {
         console.error("Python server failed to start:", err);
       }
     })();
-  }, []);
+  }, [setShowWizard]);
 
   useEffect(() => {
     if (!project) {
@@ -160,6 +169,20 @@ export default function App() {
     setWorkspaceError(null);
     setWorkspaceReady(false);
   };
+
+  const handleWizardComplete = () => {
+    invoke("start_python_server").catch((err) =>
+      console.error("Python server failed to start after wizard:", err)
+    );
+  };
+
+  if (showWizard) {
+    return (
+      <ToastProvider>
+        <SetupWizard onComplete={handleWizardComplete} />
+      </ToastProvider>
+    );
+  }
 
   let content;
   if (project && !workspaceReady && !workspaceError) {

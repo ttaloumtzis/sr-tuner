@@ -1,0 +1,239 @@
+import { useUiStore } from "../../store/uiStore";
+import type { SystemInfo } from "../../lib/api-types";
+
+interface Props {
+  step: number;
+  systemInfo: SystemInfo;
+  onStart: (backend: string, envType: "venv" | "sidecar") => void;
+  onBack: () => void;
+  onNext: () => void;
+}
+
+export function SetupWizardLinux({ step, systemInfo, onStart, onBack, onNext }: Props) {
+  const selectedBackend = useUiStore((s) => s.selectedBackend);
+  const selectedEnvType = useUiStore((s) => s.selectedEnvType);
+  const setSelectedBackend = useUiStore((s) => s.setSelectedBackend);
+  const setSelectedEnvType = useUiStore((s) => s.setSelectedEnvType);
+
+  const canSidecar = true; // Linux supports sidecar
+
+  return (
+    <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 16 }}>
+      {step === 1 && (
+        <>
+          <div style={labelStyle}>Detected System</div>
+          <div style={infoRowStyle}>
+            <span>OS:</span>
+            <span style={valueStyle}>
+              Linux {systemInfo.os_distro ?? ""}
+            </span>
+          </div>
+          <div style={infoRowStyle}>
+            <span>CUDA:</span>
+            <span style={{ ...valueStyle, color: systemInfo.cuda_available ? "var(--green)" : "var(--dim)" }}>
+              {systemInfo.cuda_available ? "Available" : "Not detected"}
+            </span>
+          </div>
+          <div style={infoRowStyle}>
+            <span>ROCm:</span>
+            <span style={{ ...valueStyle, color: systemInfo.rocm_available ? "var(--green)" : "var(--dim)" }}>
+              {systemInfo.rocm_available ? "Available" : "Not detected"}
+            </span>
+          </div>
+          <div style={infoRowStyle}>
+            <span>ffmpeg:</span>
+            <span style={{ ...valueStyle, color: systemInfo.has_ffmpeg ? "var(--green)" : "var(--amber)" }}>
+              {systemInfo.has_ffmpeg ? "Found" : "Recommended"}
+            </span>
+          </div>
+          <div style={infoRowStyle}>
+            <span>uv:</span>
+            <span style={{ ...valueStyle, color: systemInfo.has_uv ? "var(--green)" : "var(--red)" }}>
+              {systemInfo.has_uv ? "Found" : "Not found — required"}
+            </span>
+          </div>
+          <div style={infoRowStyle}>
+            <span>Python 3:</span>
+            <span style={{ ...valueStyle, color: systemInfo.has_python3 ? "var(--green)" : "var(--red)" }}>
+              {systemInfo.has_python3 ? "Found" : "Not found — required"}
+            </span>
+          </div>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 8 }}>
+            <button onClick={onNext} style={btnStyle}>
+              Continue
+            </button>
+          </div>
+        </>
+      )}
+
+      {step === 2 && (
+        <>
+          <div style={labelStyle}>Select PyTorch Backend</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {systemInfo.supported_backends.map((b) => (
+              <label
+                key={b}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  padding: "10px 14px",
+                  background: selectedBackend === b ? "var(--bg3)" : "var(--bg2)",
+                  border: `1px solid ${selectedBackend === b ? "var(--green)66" : "var(--border)"}`,
+                  borderRadius: "var(--radius-sm)",
+                  cursor: "pointer",
+                  fontSize: 12,
+                }}
+              >
+                <input
+                  type="radio"
+                  name="backend"
+                  value={b}
+                  checked={selectedBackend === b}
+                  onChange={() => setSelectedBackend(b)}
+                  style={{ accentColor: "var(--green)" }}
+                />
+                <div>
+                  <div style={{ color: "var(--text)", fontWeight: 500, textTransform: "uppercase" }}>
+                    {b}
+                    {b === systemInfo.default_backend && (
+                      <span style={{ color: "var(--green)", fontSize: 10, marginLeft: 6 }}>recommended</span>
+                    )}
+                  </div>
+                  <div style={{ color: "var(--dim)", fontSize: 10, marginTop: 2 }}>
+                    {b === "cuda" && "NVIDIA GPU with CUDA support"}
+                    {b === "rocm" && "AMD GPU with ROCm support"}
+                    {b === "cpu" && "CPU only (slower, but compatible with all hardware)"}
+                  </div>
+                </div>
+              </label>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 8, justifyContent: "space-between", marginTop: 8 }}>
+            <button onClick={onBack} style={btnStyleMuted}>Back</button>
+            <button onClick={onNext} style={btnStyle}>
+              Continue
+            </button>
+          </div>
+        </>
+      )}
+
+      {step === 3 && (
+        <>
+          <div style={labelStyle}>Select Environment Type</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                padding: "10px 14px",
+                background: selectedEnvType === "venv" ? "var(--bg3)" : "var(--bg2)",
+                border: `1px solid ${selectedEnvType === "venv" ? "var(--green)66" : "var(--border)"}`,
+                borderRadius: "var(--radius-sm)",
+                cursor: "pointer",
+                fontSize: 12,
+              }}
+            >
+              <input
+                type="radio"
+                name="envType"
+                value="venv"
+                checked={selectedEnvType === "venv"}
+                onChange={() => setSelectedEnvType("venv")}
+                style={{ accentColor: "var(--green)" }}
+              />
+              <div>
+                <div style={{ color: "var(--text)", fontWeight: 500 }}>Virtual Environment (recommended)</div>
+                <div style={{ color: "var(--dim)", fontSize: 10, marginTop: 2 }}>
+                  Creates a Python venv in ~/.sr-tuner/. Faster setup, easier to update.
+                </div>
+              </div>
+            </label>
+            {canSidecar && (
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  padding: "10px 14px",
+                  background: selectedEnvType === "sidecar" ? "var(--bg3)" : "var(--bg2)",
+                  border: `1px solid ${selectedEnvType === "sidecar" ? "var(--green)66" : "var(--border)"}`,
+                  borderRadius: "var(--radius-sm)",
+                  cursor: "pointer",
+                  fontSize: 12,
+                }}
+              >
+                <input
+                  type="radio"
+                  name="envType"
+                  value="sidecar"
+                  checked={selectedEnvType === "sidecar"}
+                  onChange={() => setSelectedEnvType("sidecar")}
+                  style={{ accentColor: "var(--green)" }}
+                />
+                <div>
+                  <div style={{ color: "var(--text)", fontWeight: 500 }}>Sidecar Binary (standalone)</div>
+                  <div style={{ color: "var(--dim)", fontSize: 10, marginTop: 2 }}>
+                    Packages the Python backend into a standalone binary (~1-3 GB). Slower to build, but runs without uv/python after setup.
+                  </div>
+                </div>
+              </label>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 8, justifyContent: "space-between", marginTop: 8 }}>
+            <button onClick={onBack} style={btnStyleMuted}>Back</button>
+            <button onClick={() => onStart(selectedBackend, selectedEnvType)} style={btnStyle}>
+              Install
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+const labelStyle: React.CSSProperties = {
+  fontSize: 10,
+  fontWeight: 600,
+  color: "var(--muted)",
+  textTransform: "uppercase",
+  letterSpacing: "0.06em",
+  marginBottom: 4,
+};
+
+const infoRowStyle: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  fontSize: 11,
+  fontFamily: "var(--font-mono)",
+  color: "var(--muted)",
+  padding: "4px 0",
+};
+
+const valueStyle: React.CSSProperties = {
+  color: "var(--text)",
+};
+
+const btnStyle: React.CSSProperties = {
+  background: "var(--green)",
+  border: "none",
+  borderRadius: "var(--radius-sm)",
+  color: "#0d0f11",
+  cursor: "pointer",
+  fontSize: 11,
+  fontWeight: 600,
+  fontFamily: "var(--font-mono)",
+  padding: "6px 18px",
+};
+
+const btnStyleMuted: React.CSSProperties = {
+  background: "var(--bg2)",
+  border: "1px solid var(--border)",
+  borderRadius: "var(--radius-sm)",
+  color: "var(--muted)",
+  cursor: "pointer",
+  fontSize: 11,
+  fontFamily: "var(--font-mono)",
+  padding: "6px 18px",
+};
