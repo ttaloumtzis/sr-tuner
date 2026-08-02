@@ -16,6 +16,7 @@ import { Btn } from "../../components/ui/Btn";
 
 import type { CheckpointEntry, ModelRuns, RunInfo, RunStatus } from "../../lib/api-types";
 import type { Hyperparameters } from "../../store/modelStore";
+import { buildRunDisplays, shortRunId, sortGroups } from "../../lib/runLabel";
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -38,15 +39,6 @@ function fmtDate(iso: string | null | undefined): string {
   } catch {
     return iso;
   }
-}
-
-function shortRunId(runId: string): string {
-  // run_20260702_090000 → 2026-07-02 09:00
-  const m = runId.match(/^run_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})(?:_(\d+))?$/);
-  if (!m) return runId;
-  const [, y, mo, d, h, mi] = m;
-  const suffix = m[7] ? ` #${m[7]}` : "";
-  return `${y}-${mo}-${d} ${h}:${mi}${suffix}`;
 }
 
 const STATUS_COLOR: Record<RunStatus, string> = {
@@ -570,52 +562,75 @@ function ModelsRunsSidebar({
 
               {!isCollapsed && hasRuns && (
                 <div>
-                  {m.runs.map((run) => {
-                    const selected = selectedInstance === m.name && selectedRunId === run.run_id;
-                    const active = activeRunDirId === run.run_id;
-                    return (
-                      <div
-                        key={run.run_id}
-                        onClick={() => onSelectRun(m.name, run.run_id)}
-                        title={run.error ? `${run.status}: ${run.error}` : `${run.run_id} — ${run.status}`}
-                        style={{
-                          display: "flex", alignItems: "center", gap: 6,
-                          padding: "4px 10px 4px 25px",
-                          background: selected ? "var(--bg2)" : "transparent",
-                          borderLeft: selected ? "2px solid var(--green)" : "2px solid transparent",
-                          cursor: "pointer",
-                          transition: "var(--transition-fast)",
-                        }}
-                      >
-                        <StatusDot status={run.status} />
-                        <span style={{
-                          flex: 1, fontSize: 10, fontFamily: "var(--font-mono)",
-                          color: selected ? "var(--text)" : "var(--muted)",
-                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  {(() => {
+                    const displays = buildRunDisplays(m.runs);
+                    const byGroup = new Map<string, RunInfo[]>();
+                    for (const run of m.runs) {
+                      const group = displays.get(run.run_id)?.group ?? "Unknown";
+                      const list = byGroup.get(group) ?? [];
+                      list.push(run);
+                      byGroup.set(group, list);
+                    }
+                    const groups = sortGroups([...byGroup.keys()]);
+                    return groups.map((group) => (
+                      <div key={group}>
+                        <div style={{
+                          padding: "4px 10px 2px 20px",
+                          fontSize: 8, letterSpacing: "0.08em",
+                          color: "var(--dim)", fontFamily: "var(--font-mono)",
+                          textTransform: "uppercase", background: "var(--bg0)",
                         }}>
-                          {shortRunId(run.run_id)}
-                        </span>
-                        <span style={{ fontSize: 9, color: "var(--dim)", fontFamily: "var(--font-mono)", flexShrink: 0 }}>
-                          {run.checkpoint_count}
-                        </span>
-                        <button
-                          onClick={(ev) => { ev.stopPropagation(); onDeleteRequest(run); }}
-                          disabled={active}
-                          title={active ? "Cannot delete the run that is currently training" : `Delete ${run.run_id}`}
-                          style={{
-                            background: "none", border: "none",
-                            color: active ? "var(--dim)" : "var(--red)",
-                            cursor: active ? "default" : "pointer",
-                            fontSize: 12, lineHeight: 1, padding: "1px 3px",
-                            opacity: active ? 0.35 : 1,
-                            flexShrink: 0,
-                          }}
-                        >
-                          ✕
-                        </button>
+                          {group}
+                        </div>
+                        {byGroup.get(group)!.map((run) => {
+                          const selected = selectedInstance === m.name && selectedRunId === run.run_id;
+                          const active = activeRunDirId === run.run_id;
+                          return (
+                            <div
+                              key={run.run_id}
+                              onClick={() => onSelectRun(m.name, run.run_id)}
+                              title={run.error ? `${run.status}: ${run.error}` : `${run.run_id} — ${run.status}`}
+                              style={{
+                                display: "flex", alignItems: "center", gap: 6,
+                                padding: "4px 10px 4px 25px",
+                                background: selected ? "var(--bg2)" : "transparent",
+                                borderLeft: selected ? "2px solid var(--green)" : "2px solid transparent",
+                                cursor: "pointer",
+                                transition: "var(--transition-fast)",
+                              }}
+                            >
+                              <StatusDot status={run.status} />
+                              <span style={{
+                                flex: 1, fontSize: 10, fontFamily: "var(--font-mono)",
+                                color: selected ? "var(--text)" : "var(--muted)",
+                                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                              }}>
+                                {displays.get(run.run_id)?.label ?? shortRunId(run.run_id)}
+                              </span>
+                              <span style={{ fontSize: 9, color: "var(--dim)", fontFamily: "var(--font-mono)", flexShrink: 0 }}>
+                                {run.checkpoint_count}
+                              </span>
+                              <button
+                                onClick={(ev) => { ev.stopPropagation(); onDeleteRequest(run); }}
+                                disabled={active}
+                                title={active ? "Cannot delete the run that is currently training" : `Delete ${run.run_id}`}
+                                style={{
+                                  background: "none", border: "none",
+                                  color: active ? "var(--dim)" : "var(--red)",
+                                  cursor: active ? "default" : "pointer",
+                                  fontSize: 12, lineHeight: 1, padding: "1px 3px",
+                                  opacity: active ? 0.35 : 1,
+                                  flexShrink: 0,
+                                }}
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          );
+                        })}
                       </div>
-                    );
-                  })}
+                    ));
+                  })()}
                 </div>
               )}
 

@@ -72,6 +72,7 @@ def _super_resolve_tensor(
     tile_size: int,
     tile_overlap: int,
     device: str,
+    reporter: Optional[ProgressReporter] = None,
 ) -> torch.Tensor:
     """Run *model* on a single LR image tensor, tiling if needed, and return the HR tensor."""
     _, h, w = lr_tensor.shape
@@ -82,6 +83,8 @@ def _super_resolve_tensor(
         return hr_tensor.cpu()
 
     lr_tiles = tile_image(lr_tensor, tile_size, tile_overlap)
+    if reporter is not None:
+        reporter.start(total=len(lr_tiles), desc="Super-resolving tiles")
 
     hr_tiles: list[tuple[torch.Tensor, tuple[int, int]]] = []
     with torch.no_grad():
@@ -90,6 +93,11 @@ def _super_resolve_tensor(
             # Tile positions are in LR pixel space — scale them up to match
             # the HR output resolution before stitching.
             hr_tiles.append((output, (row * scale, col * scale)))
+            if reporter is not None:
+                reporter.update(1)
+
+    if reporter is not None:
+        reporter.finish()
 
     output_size = (h * scale, w * scale)
     return stitch_tiles(hr_tiles, output_size, tile_overlap * scale)
@@ -104,6 +112,7 @@ def infer_image(
     device: str = "cuda",
     model: torch.nn.Module | None = None,
     scale: int | None = None,
+    reporter: Optional[ProgressReporter] = None,
 ) -> Path:
     """Run super-resolution inference on a single image.
 
@@ -116,6 +125,7 @@ def infer_image(
         device: Torch device string.
         model: Pre-loaded model (alternative to model_checkpoint).
         scale: Model scale factor (required if model is pre-loaded).
+        reporter: Optional progress reporter (one update per tile).
 
     Returns:
         Path to the output image.
@@ -126,13 +136,80 @@ def infer_image(
         assert scale is not None, "scale is required when passing a pre-loaded model"
 
     lr_tensor = _read_image_tensor(input_path)
-    hr_tensor = _super_resolve_tensor(model, lr_tensor, scale, tile_size, tile_overlap, device)
+    hr_tensor = _super_resolve_tensor(model, lr_tensor, scale, tile_size, tile_overlap, device, reporter=reporter)
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(output_path), _tensor_to_bgr_image(hr_tensor))
 
     return output_path
+
+
+def image_size(path: Path) -> tuple[int, int]:
+    """Return ``(width, height)`` of an image via OpenCV."""
+    img = cv2.imread(str(path), cv2.IMREAD_COLOR)
+    if img is None:
+        raise FileNotFoundError(f"Could not read image: {path}")
+    h, w = img.shape[:2]
+    return int(w), int(h)
+
+
+def write_preview(path: Path, out_path: Path, max_dim: int = 1024) -> Path:
+    """Write a downscaled copy of *path* to *out_path* for cheap UI previews.
+
+    Aspect ratio is preserved; images already at or below *max_dim* are copied
+    as-is (re-encoded to PNG for uniform decoding).
+    """
+    img = cv2.imread(str(path), cv2.IMREAD_COLOR)
+    if img is None:
+        raise FileNotFoundError(f"Could not read image: {path}")
+    h, w = img.shape[:2]
+    longest = max(h, w)
+    if longest > max_dim:
+        scale = max_dim / longest
+        img = cv2.resize(img, (int(w * scale), int(h * scale)),
+                         interpolation=cv2.INTER_AREA)
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(out_path), img)
+    return out_path
+
+
+def metrics_suite(sr_path: Path, gt_path: Path, device: str = "cpu") -> dict:
+    """Compute PSNR / SSIM / LPIPS / MS-SSIM between SR and ground truth.
+
+    Ground truth is resized to the SR resolution before comparison. LPIPS is
+    ``None`` when the optional ``lpips`` package is unavailable.
+    """
+    from sr_engine.engine.metrics import lpips, ms_ssim, psnr, ssim
+
+    sr = _read_image_tensor(sr_path)
+    gt = _read_image_tensor(gt_path)
+
+    # Align GT to SR resolution (SR is the model output; GT is the reference).
+    if gt.shape != sr.shape:
+        import numpy as np
+        gt_np = (gt.permute(1, 2, 0).numpy() * 255.0).round().astype(np.uint8)
+        gt_np = cv2.resize(gt_np, (sr.shape[2], sr.shape[1]),
+                           interpolation=cv2.INTER_AREA)
+        gt = torch.from_numpy(gt_np.astype(np.float32) / 255.0).permute(2, 0, 1).contiguous()
+
+    with torch.no_grad():
+        psnr_val = psnr(sr, gt).item()
+        ssim_val = ssim(sr, gt).item()
+        ms_ssim_val = ms_ssim(sr, gt).item()
+        lpips_val: float | None = None
+        try:
+            lpips_val = lpips(sr, gt, device=device).item()
+        except Exception:
+            lpips_val = None
+
+    return {
+        "psnr": round(psnr_val, 3),
+        "ssim": round(ssim_val, 5),
+        "lpips": round(lpips_val, 5) if lpips_val is not None else None,
+        "ms_ssim": round(ms_ssim_val, 5),
+    }
 
 
 def infer_video(

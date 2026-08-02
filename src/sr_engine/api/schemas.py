@@ -216,7 +216,9 @@ class InferParams(BaseModel):
     version: str | None = None
     input: str
     output: str
-    tile: int = 512
+    gt: str | None = None
+    format: str = Field(default="png", pattern="^(png|jpeg|webp|tiff)$")
+    tile: int = 0
     overlap: int = 64
     device: str = "auto"
 

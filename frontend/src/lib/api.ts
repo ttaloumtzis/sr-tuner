@@ -82,6 +82,20 @@ export const listDatasets = (scale?: number) => {
 
 export const startInference = (params: InferParams) => request<JobAccepted>("POST", "/api/infer/start", params);
 
+/**
+ * Platform Pictures directory (e.g. `~/Pictures` on Linux/macOS,
+ * `C:\Users\<user>\Pictures` on Windows). Falls back to `""` in the
+ * browser (non-Tauri) dev mode.
+ */
+export async function defaultOutputDir(): Promise<string> {
+  try {
+    const { pictureDir } = await import("@tauri-apps/api/path");
+    return await pictureDir();
+  } catch {
+    return "";
+  }
+}
+
 // ── Datasets ────────────────────────────────────────────────────────────
 
 export const buildDataset = (params: DatasetBuildParams) => request<JobAccepted>("POST", "/api/datasets/build", params);

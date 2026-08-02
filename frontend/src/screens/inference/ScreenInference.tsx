@@ -1,21 +1,20 @@
-// §14 Inference Screen
+// §14 Inference Screen — redesigned (settings drawer + result stage)
 // Tasks: 14.1–14.13
 
 import { useState, useRef, useCallback, useEffect } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
-import { useCheckpointStore } from "../../store/checkpointStore";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useInferenceStore } from "../../store/inferenceStore";
-import { useProjectStore } from "../../store/projectStore";
-import { useUiStore } from "../../store/uiStore";
 import { Panel } from "../../components/ui/Panel";
 import { Btn } from "../../components/ui/Btn";
 import { Field } from "../../components/ui/Field";
-import { Toggle } from "../../components/ui/Toggle";
 import { PathInput } from "../../components/ui/PathInput";
-import { Dropdown } from "../../components/ui/Dropdown";
-import { open } from "@tauri-apps/plugin-dialog";
+import { Dropdown, type DropdownOption } from "../../components/ui/Dropdown";
 import { PBar } from "../../components/ui/PBar";
-import { basename } from "../../lib/path";
+import { useInferenceSSE } from "../../hooks/useInferenceSSE";
+import { basename, join } from "../../lib/path";
+import { buildRunDisplays } from "../../lib/runLabel";
+import type { CheckpointEntry, RunInfo } from "../../lib/api-types";
 
 // ── Cross-hatch background ─────────────────────────────────────────────────
 
@@ -27,7 +26,7 @@ const CROSSHATCH_BG: React.CSSProperties = {
   backgroundColor: "var(--bg1)",
 };
 
-// ── §14.2 / §14.3 Image drop zone ─────────────────────────────────────────
+// ── Drop zone ─────────────────────────────────────────────────────────────
 
 interface DropZoneProps {
   label: string;
@@ -36,17 +35,11 @@ interface DropZoneProps {
   onSelect: (path: string) => void;
   onClear?: () => void;
   browseTitle?: string;
+  fileFilters?: { name: string; extensions: string[] }[];
 }
 
-function DropZone({ label, path, accent = "var(--border)", onSelect, onClear, browseTitle }: DropZoneProps) {
+function DropZone({ label, path, accent = "var(--border)", onSelect, onClear, browseTitle, fileFilters }: DropZoneProps) {
   const [dragOver, setDragOver] = useState(false);
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setDragOver(true);
-  };
-
-  const handleDragLeave = () => setDragOver(false);
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -59,79 +52,93 @@ function DropZone({ label, path, accent = "var(--border)", onSelect, onClear, br
   };
 
   return (
-    <>
-      <div
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-        style={{
-          border: `1.5px dashed ${accent}`,
-          borderRadius: "var(--radius-sm)",
-          padding: "10px 8px",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          gap: 6,
-          background: dragOver ? "var(--bg2)" : "transparent",
-          transition: "background 0.15s",
-          cursor: "default",
-          minHeight: 56,
-        }}
-      >
-        {path ? (
-          <div
-            style={{
-              fontSize: 10,
-              color: "var(--text)",
-              fontFamily: "var(--font-mono)",
-              textAlign: "center",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              width: "100%",
-            }}
-            title={path}
-          >
-            {basename(path)}
-          </div>
-        ) : (
-          <span style={{ fontSize: 10, color: "var(--dim)" }}>{label}</span>
-        )}
-        <div style={{ display: "flex", gap: 4 }}>
-          <Btn small onClick={async () => {
-            const selected = await open({
-              directory: false,
-              multiple: false,
-              title: browseTitle,
-              defaultPath: path ?? undefined,
-              filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "bmp", "tiff", "tif"] }],
-            });
-            if (selected) onSelect(selected);
-          }}>
-            Browse…
-          </Btn>
-          {onClear && path && (
-            <Btn small onClick={onClear}>
-              Clear
-            </Btn>
-          )}
+    <div
+      onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={handleDrop}
+      style={{
+        border: `1.5px dashed ${dragOver ? accent : accent}`,
+        borderRadius: "var(--radius-sm)",
+        padding: "8px",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 6,
+        background: dragOver ? "var(--bg2)" : "transparent",
+        transition: "background 0.15s",
+        minHeight: 52,
+      }}
+    >
+      {path ? (
+        <div
+          style={{
+            fontSize: 10,
+            color: "var(--text)",
+            fontFamily: "var(--font-mono)",
+            textAlign: "center",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            width: "100%",
+          }}
+          title={path}
+        >
+          {basename(path)}
         </div>
+      ) : (
+        <span style={{ fontSize: 10, color: "var(--dim)" }}>{label}</span>
+      )}
+      <div style={{ display: "flex", gap: 4 }}>
+        <Btn small onClick={async () => {
+          const selected = await open({
+            directory: false,
+            multiple: false,
+            title: browseTitle,
+            defaultPath: path ?? undefined,
+            filters: fileFilters ?? [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "bmp", "tiff", "tif"] }],
+          });
+          if (selected) onSelect(selected);
+        }}>
+          Browse…
+        </Btn>
+        {onClear && path && (
+          <Btn small onClick={onClear}>Clear</Btn>
+        )}
       </div>
-    </>
+    </div>
   );
 }
 
-// ── §14.4 Model / settings options ────────────────────────────────────────
+// ── Small number input ────────────────────────────────────────────────────
 
-const ARCH_OPTIONS = ["rrdb_esrgan", "swinir", "HAT", "EDSR"];
+function NumberInput({ value, onChange, min, max, title }: { value: number; onChange: (v: number) => void; min: number; max: number; title?: string }) {
+  return (
+    <input
+      type="number"
+      min={min}
+      max={max}
+      value={Number.isFinite(value) ? value : ""}
+      title={title}
+      onChange={(e) => {
+        const n = parseInt(e.target.value, 10);
+        onChange(Number.isNaN(n) ? 0 : Math.max(min, Math.min(max, n)));
+      }}
+      style={{
+        background: "var(--bg3)",
+        border: "1px solid var(--border)",
+        borderRadius: "var(--radius-sm)",
+        padding: "5px 8px",
+        fontSize: 12,
+        color: "var(--text)",
+        fontFamily: "var(--font-mono)",
+        width: "100%",
+        outline: "none",
+      }}
+    />
+  );
+}
 
-const SCALE_OPTIONS = [
-  { value: "2", label: "2×" },
-  { value: "4", label: "4×" },
-  { value: "8", label: "8×" },
-];
-
-const FORMAT_OPTIONS = ["png", "jpeg", "webp", "tiff"];
+// ── Model panel (instance+version OR raw checkpoint path) ─────────────────
 
 const TILE_OPTIONS = [
   { value: "0", label: "No tiling" },
@@ -140,61 +147,230 @@ const TILE_OPTIONS = [
   { value: "512", label: "512 px" },
 ];
 
-// ── §14.1 Left settings panel ─────────────────────────────────────────────
+const FORMAT_OPTIONS = ["png", "jpeg", "webp", "tiff"];
 
-function SettingsPanel({ onRun }: { onRun: () => void }) {
+const DEVICE_OPTIONS = ["auto", "cuda", "cpu"];
+
+function ModelPanel() {
   const store = useInferenceStore();
-  const checkpointsByRun = useCheckpointStore((s) => s.checkpointsByRun);
-  const displayedRunId = useUiStore((s) => s.displayedRunId);
-  const project = useProjectStore((s) => s.project);
+  const [mode, setMode] = useState<"instance" | "path">("instance");
+  const [instances, setInstances] = useState<DropdownOption[]>([]);
+  const [instanceMeta, setInstanceMeta] = useState<Record<string, { architecture: string | null; scale: number | null }>>({});
+  const [selInstance, setSelInstance] = useState<string | null>(null);
+  const [runs, setRuns] = useState<RunInfo[]>([]);
+  const [selRunId, setSelRunId] = useState<string | null>(null);
+  const [checkpoints, setCheckpoints] = useState<CheckpointEntry[]>([]);
 
-  const allCheckpoints = Object.values(checkpointsByRun).flat();
-  const checkpointOptions = allCheckpoints.map((c) => ({
-    value: c.path,
-    label: `Ep ${c.epoch} — ${basename(c.filename)}`,
-  }));
-  if (checkpointOptions.length === 0) {
-    checkpointOptions.push({ value: "", label: "No checkpoints available" });
-  }
-
-  // §14.14 [Gap M] — On mount, send checkpoint.list.request for the active run
+  // Fetch model instances on mount.
   useEffect(() => {
-    const runId = displayedRunId;
-    const run = project?.runs.find((r) => r.run_id === runId);
-    if (!run?.paths.checkpoint_dir) return;
-
-    // TODO: replace with api call
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    (async () => {
+      try {
+        const { listInstances } = await import("../../lib/api");
+        const list = await listInstances();
+        setInstances(list.map((i) => ({ value: i.name, label: i.name })));
+        const meta: Record<string, { architecture: string | null; scale: number | null }> = {};
+        for (const i of list) meta[i.name] = { architecture: i.architecture, scale: i.scale };
+        setInstanceMeta(meta);
+      } catch {
+        setInstances([]);
+      }
+    })();
   }, []);
 
-  // §14.4: Auto-select preselected checkpoint path from §13.9b, then clear
+  // §13.9b — a checkpoint preselected from the Checkpoints tab switches us to path mode.
   useEffect(() => {
     const pre = store.preselectedCheckpointPath;
-    if (pre && store.checkpointPath !== pre) {
-      store.setCheckpointPath(pre);
+    if (pre) {
+      setMode("path");
+      store.setModelPath(pre);
       store.setPreselectedCheckpointPath(null);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [store.preselectedCheckpointPath]);
 
-  const outputDirError = store.outputDir ? null : "Select an output directory";
+  const handleModeChange = (m: "instance" | "path") => {
+    setMode(m);
+    if (m === "instance") {
+      store.setModelPath(null);
+    } else {
+      store.setInstance(null);
+      store.setVersion(null);
+    }
+  };
 
+  const loadCheckpoints = async (instance: string, runId: string) => {
+    try {
+      const { listRunCheckpoints } = await import("../../lib/api");
+      const ck = await listRunCheckpoints(instance, runId);
+      setCheckpoints(ck);
+      store.setModelPath(ck.length > 0 ? ck[ck.length - 1].path : null);
+    } catch {
+      setCheckpoints([]);
+      store.setModelPath(null);
+    }
+  };
+
+  const handleInstanceChange = async (name: string) => {
+    setSelInstance(name || null);
+    setSelRunId(null);
+    setRuns([]);
+    setCheckpoints([]);
+    store.setModelPath(null);
+    if (!name) return;
+    try {
+      const { listRuns } = await import("../../lib/api");
+      const models = await listRuns();
+      const model = models.find((x) => x.name === name);
+      const list = model?.runs ?? [];
+      setRuns(list);
+      if (list.length > 0) {
+        const latest = [...list].sort((a, b) =>
+          (b.created_at ?? "").localeCompare(a.created_at ?? ""),
+        )[0];
+        setSelRunId(latest.run_id);
+        await loadCheckpoints(name, latest.run_id);
+      }
+    } catch {
+      setRuns([]);
+    }
+  };
+
+  const handleRunChange = async (runId: string) => {
+    setSelRunId(runId || null);
+    if (!runId || !selInstance) {
+      setCheckpoints([]);
+      store.setModelPath(null);
+      return;
+    }
+    await loadCheckpoints(selInstance, runId);
+  };
+
+  const runDisplays = buildRunDisplays(runs);
+  const runOptions: DropdownOption[] = [...runs]
+    .sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""))
+    .map((r) => {
+      const d = runDisplays.get(r.run_id);
+      return { value: r.run_id, label: d ? `${d.group} · ${d.label}` : r.run_id };
+    });
+
+  const checkpointOptions: DropdownOption[] = checkpoints.map((c) => ({
+    value: c.path,
+    label: `Ep ${c.epoch} — ${c.filename}`,
+  }));
+
+  const meta = selInstance ? instanceMeta[selInstance] : undefined;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {/* Instance / path mode switch */}
+      <div style={{ display: "flex", gap: 4, background: "var(--bg3)", borderRadius: "var(--radius-sm)", padding: 2 }}>
+        {(["instance", "path"] as const).map((m) => (
+          <button
+            key={m}
+            onClick={() => handleModeChange(m)}
+            style={{
+              flex: 1,
+              padding: "4px 8px",
+              fontSize: 10,
+              fontFamily: "var(--font-mono)",
+              background: mode === m ? "var(--green)" : "transparent",
+              color: mode === m ? "#0d0f11" : "var(--muted)",
+              border: "none",
+              borderRadius: "var(--radius-sm)",
+              cursor: "pointer",
+              fontWeight: 600,
+              transition: "var(--transition-fast)",
+            }}
+          >
+            {m === "instance" ? "Instance" : "Checkpoint"}
+          </button>
+        ))}
+      </div>
+
+      {mode === "instance" ? (
+        <>
+          <Field label="Model">
+            <Dropdown
+              value={selInstance ?? ""}
+              options={instances}
+              onChange={handleInstanceChange}
+              placeholder="Select instance…"
+            />
+          </Field>
+          {meta && (
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              {meta.architecture && (
+                <span style={{ fontSize: 9, color: "var(--text)", background: "var(--green-dim)", border: "1px solid var(--green)44", borderRadius: "var(--radius-sm)", padding: "1px 6px", fontFamily: "var(--font-mono)" }}>
+                  {meta.architecture}
+                </span>
+              )}
+              {meta.scale != null && (
+                <span style={{ fontSize: 9, color: "var(--text)", background: "var(--blue-dim)", border: "1px solid var(--blue)44", borderRadius: "var(--radius-sm)", padding: "1px 6px", fontFamily: "var(--font-mono)" }}>
+                  {meta.scale}×
+                </span>
+              )}
+            </div>
+          )}
+          <Field label="Run">
+            <Dropdown
+              value={selRunId ?? ""}
+              options={runOptions}
+              onChange={handleRunChange}
+              placeholder={selInstance ? (runs.length ? "Select run…" : "No runs yet — train first") : "Select a model first"}
+              mono
+            />
+          </Field>
+          <Field label="Checkpoint">
+            <Dropdown
+              value={store.modelPath ?? ""}
+              options={checkpointOptions}
+              onChange={(v) => store.setModelPath(v || null)}
+              placeholder={selRunId ? (checkpointOptions.length ? "Select checkpoint…" : "No checkpoints in this run") : "Select a run first"}
+            />
+          </Field>
+        </>
+      ) : (
+        <>
+          <Field label="or path" hint="ad-hoc .pt / .pth">
+            <PathInput
+              value={store.modelPath ?? ""}
+              onChange={(p) => store.setModelPath(p)}
+              browseTitle="Select model checkpoint"
+              compact
+              fileFilters={[{ name: "PyTorch checkpoints", extensions: ["pt", "pth"] }]}
+            />
+          </Field>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Left settings rail ────────────────────────────────────────────────────
+
+function SettingsRail({ onRun, onCancel }: { onRun: () => void; onCancel: () => void }) {
+  const store = useInferenceStore();
+
+  const outputDirError = store.outputDir ? null : "Select an output directory";
+  const modelReady = !!store.modelPath;
   const canRun =
-    !!store.inputPath && !!store.checkpointPath && !store.isRunning && !outputDirError;
+    !!store.inputPath && modelReady && !outputDirError && store.status !== "running";
 
   return (
     <div
       style={{
-        flex: 1, minWidth: 180, maxWidth: 300,
+        width: 264,
+        flexShrink: 0,
         display: "flex",
         flexDirection: "column",
         gap: 8,
-        padding: "10px 8px",
+        padding: 10,
         borderRight: "1px solid var(--border)",
         overflowY: "auto",
+        background: "var(--bg0)",
       }}
     >
-      {/* §14.2 Input panel */}
+      {/* Input image */}
       <Panel title="Input Image" style={{ flexShrink: 0 }}>
         <DropZone
           label="Drop image here"
@@ -204,8 +380,8 @@ function SettingsPanel({ onRun }: { onRun: () => void }) {
         />
       </Panel>
 
-      {/* §14.3 GT image panel */}
-      <Panel title="Ground Truth (optional)" style={{ flexShrink: 0 }}>
+      {/* Ground truth */}
+      <Panel title="Ground Truth" subtitle="for quality metrics" style={{ flexShrink: 0 }}>
         <DropZone
           label="Drop GT image here"
           path={store.gtPath}
@@ -214,68 +390,14 @@ function SettingsPanel({ onRun }: { onRun: () => void }) {
           onClear={() => store.setGtPath(null)}
           browseTitle="Select Ground Truth Image"
         />
-        {!store.gtPath && (
-          <div style={{ fontSize: 10, color: "var(--dim)", marginTop: 4 }}>
-            Required for quality metrics
-          </div>
-        )}
       </Panel>
 
-      {/* §14.4 Model panel */}
+      {/* Model */}
       <Panel title="Model" style={{ flexShrink: 0 }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <Field label="Checkpoint">
-            <Dropdown
-              value={store.checkpointPath ?? ""}
-              options={checkpointOptions}
-              onChange={store.setCheckpointPath}
-              placeholder="Select checkpoint…"
-            />
-          </Field>
-          <Field label="Architecture">
-            <Dropdown
-              value={store.architecture}
-              options={ARCH_OPTIONS}
-              onChange={store.setArchitecture}
-            />
-          </Field>
-          <Field label="Scale">
-            <Dropdown
-              value={String(store.scaleFactor)}
-              options={SCALE_OPTIONS}
-              onChange={(v) => store.setScaleFactor(Number(v))}
-            />
-          </Field>
-          <Field label="Tile Size">
-            <Dropdown
-              value={String(store.tileSize)}
-              options={TILE_OPTIONS}
-              onChange={(v) => store.setTileSize(Number(v))}
-            />
-          </Field>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-            }}
-          >
-            <span
-              style={{
-                fontSize: 10,
-                color: "var(--muted)",
-                textTransform: "uppercase",
-                letterSpacing: "0.06em",
-              }}
-            >
-              FP16
-            </span>
-            <Toggle on={store.fp16} onChange={() => store.setFp16(!store.fp16)} />
-          </div>
-        </div>
+        <ModelPanel />
       </Panel>
 
-      {/* §14.5 Output panel */}
+      {/* Output */}
       <Panel title="Output" style={{ flexShrink: 0 }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <Field label="Save Directory">
@@ -285,16 +407,8 @@ function SettingsPanel({ onRun }: { onRun: () => void }) {
               browseTitle="Select Output Directory"
               compact
             />
-            {/* §20.11 — Inline validation error; not a toast */}
             {outputDirError && (
-              <div
-                style={{
-                  fontSize: 10,
-                  color: "var(--red)",
-                  marginTop: 3,
-                  fontFamily: "var(--font-sans)",
-                }}
-              >
+              <div style={{ fontSize: 10, color: "var(--red)", marginTop: 3 }}>
                 {outputDirError}
               </div>
             )}
@@ -303,48 +417,60 @@ function SettingsPanel({ onRun }: { onRun: () => void }) {
             <Dropdown
               value={store.outputFormat}
               options={FORMAT_OPTIONS}
-              onChange={(v) =>
-                store.setOutputFormat(v as "png" | "jpeg" | "webp" | "tiff")
-              }
+              onChange={(v) => store.setOutputFormat(v as "png" | "jpeg" | "webp" | "tiff")}
             />
           </Field>
         </div>
       </Panel>
 
-      {/* Run button */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 4 }}>
-        <Btn variant="solid" full disabled={!canRun} onClick={onRun}>
-          {store.isRunning ? "Running…" : "Run Inference"}
-        </Btn>
+      {/* Tiling + device */}
+      <Panel title="Advanced" style={{ flexShrink: 0 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <Field label="Tile Size">
+            <Dropdown
+              value={String(store.tileSize)}
+              options={TILE_OPTIONS}
+              onChange={(v) => store.setTileSize(Number(v))}
+            />
+          </Field>
+          <Field label="Tile Overlap" hint="px">
+            <NumberInput
+              value={store.overlap}
+              min={0}
+              max={store.tileSize > 0 ? store.tileSize - 1 : 512}
+              onChange={store.setOverlap}
+              title="Overlap must be less than tile size"
+            />
+          </Field>
+          <Field label="Device">
+            <Dropdown
+              value={store.device}
+              options={DEVICE_OPTIONS}
+              onChange={(v) => store.setDevice(v as "auto" | "cuda" | "cpu")}
+            />
+          </Field>
+        </div>
+      </Panel>
 
-        {/* §14.11 Tile progress bar */}
-        {store.isRunning && store.tilesTotal > 1 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-            <PBar value={store.tilesDone} max={store.tilesTotal} />
-            <span
-              style={{
-                fontSize: 9,
-                color: "var(--dim)",
-                textAlign: "center",
-                fontFamily: "var(--font-mono)",
-              }}
-            >
-              {store.tilesDone} / {store.tilesTotal} tiles
-            </span>
-          </div>
+      {/* Run / cancel + progress */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 4 }}>
+        {store.status === "running" ? (
+          <Btn variant="solid" color="var(--red)" full onClick={onCancel}>
+            Cancel
+          </Btn>
+        ) : (
+          <Btn variant="solid" full disabled={!canRun} onClick={onRun}>
+            Run Inference
+          </Btn>
         )}
-        {store.isRunning && store.tilesTotal <= 1 && (
+
+        {store.status === "running" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-            <PBar value={0} max={1} />
-            <span
-              style={{
-                fontSize: 9,
-                color: "var(--dim)",
-                textAlign: "center",
-                fontFamily: "var(--font-mono)",
-              }}
-            >
-              Processing…
+            <PBar value={store.tilesDone} max={Math.max(store.tilesTotal, 1)} />
+            <span style={{ fontSize: 9, color: "var(--dim)", textAlign: "center", fontFamily: "var(--font-mono)" }}>
+              {store.tilesTotal > 1
+                ? `${store.tilesDone} / ${store.tilesTotal} tiles`
+                : "Processing…"}
             </span>
           </div>
         )}
@@ -353,46 +479,25 @@ function SettingsPanel({ onRun }: { onRun: () => void }) {
   );
 }
 
-// ── §14.6 / §14.7 Before/After comparison panel ───────────────────────────
+// ── Before/after comparison stage ─────────────────────────────────────────
 
-interface ComparisonPanelProps {
-  splitterPct: number;
-  onSplitterPctChange: (pct: number) => void;
-}
-
-function ComparisonPanel({ splitterPct, onSplitterPctChange }: ComparisonPanelProps) {
+function ComparisonPanel({ splitterPct, onSplitterPctChange }: { splitterPct: number; onSplitterPctChange: (pct: number) => void }) {
   const result = useInferenceStore((s) => s.result);
   const containerRef = useRef<HTMLDivElement>(null);
   const dragging = useRef(false);
 
-  // §14.12 Use convertFileSrc for preview paths
-  const lrSrc =
-    result?.success && result.preview_input_path
-      ? convertFileSrc(result.preview_input_path)
-      : null;
-  const srSrc =
-    result?.success && result.preview_output_path
-      ? convertFileSrc(result.preview_output_path)
-      : null;
+  const lrSrc = result?.success && result.preview_input_path ? convertFileSrc(result.preview_input_path) : null;
+  const srSrc = result?.success && result.preview_output_path ? convertFileSrc(result.preview_output_path) : null;
 
-  const lrLabel = result?.success
-    ? `${result.input_resolution!.width}×${result.input_resolution!.height}`
-    : null;
-  const srLabel = result?.success
-    ? `${result.output_resolution!.width}×${result.output_resolution!.height}`
-    : null;
+  const lrLabel = result?.success && result.input_resolution ? `${result.input_resolution.width}×${result.input_resolution.height}` : null;
+  const srLabel = result?.success && result.output_resolution ? `${result.output_resolution.width}×${result.output_resolution.height}` : null;
 
-  // §14.7 Drag handlers
-  const handleMouseMove = useCallback(
-    (e: MouseEvent) => {
-      if (!dragging.current || !containerRef.current) return;
-      const rect = containerRef.current.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const pct = Math.max(2, Math.min(98, (x / rect.width) * 100));
-      onSplitterPctChange(pct);
-    },
-    [onSplitterPctChange]
-  );
+  const handleMouseMove = useCallback((e: MouseEvent) => {
+    if (!dragging.current || !containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    onSplitterPctChange(Math.max(2, Math.min(98, (x / rect.width) * 100)));
+  }, [onSplitterPctChange]);
 
   const handleMouseUp = useCallback(() => {
     if (!dragging.current) return;
@@ -412,458 +517,264 @@ function ComparisonPanel({ splitterPct, onSplitterPctChange }: ComparisonPanelPr
 
   const startDrag = () => {
     dragging.current = true;
-    document.body.style.cursor = "col-resize";
+    document.body.style.cursor = "ew-resize";
     document.body.style.userSelect = "none";
+  };
+
+  const layerStyle: React.CSSProperties = {
+    position: "absolute",
+    inset: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    pointerEvents: "none",
+    overflow: "hidden",
+  };
+
+  const badgeStyle: React.CSSProperties = {
+    position: "absolute",
+    top: 12,
+    padding: "4px 10px",
+    borderRadius: "var(--radius-md)",
+    fontSize: 11,
+    fontWeight: 700,
+    backdropFilter: "blur(8px)",
+    color: "var(--bg0)",
+    zIndex: 30,
+    pointerEvents: "none",
   };
 
   return (
     <div
       ref={containerRef}
-      style={{ flex: 1, position: "relative", overflow: "hidden", ...CROSSHATCH_BG }}
+      onMouseDown={startDrag}
+      style={{ flex: 1, position: "relative", overflow: "hidden", cursor: "ew-resize", userSelect: "none", ...CROSSHATCH_BG }}
     >
-      {/* Left side — LR image */}
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          right: `${100 - splitterPct}%`,
-          overflow: "hidden",
-        }}
-      >
-        {lrSrc ? (
-          <img
-            src={lrSrc}
-            alt="Input (LR)"
-            style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
-            draggable={false}
-          />
-        ) : (
-          <div style={{ width: "100%", height: "100%", ...CROSSHATCH_BG }} />
-        )}
-        {lrLabel && (
-          <div
-            style={{
-              position: "absolute",
-              bottom: 8,
-              left: 8,
-              background: "rgba(0,0,0,0.7)",
-              color: "var(--text)",
-              fontSize: 10,
-              fontFamily: "var(--font-mono)",
-              padding: "2px 6px",
-              borderRadius: "var(--radius-sm)",
-            }}
-          >
-            LR {lrLabel}
-          </div>
-        )}
-      </div>
-
-      {/* Right side — SR image */}
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          left: `${splitterPct}%`,
-          overflow: "hidden",
-        }}
-      >
+      {/* Base layer — SR */}
+      <div style={{ ...layerStyle }}>
         {srSrc ? (
-          <img
-            src={srSrc}
-            alt="Output (SR)"
-            style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
-            draggable={false}
-          />
+          <img src={srSrc} alt="Output (SR)" style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }} draggable={false} />
         ) : (
           <div style={{ width: "100%", height: "100%", ...CROSSHATCH_BG }} />
         )}
-        {srLabel && (
-          <div
-            style={{
-              position: "absolute",
-              bottom: 8,
-              right: 8,
-              background: "rgba(0,0,0,0.7)",
-              color: "var(--text)",
-              fontSize: 10,
-              fontFamily: "var(--font-mono)",
-              padding: "2px 6px",
-              borderRadius: "var(--radius-sm)",
-            }}
-          >
-            SR {srLabel}
-          </div>
+      </div>
+
+      {/* Top layer — LR (upscaled to match SR scale), clipped at the handle */}
+      <div style={{ ...layerStyle, clipPath: `polygon(0 0, ${splitterPct}% 0, ${splitterPct}% 100%, 0 100%)` }}>
+        {lrSrc ? (
+          <img src={lrSrc} alt="Input (LR)" style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }} draggable={false} />
+        ) : (
+          <div style={{ width: "100%", height: "100%", ...CROSSHATCH_BG }} />
         )}
       </div>
 
-      {/* §14.7 Draggable splitter — 2px green line */}
-      <div
-        style={{
-          position: "absolute",
-          top: 0,
-          bottom: 0,
-          left: `${splitterPct}%`,
-          transform: "translateX(-50%)",
-          width: 2,
-          background: "var(--green)",
-          zIndex: 10,
-          cursor: "col-resize",
-          pointerEvents: "none",
-        }}
-      />
+      {/* Badges */}
+      {lrLabel && (
+        <div style={{ ...badgeStyle, left: 12, background: "color-mix(in srgb, var(--amber) 85%, transparent)" }}>
+          LR {lrLabel}
+        </div>
+      )}
+      {srLabel && (
+        <div style={{ ...badgeStyle, right: 12, background: "color-mix(in srgb, var(--green) 85%, transparent)" }}>
+          SR {srLabel}
+        </div>
+      )}
 
-      {/* §14.7 20px circular handle */}
-      <div
-        style={{
-          position: "absolute",
-          left: `${splitterPct}%`,
-          top: "50%",
-          transform: "translate(-50%, -50%)",
-          width: 20,
-          height: 20,
-          borderRadius: "50%",
-          background: "var(--green)",
-          border: "2px solid var(--bg0)",
-          cursor: "col-resize",
-          zIndex: 11,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          boxShadow: "0 2px 8px rgba(0,0,0,0.5)",
-        }}
-        onMouseDown={startDrag}
-      >
-        <span style={{ fontSize: 7, color: "var(--bg0)", fontWeight: 700 }}>◂▸</span>
+      {/* Handle line + knob */}
+      <div style={{ position: "absolute", top: 0, bottom: 0, left: `${splitterPct}%`, transform: "translateX(-50%)", width: 2, background: "var(--green)", boxShadow: "0 0 10px color-mix(in srgb, var(--green) 60%, transparent)", zIndex: 20, pointerEvents: "none" }} />
+      <div style={{ position: "absolute", left: `${splitterPct}%`, top: "50%", transform: "translate(-50%, -50%)", width: 28, height: 28, borderRadius: "50%", background: "var(--green)", color: "var(--bg0)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.5)", zIndex: 21, pointerEvents: "none" }}>
+        <span style={{ fontSize: 12, fontWeight: 700 }}>◂▸</span>
       </div>
 
-      {/* Invisible hit target over splitter line */}
-      <div
-        style={{
-          position: "absolute",
-          top: 0,
-          bottom: 0,
-          left: `${splitterPct}%`,
-          transform: "translateX(-50%)",
-          width: 16,
-          zIndex: 10,
-          cursor: "col-resize",
-        }}
-        onMouseDown={startDrag}
-      />
-
-      {/* Placeholder when no result */}
+      {/* Placeholder */}
       {!result && (
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            pointerEvents: "none",
-          }}
-        >
-          <span
-            style={{
-              fontSize: 12,
-              color: "var(--dim)",
-              fontFamily: "var(--font-mono)",
-            }}
-          >
+        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+          <span style={{ fontSize: 12, color: "var(--dim)", fontFamily: "var(--font-mono)" }}>
             Run inference to see comparison
           </span>
         </div>
       )}
 
-      {/* §14.7 Range slider for keyboard / accessibility control */}
       <input
         type="range"
         min={2}
         max={98}
         value={splitterPct}
         onChange={(e) => onSplitterPctChange(Number(e.target.value))}
-        style={{
-          position: "absolute",
-          bottom: 6,
-          left: "50%",
-          transform: "translateX(-50%)",
-          width: "clamp(120px, 15vw, 250px)",
-          opacity: 0.5,
-          accentColor: "var(--green)",
-          zIndex: 12,
-        }}
+        style={{ position: "absolute", bottom: 6, left: "50%", transform: "translateX(-50%)", width: "clamp(120px, 15vw, 250px)", opacity: 0.5, accentColor: "var(--green)", zIndex: 30 }}
       />
     </div>
   );
 }
 
-// ── §14.8 Quality metrics panel ────────────────────────────────────────────
+// ── Result footer (metrics + info) ────────────────────────────────────────
 
-interface MetricRowProps {
-  label: string;
-  value: number | null | undefined;
-  color: string;
-  dec?: number;
-}
-
-function MetricRow({ label, value, color, dec = 2 }: MetricRowProps) {
+function MetricRow({ label, value, color, dec = 2 }: { label: string; value: number | null | undefined; color: string; dec?: number }) {
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        padding: "5px 0",
-        borderBottom: "1px solid var(--border)",
-      }}
-    >
-      <span
-        style={{ fontSize: 10, color: "var(--muted)", fontFamily: "var(--font-mono)" }}
-      >
-        {label}
-      </span>
-      <span
-        style={{
-          fontSize: 12,
-          fontFamily: "var(--font-mono)",
-          color: value != null ? color : "var(--dim)",
-          fontWeight: value != null ? 600 : 400,
-        }}
-      >
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid var(--border)" }}>
+      <span style={{ fontSize: 10, color: "var(--muted)", fontFamily: "var(--font-mono)" }}>{label}</span>
+      <span style={{ fontSize: 12, fontFamily: "var(--font-mono)", color: value != null ? color : "var(--dim)", fontWeight: value != null ? 600 : 400 }}>
         {value != null ? value.toFixed(dec) : "—"}
       </span>
     </div>
   );
 }
 
-function MetricsPanel() {
+function InfoRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid var(--border)" }}>
+      <span style={{ fontSize: 10, color: "var(--muted)", fontFamily: "var(--font-mono)" }}>{label}</span>
+      <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text)" }}>{value}</span>
+    </div>
+  );
+}
+
+function ResultFooter() {
   const result = useInferenceStore((s) => s.result);
+  const status = useInferenceStore((s) => s.status);
+  const errorMsg = useInferenceStore((s) => s.errorMsg);
   const gtPath = useInferenceStore((s) => s.gtPath);
-  const metrics = result?.success ? result.metrics : null;
+
+  if (status === "error") {
+    return (
+      <div style={{ flexShrink: 0, borderTop: "1px solid var(--red)66", background: "#1a1111", padding: "10px 16px", display: "flex", alignItems: "center", gap: 10 }}>
+        <span style={{ fontSize: 12, color: "var(--red)" }}>⚠</span>
+        <span style={{ fontSize: 11, color: "var(--muted)", fontFamily: "var(--font-mono)", wordBreak: "break-word", flex: 1 }}>
+          {errorMsg || "Inference failed"}
+        </span>
+        <Btn small color="var(--red)" onClick={() => useInferenceStore.getState().resetRun()}>Dismiss</Btn>
+      </div>
+    );
+  }
+
+  if (status !== "done" || !result?.success) return null;
+
+  const metrics = result.metrics;
+  const outRes = result.output_resolution;
+  const inRes = result.input_resolution;
+
+  let scaleLabel = "—";
+  if (inRes && outRes && inRes.width > 0) {
+    const sx = outRes.width / inRes.width;
+    const sy = outRes.height / inRes.height;
+    if (sx === sy) scaleLabel = `${sx}×`;
+  }
+  const timeMs = result.inference_time_ms;
+  const timeLabel = timeMs != null
+    ? timeMs < 1000 ? `${timeMs.toFixed(0)} ms` : `${(timeMs / 1000).toFixed(2)} s`
+    : "—";
 
   return (
-    <div style={{ display: "flex", flexDirection: "column" }}>
-      <MetricRow label="PSNR" value={metrics?.psnr} color="var(--green)" dec={2} />
-      <MetricRow label="SSIM" value={metrics?.ssim} color="var(--blue)" dec={4} />
-      <MetricRow label="LPIPS" value={metrics?.lpips} color="var(--muted)" dec={4} />
-      <MetricRow label="MS-SSIM" value={metrics?.ms_ssim} color="var(--muted)" dec={4} />
-      {!gtPath && !metrics && (
-        <div
-          style={{ fontSize: 9, color: "var(--dim)", marginTop: 6, textAlign: "center" }}
-        >
-          Add GT image to compute metrics
+    <div style={{ flexShrink: 0, borderTop: "1px solid var(--border)", background: "var(--bg1)", display: "flex", gap: 24, padding: "10px 16px", overflowX: "auto" }}>
+      {/* Metrics */}
+      <div style={{ minWidth: 200 }}>
+        <div style={{ fontSize: 10, fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Quality Metrics</div>
+        <MetricRow label="PSNR" value={metrics?.psnr} color="var(--green)" dec={2} />
+        <MetricRow label="SSIM" value={metrics?.ssim} color="var(--blue)" dec={4} />
+        <MetricRow label="LPIPS" value={metrics?.lpips} color="var(--muted)" dec={4} />
+        <MetricRow label="MS-SSIM" value={metrics?.ms_ssim} color="var(--muted)" dec={4} />
+        {!gtPath && !metrics && (
+          <div style={{ fontSize: 9, color: "var(--dim)", marginTop: 6 }}>Add a GT image to compute metrics</div>
+        )}
+      </div>
+
+      {/* Info */}
+      <div style={{ minWidth: 180 }}>
+        <div style={{ fontSize: 10, fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Image Info</div>
+        <InfoRow label="Input" value={inRes ? `${inRes.width}×${inRes.height}` : "—"} />
+        <InfoRow label="Output" value={outRes ? `${outRes.width}×${outRes.height}` : "—"} />
+        <InfoRow label="Scale" value={scaleLabel} />
+        <InfoRow label="Time" value={timeLabel} />
+      </div>
+
+      {/* Output path */}
+      {result.output && (
+        <div style={{ flex: 1, minWidth: 200, display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ fontSize: 10, fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Output</div>
+          <div style={{ fontSize: 10, color: "var(--text)", fontFamily: "var(--font-mono)", wordBreak: "break-all", lineHeight: 1.5 }}>{result.output}</div>
+          <div>
+            <Btn small onClick={() => { try { invoke("open_in_file_manager", { path: result.output }); } catch { /* browser mode */ } }}>
+              Open in file manager
+            </Btn>
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-// ── §14.9 Image info panel ─────────────────────────────────────────────────
-
-interface InfoRowProps {
-  label: string;
-  value: string;
-}
-
-function InfoRow({ label, value }: InfoRowProps) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        padding: "5px 0",
-        borderBottom: "1px solid var(--border)",
-      }}
-    >
-      <span style={{ fontSize: 10, color: "var(--muted)" }}>{label}</span>
-      <span
-        style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--text)" }}
-      >
-        {value}
-      </span>
-    </div>
-  );
-}
-
-function InfoPanel() {
-  const result = useInferenceStore((s) => s.result);
-  const scaleFactor = useInferenceStore((s) => s.scaleFactor);
-
-  const inRes = result?.success
-    ? `${result.input_resolution!.width}×${result.input_resolution!.height}`
-    : "—";
-  const outRes = result?.success
-    ? `${result.output_resolution!.width}×${result.output_resolution!.height}`
-    : "—";
-  const inferTime = result?.success
-    ? result.inference_time_ms! < 1000
-      ? `${result.inference_time_ms!.toFixed(0)} ms`
-      : `${(result.inference_time_ms! / 1000).toFixed(2)} s`
-    : "—";
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column" }}>
-      <InfoRow label="Input" value={inRes} />
-      <InfoRow label="Output" value={outRes} />
-      <InfoRow label="Scale" value={result?.success ? `${scaleFactor}×` : "—"} />
-      <InfoRow label="Time" value={inferTime} />
-    </div>
-  );
-}
-
-// ── §14.1 Right metrics + info column (180px) ─────────────────────────────
-
-function RightColumn() {
-  return (
-    <div
-      style={{
-        flex: 1, minWidth: 160, maxWidth: 260,
-        display: "flex",
-        flexDirection: "column",
-        gap: 8,
-        padding: "10px 8px",
-        borderLeft: "1px solid var(--border)",
-        overflowY: "auto",
-      }}
-    >
-      <Panel title="Quality Metrics">
-        <MetricsPanel />
-      </Panel>
-      <Panel title="Image Info">
-        <InfoPanel />
-      </Panel>
-    </div>
-  );
-}
-
-// ── §14.13 Error dialog ────────────────────────────────────────────────────
-
-interface ErrorDialogProps {
-  message: string;
-  onClose: () => void;
-}
-
-function ErrorDialog({ message, onClose }: ErrorDialogProps) {
-  return (
-    <div
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.65)",
-        zIndex: 9999,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-    >
-      <div
-        style={{
-          background: "var(--bg1)",
-          border: "1px solid var(--red)",
-          borderRadius: "var(--radius-lg)",
-          width: 400,
-          padding: 24,
-          display: "flex",
-          flexDirection: "column",
-          gap: 16,
-          boxShadow: "0 24px 64px rgba(0,0,0,0.6)",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 16, color: "var(--red)" }}>⚠</span>
-          <span style={{ fontSize: 13, color: "var(--text)", fontWeight: 600 }}>
-            Inference Failed
-          </span>
-        </div>
-        <div
-          style={{
-            fontSize: 12,
-            color: "var(--muted)",
-            fontFamily: "var(--font-mono)",
-            background: "var(--bg2)",
-            padding: "10px 12px",
-            borderRadius: "var(--radius-sm)",
-            wordBreak: "break-word",
-          }}
-        >
-          {message}
-        </div>
-        <div style={{ display: "flex", justifyContent: "flex-end" }}>
-          <Btn variant="solid" color="var(--red)" onClick={onClose}>
-            Dismiss
-          </Btn>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── §14.1 Root screen ──────────────────────────────────────────────────────
+// ── Root screen ───────────────────────────────────────────────────────────
 
 export function ScreenInference() {
   const store = useInferenceStore();
   const [splitterPct, setSplitterPct] = useState(50);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  useInferenceSSE();
 
-  // §14.10 Send inference.run IPC message
+  // Default the save directory to the user's Pictures folder.
+  useEffect(() => {
+    const s = useInferenceStore.getState();
+    if (s.outputDir) return;
+    (async () => {
+      const { defaultOutputDir } = await import("../../lib/api");
+      const dir = await defaultOutputDir();
+      if (dir) s.setOutputDir(dir);
+    })();
+  }, []);
+
   const handleRun = useCallback(async () => {
     const s = useInferenceStore.getState();
-    if (!s.inputPath || !s.checkpointPath) return;
+    if (!s.inputPath || !s.outputDir) return;
+    if (!s.instance && !s.modelPath) return;
 
-    store.setRunning(true);
-    store.setTileProgress(0, 0);
-    store.setResult(null);
+    const stem = basename(s.inputPath).replace(/\.[^.]+$/, "");
+    const output = join(s.outputDir, `${stem}_sr.${s.outputFormat}`);
+
+    store.resetRun();
 
     try {
-      // TODO: replace with api call
-    } catch {
-      store.setRunning(false);
+      const { startInference } = await import("../../lib/api");
+      const res = await startInference({
+        input: s.inputPath,
+        output,
+        gt: s.gtPath ?? undefined,
+        format: s.outputFormat,
+        tile: s.tileSize,
+        overlap: s.overlap,
+        device: s.device,
+        ...(s.instance
+          ? { instance: s.instance, version: s.version ?? undefined }
+          : { model: s.modelPath ?? undefined }),
+      });
+      store.setActiveJobId(res.job_id);
+      store.setStatus("running");
+      store.setTileProgress(0, 0);
+    } catch (err) {
+      store.setErrorMsg(err instanceof Error ? err.message : String(err));
+      store.setStatus("error");
     }
   }, [store]);
 
-  // §14.13 Watch for inference.result and handle error branch
-  const result = useInferenceStore((s) => s.result);
-  useEffect(() => {
-    if (!result) return;
-    store.setRunning(false);
-    // §14.13: Only show error dialog on failure; do NOT render preview images
-    if (!result.success && result.error) {
-      setErrorMsg(result.error);
+  const handleCancel = useCallback(async () => {
+    const s = useInferenceStore.getState();
+    if (s.activeJobId) {
+      try {
+        const { cancelJob } = await import("../../lib/api");
+        await cancelJob(s.activeJobId);
+      } catch {
+        // backend may have already finished
+      }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [result]);
+    s.resetRun();
+  }, []);
 
   return (
-    <div
-      style={{
-        flex: 1,
-        display: "flex",
-        flexDirection: "row",
-        overflow: "hidden",
-        background: "var(--bg0)",
-      }}
-    >
-      {/* §14.1 Left settings (210px) */}
-      <SettingsPanel onRun={handleRun} />
+    <div style={{ flex: 1, display: "flex", flexDirection: "row", overflow: "hidden", background: "var(--bg0)" }}>
+      <SettingsRail onRun={handleRun} onCancel={handleCancel} />
 
-      {/* §14.1 Center comparison (flex-1) */}
-      <ComparisonPanel
-        splitterPct={splitterPct}
-        onSplitterPctChange={setSplitterPct}
-      />
-
-      {/* §14.1 Right metrics + info (180px) */}
-      <RightColumn />
-
-      {/* §14.13 Error dialog — rendered separately; never shown alongside preview images */}
-      {errorMsg && (
-        <ErrorDialog message={errorMsg} onClose={() => setErrorMsg(null)} />
-      )}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
+        <ComparisonPanel splitterPct={splitterPct} onSplitterPctChange={setSplitterPct} />
+        <ResultFooter />
+      </div>
     </div>
   );
 }

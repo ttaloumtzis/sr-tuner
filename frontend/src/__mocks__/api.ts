@@ -26,3 +26,5 @@ export const cancelJob = vi.fn();
 export const getEnv = vi.fn();
 export const exportModel = vi.fn();
 export const validateDataset = vi.fn();
+export const getInstanceVersions = vi.fn();
+export const defaultOutputDir = vi.fn().mockResolvedValue("");

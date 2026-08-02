@@ -23,6 +23,8 @@ async def infer_start(params: InferParams, ws: Workspace = Depends(get_workspace
             "version": params.version,
             "input": params.input,
             "output": params.output,
+            "gt": params.gt,
+            "format": params.format,
             "tile": params.tile,
             "overlap": params.overlap,
             "device": params.device,

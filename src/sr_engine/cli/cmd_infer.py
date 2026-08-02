@@ -70,7 +70,13 @@ def run(
             )
 
         state_dict = torch.load(v_path, weights_only=True, map_location="cpu")
-        loaded_model = build_model(inst_cfg["name"], inst_cfg)
+        arch = inst_cfg.get("architecture") or inst_cfg.get("name")
+        if not arch:
+            raise click.ClickException(
+                f"Instance '{inst}' config.yaml has neither 'architecture' nor "
+                "'name' — cannot reconstruct the model."
+            )
+        loaded_model = build_model(arch, inst_cfg)
         loaded_model.load_state_dict(state_dict)
         loaded_model = loaded_model.to(device).eval()
         model_scale = int(inst_cfg.get("scale", 4))

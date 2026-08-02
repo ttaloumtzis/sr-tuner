@@ -120,7 +120,12 @@ def export_cmd(ctx, model_name: str | None, ckpt: Path | None,
         inst_cfg = yaml.safe_load(
             (model_inst.path / "config.yaml").read_text(encoding="utf-8")
         )
-        model_name = inst_cfg["name"]
+        model_name = inst_cfg.get("architecture") or inst_cfg.get("name")
+        if not model_name:
+            raise click.ClickException(
+                f"Instance '{instance}' config.yaml has neither 'architecture' nor "
+                "'name' — cannot reconstruct the model."
+            )
 
         # Resolve version
         v_path = ws.resolve_version(instance, version)

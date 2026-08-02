@@ -6,6 +6,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import torch
 import structlog
 
 from sr_engine.api.callbacks import SSECallback
@@ -20,7 +21,14 @@ from sr_engine.api.task_manager import (
 )
 from sr_engine.data.dataset_builder import build_from_preprocessed, build_from_video
 from sr_engine.monitoring.hardware import HardwareMonitor
-from sr_engine.engine.inference import infer_image, infer_video, load_model
+from sr_engine.engine.inference import (
+    image_size,
+    infer_image,
+    infer_video,
+    load_model,
+    metrics_suite,
+    write_preview,
+)
 from sr_engine.engine.metrics_stream import MetricsStream
 from sr_engine.engine.trainer import Trainer, TrainingCancelled
 from sr_engine.models.registry import build_model
@@ -364,9 +372,18 @@ def run_inference(
         version = params.get("version")
         input_path = Path(params["input"])
         output_path = Path(params["output"])
-        tile = params.get("tile", 512)
+        gt_path = Path(params["gt"]) if params.get("gt") else None
+        fmt = params.get("format", "png")
+        tile = params.get("tile", 0)
         overlap = params.get("overlap", 64)
-        device = params.get("device", "cuda")
+        device = params.get("device", "auto")
+
+        # Force the output filename extension to match the requested format.
+        if output_path.suffix.lower() != f".{fmt}":
+            output_path = output_path.with_suffix(f".{fmt}")
+
+        if device == "auto":
+            device = "cuda" if torch.cuda.is_available() else "cpu"
 
         loaded_model = None
         model_scale = None
@@ -374,12 +391,17 @@ def run_inference(
         if instance and ws:
             model_inst = ws.get_model_instance(instance)
             inst_cfg = load_config(model_inst.path / "config.yaml")
+            arch = inst_cfg.get("architecture") or inst_cfg.get("name")
+            if not arch:
+                raise ValueError(
+                    f"Instance '{instance}' config.yaml has neither "
+                    "'architecture' nor 'name' — cannot reconstruct the model."
+                )
             v_path = ws.resolve_version(instance, version)
             if not v_path:
                 raise FileNotFoundError(f"No version found for instance '{instance}'")
-            import torch
             state_dict = torch.load(v_path, weights_only=True, map_location="cpu")
-            loaded_model = build_model(inst_cfg["name"], inst_cfg)
+            loaded_model = build_model(arch, inst_cfg)
             loaded_model.load_state_dict(state_dict)
             loaded_model = loaded_model.to(device).eval()
             model_scale = int(inst_cfg.get("scale", 4))
@@ -390,9 +412,11 @@ def run_inference(
 
         sse_reporter = SSEProgressReporter(events, job_id)
 
+        input_res = image_size(input_path)
         suffix = input_path.suffix.lower()
         video_exts = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v", ".ts"}
 
+        t0 = time.time()
         if suffix in video_exts:
             result = infer_video(
                 model_checkpoint=Path(model) if model else None,
@@ -405,6 +429,13 @@ def run_inference(
                 model=loaded_model,
                 scale=model_scale,
             )
+            elapsed_ms = int((time.time() - t0) * 1000)
+            payload = {
+                "success": True,
+                "output": str(result),
+                "input_resolution": {"width": input_res[0], "height": input_res[1]},
+                "inference_time_ms": elapsed_ms,
+            }
         else:
             result = infer_image(
                 model_checkpoint=Path(model) if model else None,
@@ -415,12 +446,37 @@ def run_inference(
                 device=device,
                 model=loaded_model,
                 scale=model_scale,
+                reporter=sse_reporter,
             )
+            elapsed_ms = int((time.time() - t0) * 1000)
+            output_res = image_size(result)
 
-        tasks.complete_job(job_id, {"output": str(result)})
+            # Cached downscaled previews for the frontend comparison slider.
+            preview_dir = result.parent / ".sr-preview"
+            preview_lr = write_preview(input_path, preview_dir / "input_preview.png")
+            preview_sr = write_preview(result, preview_dir / "output_preview.png")
+
+            metrics = None
+            if gt_path is not None and gt_path.exists():
+                metrics = metrics_suite(result, gt_path, device="cpu")
+
+            payload = {
+                "success": True,
+                "output": str(result),
+                "preview_input_path": str(preview_lr),
+                "preview_output_path": str(preview_sr),
+                "input_resolution": {"width": input_res[0], "height": input_res[1]},
+                "output_resolution": {"width": output_res[0], "height": output_res[1]},
+                "inference_time_ms": elapsed_ms,
+                "metrics": metrics,
+            }
+
+        events.publish(job_id, {"type": "done", "elapsed_seconds": time.time() - t0, **payload})
+        tasks.complete_job(job_id, payload)
 
     except Exception as e:
         log.exception("Inference job %s failed", job_id)
+        events.publish(job_id, {"type": "error", "code": type(e).__name__, "message": str(e)})
         tasks.fail_job(job_id, str(e))
     finally:
         events.publish(job_id, None)

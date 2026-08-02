@@ -116,6 +116,8 @@ export interface InferParams {
   version?: string;
   input: string;
   output: string;
+  gt?: string;
+  format?: "png" | "jpeg" | "webp" | "tiff";
   tile?: number;
   overlap?: number;
   device?: string;
@@ -279,6 +281,7 @@ export type SSEEvent =
 export interface InferenceResult {
   success: boolean;
   error?: string;
+  output?: string;
   preview_input_path?: string;
   preview_output_path?: string;
   input_resolution?: { width: number; height: number };

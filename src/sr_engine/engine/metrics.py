@@ -69,9 +69,84 @@ def ssim(
         img1 = img1.unsqueeze(0)
         img2 = img2.unsqueeze(0)
 
+    c1 = (0.01 * max_val) ** 2
+    c2 = (0.03 * max_val) ** 2
+    return _ssim_map(img1, img2, window_size, c1, c2).mean()
+
+
+def ms_ssim(
+    img1: torch.Tensor,
+    img2: torch.Tensor,
+    max_val: float = 1.0,
+    window_size: int = 11,
+    levels: int = 5,
+    weights: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Compute Multi-Scale Structural Similarity (Wang et al. 2003).
+
+    Accepts either ``(C, H, W)`` single images or ``(B, C, H, W)`` batches.
+    Both images must be at least ``2 ** (levels - 1) * window_size`` on each
+    spatial dimension; smaller inputs are handled by capping ``levels``.
+
+    Returns the MS-SSIM value (a 0-dim tensor, in ``[0, 1]``).
+    """
+    if img1.shape != img2.shape:
+        raise ValueError(f"Shape mismatch: {img1.shape} vs {img2.shape}")
+
+    if img1.dim() == 3:
+        img1 = img1.unsqueeze(0)
+        img2 = img2.unsqueeze(0)
+
+    if weights is None:
+        weights = torch.tensor([0.0448, 0.2856, 0.3001, 0.2363, 0.1333],
+                               device=img1.device, dtype=img1.dtype)
+
+    max_levels = weights.numel()
+    min_size = min(img1.shape[2], img1.shape[3])
+    # Each downsampling halves the size; each SSIM level needs window_size.
+    feasible = (min_size // (2 ** (levels - 1))) >= window_size
+    if not feasible:
+        max_levels = min(max_levels, max(1, (min_size // window_size).bit_length()))
+        weights = weights[:max_levels]
+    weights = weights / weights.sum()
+
+    c1 = (0.01 * max_val) ** 2
+    c2 = (0.03 * max_val) ** 2
+
+    mcs: list[torch.Tensor] = []
+    scores: list[torch.Tensor] = []
+
+    cur1 = img1
+    cur2 = img2
+    for level in range(weights.numel()):
+        scores.append(_ssim_map(cur1, cur2, window_size, c1, c2))
+        if level < weights.numel() - 1:
+            mcs.append(_ssim_map(cur1, cur2, window_size, c1, c2, cs=True))
+            # 2x downsampling with a small low-pass before strided sample.
+            channels = cur1.shape[1]
+            k = torch.ones(channels, 1, 2, 2, device=img1.device, dtype=img1.dtype) / 4.0
+            cur1 = F.conv2d(cur1, k, stride=2, padding=0, groups=channels)
+            cur2 = F.conv2d(cur2, k, stride=2, padding=0, groups=channels)
+
+    # MS-SSIM = [SSIM at coarsest scale] * prod of [CS at finer scales].
+    value = scores[-1]
+    for cs in mcs:
+        value = value * cs
+    return value.mean()
+
+
+def _ssim_map(
+    img1: torch.Tensor,
+    img2: torch.Tensor,
+    window_size: int,
+    c1: float,
+    c2: float,
+    cs: bool = False,
+) -> torch.Tensor:
+    """SSIM map over a batch, optionally returning only the contrast term."""
     channels = img1.shape[1]
     window = _gaussian_window(window_size, sigma=1.5, channels=channels,
-                               device=img1.device, dtype=img1.dtype)
+                              device=img1.device, dtype=img1.dtype)
     pad = window_size // 2
 
     mu1 = F.conv2d(img1, window, padding=pad, groups=channels)
@@ -85,15 +160,13 @@ def ssim(
     sigma2_sq = F.conv2d(img2 * img2, window, padding=pad, groups=channels) - mu2_sq
     sigma12 = F.conv2d(img1 * img2, window, padding=pad, groups=channels) - mu1_mu2
 
-    c1 = (0.01 * max_val) ** 2
-    c2 = (0.03 * max_val) ** 2
-
+    cs_map = (2 * sigma12 + c2) / (sigma1_sq + sigma2_sq + c2)
+    if cs:
+        return cs_map.mean(dim=[1, 2, 3])
     ssim_map = ((2 * mu1_mu2 + c1) * (2 * sigma12 + c2)) / (
         (mu1_sq + mu2_sq + c1) * (sigma1_sq + sigma2_sq + c2)
     )
-
-    # Average per-image first, then across the batch.
-    return ssim_map.mean(dim=[1, 2, 3]).mean()
+    return ssim_map.mean(dim=[1, 2, 3])
 
 
 _lpips_model_cache: dict[tuple[str, str], "torch.nn.Module"] = {}
