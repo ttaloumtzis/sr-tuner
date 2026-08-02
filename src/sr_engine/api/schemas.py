@@ -62,6 +62,13 @@ class DatasetBuildParams(BaseModel):
     degradations: str | None = None
     config_overrides: dict | None = None
 
+class DatasetInspectParams(BaseModel):
+    path: str
+
+class DatasetFinalizeParams(BaseModel):
+    path: str
+    scale: float
+
 class DatasetValidateParams(BaseModel):
     path: str
 
@@ -79,7 +86,7 @@ class DatasetMergeParams(BaseModel):
 
 class DatasetPruneParams(BaseModel):
     path: str
-    black_frames: list[str]
+    files: list[str]
 
 # ── Training ────────────────────────────────────────────────────────────
 
@@ -102,6 +109,8 @@ class TrainParams(BaseModel):
     save_per_epoch: int | None = None
     validation_enabled: bool | None = None
     validation_split: float | None = None
+    validation_split_seed: int | None = None
+    validation_full_image_limit: int | None = None
     validation_dataset: str | None = None
     metrics_frequency: int | None = None
     perceptual_weight: float | None = None
@@ -145,10 +154,15 @@ class TrainParams(BaseModel):
             d["dtype"] = "bf16" if self.fp16 else "float32"
         if self.device and self.device != "auto":
             d["device"] = self.device
-        if any(v is not None for v in (self.validation_enabled, self.validation_split, self.validation_dataset)):
+        if any(v is not None for v in (self.validation_enabled, self.validation_split,
+                                       self.validation_split_seed,
+                                       self.validation_full_image_limit,
+                                       self.validation_dataset)):
             d.setdefault("validation", {})
             for k, v in (("enabled", self.validation_enabled),
                           ("split", self.validation_split),
+                          ("split_seed", self.validation_split_seed),
+                          ("full_image_limit", self.validation_full_image_limit),
                           ("dataset", self.validation_dataset)):
                 if v is not None:
                     d["validation"][k] = v

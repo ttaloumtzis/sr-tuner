@@ -18,8 +18,9 @@ import {
   Loader2,
 } from "lucide-react";
 import "./ScreenBrowseDatasets.css";
-import { listDatasets, getDatasetImageUrl, validateDatasetPath, healthCheck, getDatasetHealth, deleteDataset, pruneBlackFrames } from "../../lib/api";
+import { listDatasets, validateDatasetPath, healthCheck, getDatasetHealth, deleteDataset, pruneDatasetFiles } from "../../lib/api";
 import type { DatasetInfo, HealthReport } from "../../lib/api-types";
+import { getDatasetPairUrls } from "../../lib/scanDatasets";
 import { useToast } from "../../components/shell/ToastProvider";
 import { useDatasetStore } from "../../store/datasetStore";
 import { useDatasetSSE } from "../../hooks/useDatasetSSE";
@@ -45,6 +46,7 @@ export const ScreenBrowseDatasets: React.FC = () => {
   const [isDraggingSlider, setIsDraggingSlider] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(1);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+  const [pairUrls, setPairUrls] = useState<{ hr: string; lr: string }[]>([]);
 
   const sliderContainerRef = useRef<HTMLDivElement>(null);
   const thumbScrollRef = useRef<HTMLDivElement>(null);
@@ -59,6 +61,7 @@ export const ScreenBrowseDatasets: React.FC = () => {
   const [healthReport, setHealthReport] = useState<HealthReport | null>(null);
   const [healthReportLoading, setHealthReportLoading] = useState(false);
   const [selectedBlackFrames, setSelectedBlackFrames] = useState<Set<string>>(new Set());
+  const [selectedUnreadable, setSelectedUnreadable] = useState<Set<string>>(new Set());
 
   const currentDataset = datasets.find((d) => d.name === selectedName) ?? null;
   const pairsCount = currentDataset?.num_pairs ?? 0;
@@ -94,7 +97,8 @@ export const ScreenBrowseDatasets: React.FC = () => {
         toast("info", "Health check started");
       } else {
         setHealthReport(report);
-        toast("success", `Health report loaded — ${report.black_frames.length} black frames`);
+        const n = report.unreadable?.length ?? 0;
+        toast("success", `Health report loaded — ${report.black_frames.length} black frames${n > 0 ? `, ${n} unreadable` : ""}`);
       }
     } catch (err) {
       setJobId(null);
@@ -125,9 +129,9 @@ export const ScreenBrowseDatasets: React.FC = () => {
   const handlePrune = useCallback(async () => {
     if (!currentDataset || selectedBlackFrames.size === 0) return;
     try {
-      const result = await pruneBlackFrames({
+      const result = await pruneDatasetFiles({
         path: currentDataset.path,
-        black_frames: Array.from(selectedBlackFrames),
+        files: Array.from(selectedBlackFrames).map((name) => `HR/${name}`),
       });
       setJobId(result.job_id);
       setJobType("prune");
@@ -138,6 +142,41 @@ export const ScreenBrowseDatasets: React.FC = () => {
       toast("error", `Prune failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }, [currentDataset, selectedBlackFrames, toast]);
+
+  const toggleUnreadable = useCallback((rel: string) => {
+    setSelectedUnreadable((prev) => {
+      const next = new Set(prev);
+      if (next.has(rel)) next.delete(rel);
+      else next.add(rel);
+      return next;
+    });
+  }, []);
+
+  const selectAllUnreadable = useCallback(() => {
+    if (!healthReport) return;
+    setSelectedUnreadable(new Set(healthReport.unreadable ?? []));
+  }, [healthReport]);
+
+  const deselectAllUnreadable = useCallback(() => {
+    setSelectedUnreadable(new Set());
+  }, []);
+
+  const handleRemoveUnreadable = useCallback(async () => {
+    if (!currentDataset || selectedUnreadable.size === 0) return;
+    try {
+      const result = await pruneDatasetFiles({
+        path: currentDataset.path,
+        files: Array.from(selectedUnreadable),
+      });
+      setJobId(result.job_id);
+      setJobType("prune");
+      setJobStatus("running");
+      toast("info", `Removing ${selectedUnreadable.size} corrupt pair(s)...`);
+      setSelectedUnreadable(new Set());
+    } catch (err) {
+      toast("error", `Remove failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }, [currentDataset, selectedUnreadable, toast]);
 
   const handleOpenDirectory = useCallback(async () => {
     if (!currentDataset) return;
@@ -217,6 +256,23 @@ export const ScreenBrowseDatasets: React.FC = () => {
   }, [currentDataset?.path]);
 
   useEffect(() => {
+    if (!currentDataset) {
+      setPairUrls([]);
+      return;
+    }
+    let cancelled = false;
+    setPairUrls([]);
+    getDatasetPairUrls(currentDataset.path, currentDataset.name, currentDataset.num_pairs)
+      .then((urls) => {
+        if (!cancelled) setPairUrls(urls);
+      })
+      .catch(() => {
+        if (!cancelled) setPairUrls([]);
+      });
+    return () => { cancelled = true; };
+  }, [currentDataset?.path, currentDataset?.name, currentDataset?.num_pairs]);
+
+  useEffect(() => {
     if (jobStatus !== "done" || jobType !== "health" || !currentDataset) return;
     getDatasetHealth(currentDataset.path)
       .then((report) => setHealthReport(report))
@@ -228,6 +284,7 @@ export const ScreenBrowseDatasets: React.FC = () => {
       fetchDatasets();
       setHealthReport(null);
       setSelectedBlackFrames(new Set());
+      setSelectedUnreadable(new Set());
     }
   }, [jobStatus, jobType, fetchDatasets]);
 
@@ -249,10 +306,8 @@ export const ScreenBrowseDatasets: React.FC = () => {
     [zoomLevel, panOffset],
   );
 
-  const currentHrUrl =
-    currentDataset ? getDatasetImageUrl(currentDataset.name, "hr", currentPairIndex - 1) : "";
-  const currentLrUrl =
-    currentDataset ? getDatasetImageUrl(currentDataset.name, "lr", currentPairIndex - 1) : "";
+  const currentHrUrl = pairUrls[currentPairIndex - 1]?.hr ?? "";
+  const currentLrUrl = pairUrls[currentPairIndex - 1]?.lr ?? "";
 
   const startThumb = Math.max(1, currentPairIndex - FILMSTRIP_WINDOW);
   const endThumb = Math.min(pairsCount, currentPairIndex + FILMSTRIP_WINDOW);
@@ -421,9 +476,9 @@ export const ScreenBrowseDatasets: React.FC = () => {
     ? <span className="meta-badge health unverified">Health: Running…</span>
     : healthReport === null
       ? <span className="meta-badge health unverified">Health: Unchecked</span>
-      : healthReport.black_frames.length === 0
+      : healthReport.black_frames.length === 0 && (healthReport.unreadable?.length ?? 0) === 0
         ? <span className="meta-badge health healthy">Health: OK</span>
-        : <span className="meta-badge health warning">Health: {healthReport.black_frames.length} issue{healthReport.black_frames.length !== 1 ? "s" : ""}</span>
+        : <span className="meta-badge health warning">Health: {(healthReport.black_frames.length + (healthReport.unreadable?.length ?? 0))} issue{(healthReport.black_frames.length + (healthReport.unreadable?.length ?? 0)) !== 1 ? "s" : ""}</span>
 }
             </div>
           </div>
@@ -624,12 +679,12 @@ export const ScreenBrowseDatasets: React.FC = () => {
               {!healthReportLoading && healthReport === null && (
                 <span className="health-report-status unchecked">No report</span>
               )}
-              {!healthReportLoading && healthReport !== null && healthReport.black_frames.length === 0 && (
+              {!healthReportLoading && healthReport !== null && healthReport.black_frames.length === 0 && (healthReport.unreadable?.length ?? 0) === 0 && (
                 <span className="health-report-status ok">OK</span>
               )}
-              {!healthReportLoading && healthReport !== null && healthReport.black_frames.length > 0 && (
+              {!healthReportLoading && healthReport !== null && (healthReport.black_frames.length > 0 || (healthReport.unreadable?.length ?? 0) > 0) && (
                 <span className="health-report-status issues">
-                  {healthReport.black_frames.length} black frame{healthReport.black_frames.length !== 1 ? "s" : ""}
+                  {(healthReport.black_frames.length + (healthReport.unreadable?.length ?? 0))} issue{(healthReport.black_frames.length + (healthReport.unreadable?.length ?? 0)) !== 1 ? "s" : ""}
                 </span>
               )}
               <button className="health-report-run-btn" onClick={handleHealthReport} disabled={jobStatus === "running"}>
@@ -642,7 +697,43 @@ export const ScreenBrowseDatasets: React.FC = () => {
                   <span>Total images: {healthReport.total_images.toLocaleString()}</span>
                   <span>Threshold: {healthReport.computed_threshold}</span>
                   <span>Black frames: {healthReport.black_frames.length}</span>
+                  {(healthReport.unreadable?.length ?? 0) > 0 && (
+                    <span className="health-report-summary-unreadable">Unreadable: {healthReport.unreadable.length}</span>
+                  )}
                 </div>
+                {(healthReport.unreadable?.length ?? 0) > 0 && (
+                  <div className="health-report-blackframes">
+                    <div className="health-report-blackframes-toolbar">
+                      <span className="health-report-blackframes-label">
+                        {selectedUnreadable.size} of {healthReport.unreadable.length} selected
+                      </span>
+                      <div className="health-report-blackframes-actions">
+                        <button className="btn-text" onClick={selectAllUnreadable}>Select All</button>
+                        <button className="btn-text" onClick={deselectAllUnreadable}>Deselect All</button>
+                        <button
+                          className="btn-danger btn-sm"
+                          onClick={handleRemoveUnreadable}
+                          disabled={selectedUnreadable.size === 0 || jobStatus === "running"}
+                          title="Deletes the HR and LR files of each selected pair and removes them from the manifest"
+                        >
+                          <Trash2 size={12} /> Remove Selected ({selectedUnreadable.size})
+                        </button>
+                      </div>
+                    </div>
+                    <div className="health-report-blackframes-list">
+                      {healthReport.unreadable.map((rel) => (
+                        <label key={rel} className="health-report-blackframe-item">
+                          <input
+                            type="checkbox"
+                            checked={selectedUnreadable.has(rel)}
+                            onChange={() => toggleUnreadable(rel)}
+                          />
+                          <span className="health-report-blackframe-name">{rel}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {healthReport.black_frames.length > 0 && (
                   <div className="health-report-blackframes">
                     <div className="health-report-blackframes-toolbar">
@@ -693,7 +784,7 @@ export const ScreenBrowseDatasets: React.FC = () => {
                   onClick={() => setCurrentPairIndex(idx)}
                 >
                   <img
-                    src={getDatasetImageUrl(currentDataset!.name, "lr", idx - 1)}
+                    src={pairUrls[idx - 1]?.lr ?? ""}
                     alt={`Pair ${idx}`}
                     loading="lazy"
                     onError={(e) => {

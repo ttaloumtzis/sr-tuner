@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from sr_engine.data.image_files import pair_hr_lr
 from sr_engine.utils.logging import get_logger
 from sr_engine.utils.progress import ProgressReporter
 
@@ -93,13 +94,11 @@ def _scan_pairs_from_disk(dataset_dir: Path) -> list[dict[str, str]]:
     pairs: list[dict[str, str]] = []
     if not hr_dir.is_dir() or not lr_dir.is_dir():
         return pairs
-    for hr_path in sorted(hr_dir.glob("*.png")):
-        lr_path = lr_dir / hr_path.name
-        if lr_path.is_file():
-            pairs.append({
-                "hr": str(hr_path.relative_to(dataset_dir)),
-                "lr": str(lr_path.relative_to(dataset_dir)),
-            })
+    for hr_path, lr_path in pair_hr_lr(hr_dir, lr_dir):
+        pairs.append({
+            "hr": str(hr_path.relative_to(dataset_dir)),
+            "lr": str(lr_path.relative_to(dataset_dir)),
+        })
     return pairs
 
 

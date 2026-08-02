@@ -78,6 +78,7 @@ export function MetricCards() {
   const ssimHistory = useTrainingStore((s) => s.ssimHistory);
   const fullPsnrHistory = useTrainingStore((s) => s.fullPsnrHistory);
   const fullSsimHistory = useTrainingStore((s) => s.fullSsimHistory);
+  const fullEpoch = useTrainingStore((s) => s.fullEpoch);
   const arch    = useModelStore((s) => s.architecture);
   const isGan   = arch === GAN_ARCH;
 
@@ -95,8 +96,10 @@ export function MetricCards() {
       <MetricCard label="SSIM" value={fmt(ssim)} accent="var(--cyan)"
         trend={trendOf(ssimHistory)} sparkline={ssimHistory} />
       <MetricCard label="FULL PSNR" value={fmt(fullPsnr, 2)} accent="var(--green)"
+        sub={fullEpoch != null ? `val @ epoch ${fullEpoch}` : undefined}
         trend={trendOf(fullPsnrHistory)} sparkline={fullPsnrHistory} />
       <MetricCard label="FULL SSIM" value={fmt(fullSsim)} accent="var(--teal)"
+        sub={fullEpoch != null ? `val @ epoch ${fullEpoch}` : undefined}
         trend={trendOf(fullSsimHistory)} sparkline={fullSsimHistory} />
       <MetricCard label="GPU" value={fmtPct(gpuUtil)} accent="var(--amber)"
         trend={trendOf(gpuHistory)} sparkline={gpuHistory} />

@@ -8,11 +8,15 @@ export function ProgressRow() {
   const totalBatch = useTrainingStore((s) => s.totalBatch);
   const speed = useTrainingStore((s) => s.speed);
   const validationRunning = useTrainingStore((s) => s.validationRunning);
+  const validationProgress = useTrainingStore((s) => s.validationProgress);
   const totalEpochs = useTrainingStore((s) => s.launchConfig?.totalEpochs ?? 0);
 
   const epochPct = totalBatch > 0 ? (batch / totalBatch) * 100 : 0;
   const overallPct = totalEpochs > 0 ? ((epoch - 1 + epochPct / 100) / totalEpochs) * 100 : 0;
   const etaSec = status === "running" ? computeEtaSec(batch, totalBatch, epoch, totalEpochs, speed) : null;
+  const valPct = validationProgress && validationProgress.total > 0
+    ? (validationProgress.done / validationProgress.total) * 100
+    : null;
 
   if (status === "idle") return null;
 
@@ -29,7 +33,11 @@ export function ProgressRow() {
         <span style={{ color: "var(--muted)" }}>Epoch {epoch} / {totalEpochs}</span>
         <span style={{ color: "var(--border)" }}>·</span>
         <span>
-          {validationRunning ? `validating epoch ${epoch}…` : `batch ${batch} / ${totalBatch}`}
+          {validationRunning
+            ? validationProgress
+              ? `validating epoch ${epoch} · ${validationProgress.done} / ${validationProgress.total} images`
+              : `validating epoch ${epoch}…`
+            : `batch ${batch} / ${totalBatch}`}
         </span>
         <div style={{ flex: 1 }} />
         {speed != null && <span>{speed.toFixed(2)} it/s</span>}
@@ -50,10 +58,17 @@ export function ProgressRow() {
           background: "linear-gradient(90deg, var(--green) 0%, var(--cyan) 100%)",
           borderRadius: 3, transition: "width 0.4s ease",
         }} />
-        {validationRunning && (
+        {validationRunning && !valPct && (
           <div style={{
             position: "absolute", inset: 0, background: "var(--blue)", opacity: 0.35,
             animation: "metrics-scan 1.4s linear infinite",
+          }} />
+        )}
+        {validationRunning && valPct != null && (
+          <div style={{
+            position: "absolute", inset: 0, background: "var(--blue)", opacity: 0.45,
+            width: `${Math.min(100, valPct)}%`,
+            borderRadius: 3, transition: "width 0.25s ease",
           }} />
         )}
       </div>

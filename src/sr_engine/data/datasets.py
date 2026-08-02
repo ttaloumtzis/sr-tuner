@@ -8,6 +8,8 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+from sr_engine.data.image_files import list_images, pair_hr_lr
+
 
 def _load_image_tensor(path: Path) -> torch.Tensor:
     """Load an image from disk as a float32 CHW tensor in [0, 1], RGB order.
@@ -123,10 +125,8 @@ class PairedImageFolderDataset(Dataset):
             )
 
         pairs: list[tuple[Path, Path]] = []
-        for hr_path in sorted(hr_dir.glob("*.png")):
-            lr_path = lr_dir / hr_path.name
-            if lr_path.is_file():
-                pairs.append((hr_path, lr_path))
+        for hr_path, lr_path in pair_hr_lr(hr_dir, lr_dir):
+            pairs.append((hr_path, lr_path))
 
         return pairs
 

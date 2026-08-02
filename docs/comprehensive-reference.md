@@ -1202,9 +1202,9 @@ Orchestrates the complete training lifecycle: dataset loading, model instantiati
 
 - Build model from config via registry
 - Create optimizer (Adam) and learning rate scheduler (cosine with linear warmup)
-- Split dataset into train/validation sets
+- Split dataset into train/validation sets (seeded by `validation.split_seed`, independent of the general `seed`)
 - Run epoch-based training loop with forward/backward/step
-- Run validation at configurable frequency (PSNR, SSIM)
+- Run validation at configurable frequency — patch-based and full-image PSNR/SSIM, each averaged over the whole validation set
 - Save checkpoints at configurable frequency
 - Dispatch events to all attached callbacks
 - Support training resume from checkpoint
@@ -2182,7 +2182,7 @@ Client                              FastAPI Server
 | `postfix` | `desc` or key-value | `SSEProgressReporter` |
 | `phase` | `phase` (training/validation/saving/complete) | `SSECallback` |
 | `step` | `epoch`, `batch`, `total_batches`, `loss_total`, `lr` | `SSECallback` |
-| `validate` | `epoch`, `psnr`, `ssim`, `frames` (optional) | `SSECallback` |
+| `validate` | `epoch`, `psnr`, `ssim`, `full_psnr`, `full_ssim`, `frames` (optional) | `SSECallback` |
 | `done` | `elapsed_seconds` | `SSECallback`/worker |
 | `error` | `code`, `message` | Worker |
 | `hardware` | `gpu_util`, `vram_used`, `cpu_percent`, `ram_percent` | `HardwareMonitor` (3s interval) |
@@ -2673,6 +2673,7 @@ checkpoint_dir: "experiments/checkpoints"
 validation:
   enabled: true
   split: 0.1
+  split_seed: 1234  # independent of "seed" — keeps the split stable across train phases
 lr_scheduler: cosine
 warmup_steps: 2000
 min_lr: 1e-7
@@ -2770,6 +2771,7 @@ Any config key can be overridden via CLI flag. The flag name derives from the co
 | `patch_size` | `--patch-size` | `--patch-size 64` |
 | `num_workers` | `--num-workers` | `--num-workers 8` |
 | `validation.split` | `--validation-split` | `--validation-split 0.15` |
+| `validation.split_seed` | `--validation-split-seed` | `--validation-split-seed 7` |
 | `losses.perceptual_weight` | `--perceptual-weight` | `--perceptual-weight 0.05` |
 
 ---

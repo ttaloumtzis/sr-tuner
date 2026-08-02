@@ -1,4 +1,4 @@
-import type { DatasetInfo, HealthReport, JobAccepted, JobStatus, WorkspaceInfo, TrainParams, InferParams, EnvInfo, DatasetBuildParams, DatasetValidateParams, DatasetHealthParams, DatasetMergeParams, ExportParams, ModelInstance, ModelVersion } from "./api-types";
+import type { DatasetInfo, DatasetInspectInfo, HealthReport, JobAccepted, JobStatus, WorkspaceInfo, TrainParams, InferParams, EnvInfo, DatasetBuildParams, DatasetValidateParams, DatasetHealthParams, DatasetMergeParams, ExportParams, ModelInstance, ModelVersion } from "./api-types";
 
 let BASE_URL = "http://localhost:8765";
 
@@ -85,12 +85,15 @@ export const startInference = (params: InferParams) => request<JobAccepted>("POS
 // ── Datasets ────────────────────────────────────────────────────────────
 
 export const buildDataset = (params: DatasetBuildParams) => request<JobAccepted>("POST", "/api/datasets/build", params);
+export const inspectDataset = (params: { path: string }) => request<DatasetInspectInfo>("POST", "/api/datasets/inspect", params);
+export const finalizeDataset = (params: { path: string; scale: number }) =>
+  request<{ path: string; scale: number; num_pairs: number }>("POST", "/api/datasets/finalize", params);
 export const validateDatasetPath = (params: DatasetValidateParams) => request<{ valid: boolean; problems: string[]; num_pairs: number }>("POST", "/api/datasets/validate", params);
 export const startValidateDataset = (params: DatasetValidateParams) => request<JobAccepted>("POST", "/api/datasets/validate-async", params);
 export const healthCheck = (params: DatasetHealthParams) => request<JobAccepted>("POST", "/api/datasets/health", params);
 export const getDatasetHealth = (path: string) => request<HealthReport | null>("GET", `/api/datasets/health?path=${encodeURIComponent(path)}`);
 export const mergeDatasets = (params: DatasetMergeParams) => request<JobAccepted>("POST", "/api/datasets/merge", params);
-export const pruneBlackFrames = (params: { path: string; black_frames: string[] }) => request<JobAccepted>("POST", "/api/datasets/prune", params);
+export const pruneDatasetFiles = (params: { path: string; files: string[] }) => request<JobAccepted>("POST", "/api/datasets/prune", params);
 export const deleteDataset = (name: string) =>
   request<{ deleted: string }>("DELETE", `/api/datasets/${encodeURIComponent(name)}`);
 

@@ -7,6 +7,7 @@ from typing import Optional
 import cv2
 
 from sr_engine.utils.progress import ProgressReporter
+from sr_engine.data.image_files import list_images
 
 
 @dataclass
@@ -62,13 +63,13 @@ def validate(dataset_dir: Path,
 
     # 2b. Minimal manifest (empty pairs) — validate via directory scan
     if not manifest_pairs:
-        hr_files = sorted(hr_dir.glob("*.png"))
-        lr_files = sorted(lr_dir.glob("*.png"))
+        hr_files = list_images(hr_dir)
+        lr_files = list_images(lr_dir)
 
         if not hr_files:
-            problems.append("HR/ directory contains no PNG images.")
+            problems.append("HR/ directory contains no images.")
         if not lr_files:
-            problems.append("LR/ directory contains no PNG images.")
+            problems.append("LR/ directory contains no images.")
         if hr_files and lr_files and len(hr_files) != len(lr_files):
             problems.append(
                 f"HR/ has {len(hr_files)} file(s) but LR/ has {len(lr_files)}."
@@ -151,8 +152,8 @@ def validate(dataset_dir: Path,
     reporter.finish()
 
     # 4. Check for Orphaned Files (Files on disk that aren't in the manifest)
-    disk_hr_files = {p.name for p in hr_dir.glob("*.png")}
-    disk_lr_files = {p.name for p in lr_dir.glob("*.png")}
+    disk_hr_files = {p.name for p in list_images(hr_dir)}
+    disk_lr_files = {p.name for p in list_images(lr_dir)}
 
     orphaned_hr = disk_hr_files - expected_hr
     orphaned_lr = disk_lr_files - expected_lr

@@ -72,15 +72,19 @@ export function useTrainingSSE() {
             if (phase === "training") {
               useTrainingStore.getState().setStatus("running");
               useTrainingStore.getState().setValidationRunning(false);
+              useTrainingStore.getState().setValidationProgress(null);
               speedWindowRef.current = [];
               smoothedSpeedRef.current = 0;
             } else if (phase === "validating") {
               useTrainingStore.getState().setValidationRunning(true);
+              useTrainingStore.getState().setValidationProgress(null);
             } else if (phase === "saving") {
               useTrainingStore.getState().setValidationRunning(false);
+              useTrainingStore.getState().setValidationProgress(null);
             } else if (phase === "complete" || phase === "cancelled") {
               useTrainingStore.getState().setStatus("done");
               useTrainingStore.getState().setValidationRunning(false);
+              useTrainingStore.getState().setValidationProgress(null);
             }
             break;
           }
@@ -142,7 +146,8 @@ export function useTrainingSSE() {
             const ssim = (event.ssim as number) ?? 0;
             const fullPsnr = (event.full_psnr as number) ?? undefined;
             const fullSsim = (event.full_ssim as number) ?? undefined;
-            useTrainingStore.getState().updateFromValidate(vepoch, psnr, ssim, fullPsnr, fullSsim);
+            const valLoss = (event.val_loss as number) ?? undefined;
+            useTrainingStore.getState().updateFromValidate(vepoch, psnr, ssim, fullPsnr, fullSsim, valLoss);
             const frames = event.frames as Record<string, string> | null | undefined;
             if (frames && frames.lrPath && frames.srPath) {
               useTrainingStore.getState().pushValidationFrames(vepoch, {
@@ -150,8 +155,16 @@ export function useTrainingSSE() {
                 srPath: frames.srPath,
                 gtPath: frames.gtPath ?? null,
                 diffPath: frames.diffPath ?? null,
-              }, psnr, ssim);
+              }, psnr, ssim, fullPsnr, fullSsim);
             }
+            useTrainingStore.getState().setValidationProgress(null);
+            break;
+          }
+          case "validate_progress": {
+            const done = (event.done as number) ?? 0;
+            const total = (event.total as number) ?? 0;
+            useTrainingStore.getState().setValidationRunning(true);
+            useTrainingStore.getState().setValidationProgress({ done, total });
             break;
           }
           case "hardware": {
@@ -172,6 +185,7 @@ export function useTrainingSSE() {
             flushEpoch(acc.sum, acc.count);
             useTrainingStore.getState().setStatus("done");
             useTrainingStore.getState().setValidationRunning(false);
+            useTrainingStore.getState().setValidationProgress(null);
             break;
           }
           case "error": {

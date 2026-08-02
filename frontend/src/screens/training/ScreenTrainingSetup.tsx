@@ -481,6 +481,8 @@ export function ScreenTrainingSetup() {
         save_per_epoch: s.schedule.saveEvery,
         validation_enabled: s.validationEnabled,
         validation_split: s.validationSplit,
+        validation_split_seed: s.validationSplitSeed,
+        validation_full_image_limit: s.validationFullImageLimit,
         validation_dataset: s.selectedValidationDataset ?? undefined,
         metrics_frequency: s.metricsFrequency,
         write_metrics_file: s.writeMetricsFile,
@@ -554,198 +556,214 @@ export function ScreenTrainingSetup() {
     <div className="ts-layout">
       <div className="ts-main">
 
-        {/* Model Instance */}
-        <Panel
-          title="Model Instance"
-          icon={<IconCpu size={13} />}
-          actions={
-            <button
-              onClick={refreshLists}
-              style={{
-                background: "none", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)",
-                color: "var(--muted)", cursor: "pointer", fontSize: 10, padding: "3px 8px",
-              }}
-            >
-              Refresh
-            </button>
-          }
-        >
-          {instancesError ? (
-            <InlineAlert tone="red">
-              Failed to load instances: {instancesError}
-              <div style={{ marginTop: 6 }}>
-                <button
-                  onClick={refreshLists}
-                  style={{
-                    background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)",
-                    color: "var(--text)", cursor: "pointer", fontSize: 10, padding: "3px 10px",
-                  }}
-                >
-                  Retry
-                </button>
-              </div>
-            </InlineAlert>
-          ) : instances.length === 0 ? (
-            <InlineAlert tone="amber">
-              No model instances found. Create one in the Model Config tab first.
-            </InlineAlert>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <Field label="Instance">
-                <Dropdown
-                  value={s.selectedInstance ?? ""}
-                  options={[{ value: "", label: "— Select Instance —" }, ...instances]}
-                  onChange={handleInstanceSelect}
-                />
-              </Field>
-              {s.instanceArchitecture && (
-                <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                  <Tag color="blue">{s.instanceArchitecture}</Tag>
-                  <Tag color="purple">{s.instanceScale ?? "?"}×</Tag>
-                  <Tag color="cyan">{s.instanceVersions.length} version{s.instanceVersions.length === 1 ? "" : "s"}</Tag>
-                </div>
-              )}
-              {s.instanceVersions.length > 0 && (
-                <div style={{
-                  display: "flex", alignItems: "center", gap: 7, padding: "6px 9px",
-                  background: "var(--bg2)",
-                  border: "1px solid var(--border)",
-                  borderLeft: `3px solid ${s.resumeFrom ? "var(--green)" : "var(--border2)"}`,
-                  borderRadius: "var(--radius-sm)",
-                }}>
-                  <IconRewind size={12} color={s.resumeFrom ? "var(--green)" : "var(--muted)"} />
-                  <span style={{ fontSize: 11, color: "var(--muted)", flexShrink: 0 }}>Resume from</span>
-                  <div style={{ flex: "0 1 140px", minWidth: 90 }}>
-                    <Dropdown
-                      value={s.resumeFrom ?? "latest"}
-                      options={versionOptions}
-                      onChange={(v) => s.setResumeFrom(v)}
-                    />
-                  </div>
-                  <button
-                    onClick={() => s.setResumeFrom(null)}
-                    style={{
-                      marginLeft: "auto", background: "none", border: "1px solid var(--border)",
-                      borderRadius: "var(--radius-sm)", color: "var(--muted)", cursor: "pointer",
-                      fontSize: 10, padding: "3px 8px", flexShrink: 0,
-                    }}
-                  >
-                    Start fresh
-                  </button>
-                </div>
-              )}
-              {s.instanceVersions.length === 0 && s.selectedInstance && (
-                <div style={{ fontSize: 10, color: "var(--dim)", padding: "2px 0" }}>
-                  No prior training — fresh start
-                </div>
-              )}
-            </div>
-          )}
-        </Panel>
-
-        {/* Dataset */}
-        <Panel
-          title="Dataset"
-          icon={<IconDatabase size={13} />}
-          actions={
-            s.selectedDatasetPath ? (
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <ValidationDot valid={datasetValid} />
-                <span style={{ fontSize: 10, color: "var(--muted)" }}>
-                  {datasetValid === null ? "Not validated" : datasetValid ? "Valid" : "Invalid"}
-                </span>
-                <Btn small onClick={handleValidate}>Validate</Btn>
-              </div>
-            ) : undefined
-          }
-        >
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {datasetsError ? (
-              <InlineAlert tone="red">
-                Failed to load datasets: {datasetsError}
-                <div style={{ marginTop: 6 }}>
+        {/* Model & Data — unified panel: instance, dataset and run basics */}
+        <Panel title="Model & Data" icon={<><IconCpu size={13} /><IconDatabase size={13} /></>}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div className="ts-group">
+              <GroupLabel>
+                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  Model
                   <button
                     onClick={refreshLists}
                     style={{
-                      background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)",
-                      color: "var(--text)", cursor: "pointer", fontSize: 10, padding: "3px 10px",
+                      marginLeft: "auto",
+                      background: "none", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)",
+                      color: "var(--muted)", cursor: "pointer", fontSize: 10, padding: "3px 8px",
+                      textTransform: "none",
                     }}
                   >
-                    Retry
+                    Refresh
                   </button>
-                </div>
-              </InlineAlert>
-            ) : null}
-            <Field label="Training Data">
-              <Dropdown
-                value={s.selectedDataset ?? ""}
-                options={[{ value: "", label: "— Select Dataset —" }, ...datasets.map((d) => ({ value: d.value, label: d.label }))]}
-                onChange={handleDatasetSelect}
-              />
-            </Field>
-            {selectedDatasetMeta && (
-              <div style={{
-                display: "flex", alignItems: "center", gap: 8, padding: "6px 9px",
-                background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)",
-              }}>
-                <Tag color={scaleMismatch ? "amber" : "green"}>{selectedDatasetMeta.scale}×</Tag>
-                <span style={{ fontSize: 11, color: "var(--muted)" }}>{selectedDatasetMeta.pairs.toLocaleString()} pairs</span>
-                <span style={{
-                  fontSize: 10, color: "var(--dim)", fontFamily: "var(--font-mono)", overflow: "hidden",
-                  textOverflow: "ellipsis", whiteSpace: "nowrap", marginLeft: "auto", minWidth: 0,
-                }} title={selectedDatasetMeta.path}>
-                  {selectedDatasetMeta.path}
                 </span>
-              </div>
-            )}
-            <Field label="Validation Data">
-              <Dropdown
-                value={s.selectedValidationDataset ?? ""}
-                options={valDatasetOptions}
-                onChange={(v) => s.setSelectedValidationDataset(v || null)}
-              />
-            </Field>
-            <div className="ts-grid" style={{ "--ts-grid-min": "140px", "--ts-grid-max": "220px" } as CSSProperties}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, height: 23 }}>
-                <Toggle on={s.validationEnabled} onChange={() => s.setValidationEnabled(!s.validationEnabled)} />
-                <span style={{ fontSize: 11, color: "var(--muted)" }}>Val enabled</span>
-              </div>
-              <Field label="Val split">
-                <NumInput value={s.validationSplit} onChange={s.setValidationSplit}
-                  min={0} max={1} step={0.05}
-                  disabled={s.selectedValidationDataset !== null} />
-              </Field>
-              <Field label="Workers">
-                <NumInput value={s.numWorkers} onChange={s.setNumWorkers} min={0} max={16} />
-              </Field>
+              </GroupLabel>
+              {instancesError ? (
+                <InlineAlert tone="red">
+                  Failed to load instances: {instancesError}
+                  <div style={{ marginTop: 6 }}>
+                    <button
+                      onClick={refreshLists}
+                      style={{
+                        background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)",
+                        color: "var(--text)", cursor: "pointer", fontSize: 10, padding: "3px 10px",
+                      }}
+                    >
+                      Retry
+                    </button>
+                  </div>
+                </InlineAlert>
+              ) : instances.length === 0 ? (
+                <InlineAlert tone="amber">
+                  No model instances found. Create one in the Model Config tab first.
+                </InlineAlert>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <Field label="Instance">
+                    <Dropdown
+                      value={s.selectedInstance ?? ""}
+                      options={[{ value: "", label: "— Select Instance —" }, ...instances]}
+                      onChange={handleInstanceSelect}
+                    />
+                  </Field>
+                  {s.instanceArchitecture && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      <Tag color="blue">{s.instanceArchitecture}</Tag>
+                      <Tag color="purple">{s.instanceScale ?? "?"}×</Tag>
+                      <Tag color="cyan">{s.instanceVersions.length} version{s.instanceVersions.length === 1 ? "" : "s"}</Tag>
+                    </div>
+                  )}
+                  {s.instanceVersions.length > 0 && (
+                    <div style={{
+                      display: "flex", alignItems: "center", gap: 7, padding: "6px 9px",
+                      background: "var(--bg2)",
+                      border: "1px solid var(--border)",
+                      borderLeft: `3px solid ${s.resumeFrom ? "var(--green)" : "var(--border2)"}`,
+                      borderRadius: "var(--radius-sm)",
+                    }}>
+                      <IconRewind size={12} color={s.resumeFrom ? "var(--green)" : "var(--muted)"} />
+                      <span style={{ fontSize: 11, color: "var(--muted)", flexShrink: 0 }}>Resume from</span>
+                      <div style={{ flex: "0 1 140px", minWidth: 90 }}>
+                        <Dropdown
+                          value={s.resumeFrom ?? "latest"}
+                          options={versionOptions}
+                          onChange={(v) => s.setResumeFrom(v)}
+                        />
+                      </div>
+                      <button
+                        onClick={() => s.setResumeFrom(null)}
+                        style={{
+                          marginLeft: "auto", background: "none", border: "1px solid var(--border)",
+                          borderRadius: "var(--radius-sm)", color: "var(--muted)", cursor: "pointer",
+                          fontSize: 10, padding: "3px 8px", flexShrink: 0,
+                        }}
+                      >
+                        Start fresh
+                      </button>
+                    </div>
+                  )}
+                  {s.instanceVersions.length === 0 && s.selectedInstance && (
+                    <div style={{ fontSize: 10, color: "var(--dim)", padding: "2px 0" }}>
+                      No prior training — fresh start
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
-            {s.selectedValidationDataset !== null && (
-              <InlineAlert tone="muted" icon={false}>
-                Split ratio ignored — using separate validation dataset
-              </InlineAlert>
-            )}
-            {scaleMismatch && (
-              <InlineAlert tone="amber">
-                Dataset scale does not match model scale ({s.instanceScale}×)
-              </InlineAlert>
-            )}
+
+            <div className="ts-group">
+              <GroupLabel>
+                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  Data
+                  {s.selectedDatasetPath && (
+                    <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      <ValidationDot valid={datasetValid} />
+                      <span style={{ fontSize: 10, color: "var(--muted)", textTransform: "none" }}>
+                        {datasetValid === null ? "Not validated" : datasetValid ? "Valid" : "Invalid"}
+                      </span>
+                      <Btn small onClick={handleValidate} style={{ textTransform: "none" }}>Validate</Btn>
+                    </span>
+                  )}
+                </span>
+              </GroupLabel>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {datasetsError ? (
+                  <InlineAlert tone="red">
+                    Failed to load datasets: {datasetsError}
+                    <div style={{ marginTop: 6 }}>
+                      <button
+                        onClick={refreshLists}
+                        style={{
+                          background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)",
+                          color: "var(--text)", cursor: "pointer", fontSize: 10, padding: "3px 10px",
+                        }}
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  </InlineAlert>
+                ) : null}
+                <Field label="Training Data">
+                  <Dropdown
+                    value={s.selectedDataset ?? ""}
+                    options={[{ value: "", label: "— Select Dataset —" }, ...datasets.map((d) => ({ value: d.value, label: d.label }))]}
+                    onChange={handleDatasetSelect}
+                  />
+                </Field>
+                {selectedDatasetMeta && (
+                  <div style={{
+                    display: "flex", alignItems: "center", gap: 8, padding: "6px 9px",
+                    background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)",
+                  }}>
+                    <Tag color={scaleMismatch ? "amber" : "green"}>{selectedDatasetMeta.scale}×</Tag>
+                    <span style={{ fontSize: 11, color: "var(--muted)" }}>{selectedDatasetMeta.pairs.toLocaleString()} pairs</span>
+                    <span style={{
+                      fontSize: 10, color: "var(--dim)", fontFamily: "var(--font-mono)", overflow: "hidden",
+                      textOverflow: "ellipsis", whiteSpace: "nowrap", marginLeft: "auto", minWidth: 0,
+                    }} title={selectedDatasetMeta.path}>
+                      {selectedDatasetMeta.path}
+                    </span>
+                  </div>
+                )}
+                <Field label="Validation Data">
+                  <Dropdown
+                    value={s.selectedValidationDataset ?? ""}
+                    options={valDatasetOptions}
+                    onChange={(v) => s.setSelectedValidationDataset(v || null)}
+                  />
+                </Field>
+                <div className="ts-grid" style={{ "--ts-grid-min": "140px", "--ts-grid-max": "220px" } as CSSProperties}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, height: 23 }}>
+                    <Toggle on={s.validationEnabled} onChange={() => s.setValidationEnabled(!s.validationEnabled)} />
+                    <span style={{ fontSize: 11, color: "var(--muted)" }}>Val enabled</span>
+                  </div>
+                  <Field label="Val split">
+                    <NumInput value={s.validationSplit} onChange={s.setValidationSplit}
+                      min={0} max={1} step={0.05}
+                      disabled={s.selectedValidationDataset !== null} />
+                  </Field>
+                  <Field label={<LabelWithHint label="Split seed" hint="Seeds the train/validation split only. Independent of the general seed — keeps the same images in train and validation across train phases." />}>
+                    <NumInput value={s.validationSplitSeed} onChange={s.setValidationSplitSeed}
+                      min={0}
+                      disabled={s.selectedValidationDataset !== null} />
+                  </Field>
+                  <Field label={<LabelWithHint label="Full-image val" hint="Images per epoch for the slow tiled full-image validation pass (0 disables it). Patch-based PSNR/SSIM/loss still cover the whole validation set." />}>
+                    <NumInput value={s.validationFullImageLimit} onChange={s.setValidationFullImageLimit}
+                      min={0} max={64} />
+                  </Field>
+                  <Field label="Workers">
+                    <NumInput value={s.numWorkers} onChange={s.setNumWorkers} min={0} max={16} />
+                  </Field>
+                </div>
+                {s.selectedValidationDataset !== null && (
+                  <InlineAlert tone="muted" icon={false}>
+                    Split ratio ignored — using separate validation dataset
+                  </InlineAlert>
+                )}
+                {scaleMismatch && (
+                  <InlineAlert tone="amber">
+                    Dataset scale does not match model scale ({s.instanceScale}×)
+                  </InlineAlert>
+                )}
+              </div>
+            </div>
+
+            <div className="ts-group">
+              <GroupLabel>Run</GroupLabel>
+              <div className="ts-grid" style={{ "--ts-grid-min": "170px", "--ts-grid-max": "280px" } as CSSProperties}>
+                <Field label="Device">
+                  <Dropdown value={s.device} options={deviceOptions} onChange={s.setDevice} />
+                </Field>
+                <Field label="Precision">
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, height: 23 }}>
+                    <Toggle on={s.fp16} onChange={() => s.setFp16(!s.fp16)} />
+                    <span style={{ fontSize: 11, color: "var(--muted)" }}>BF16 mixed precision</span>
+                  </div>
+                </Field>
+              </div>
+            </div>
           </div>
         </Panel>
 
-        {/* Run Configuration */}
-        <Panel title="Run Configuration" icon={<IconSettings size={13} />}>
-          <div className="ts-grid" style={{ "--ts-grid-min": "170px", "--ts-grid-max": "280px" } as CSSProperties}>
-            <Field label="Device">
-              <Dropdown value={s.device} options={deviceOptions} onChange={s.setDevice} />
-            </Field>
-            <Field label="Precision">
-              <div style={{ display: "flex", alignItems: "center", gap: 8, height: 23 }}>
-                <Toggle on={s.fp16} onChange={() => s.setFp16(!s.fp16)} />
-                <span style={{ fontSize: 11, color: "var(--muted)" }}>BF16 mixed precision</span>
-              </div>
-            </Field>
-          </div>
-        </Panel>
+        {/* Hyperparameters */}
 
         {/* Hyperparameters */}
         <Panel title="Hyperparameters" icon={<IconSliders size={13} />}>

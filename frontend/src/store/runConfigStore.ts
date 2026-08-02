@@ -30,6 +30,8 @@ interface RunConfigState {
   writeMetricsFile: boolean;
   validationEnabled: boolean;
   validationSplit: number;
+  validationSplitSeed: number;
+  validationFullImageLimit: number;
   lossConfig: TrainLossConfig;
 
   selectedInstance: string | null;
@@ -60,6 +62,8 @@ interface RunConfigState {
   setWriteMetricsFile: (v: boolean) => void;
   setValidationEnabled: (v: boolean) => void;
   setValidationSplit: (v: number) => void;
+  setValidationSplitSeed: (v: number) => void;
+  setValidationFullImageLimit: (v: number) => void;
   setLossConfig: (v: TrainLossConfig) => void;
   setLossWeight: (name: string, weight: number) => void;
   addLoss: (type: LossType, name?: string) => void;
@@ -92,6 +96,8 @@ export const useRunConfigStore = create<RunConfigState>((set) => ({
   writeMetricsFile: true,
   validationEnabled: true,
   validationSplit: 0.1,
+  validationSplitSeed: 1234,
+  validationFullImageLimit: 8,
   lossConfig: getDefaultLosses(),
 
   selectedInstance: null,
@@ -122,6 +128,8 @@ export const useRunConfigStore = create<RunConfigState>((set) => ({
   setWriteMetricsFile: (v) => set({ writeMetricsFile: v }),
   setValidationEnabled: (v) => set({ validationEnabled: v }),
   setValidationSplit: (v) => set({ validationSplit: v }),
+  setValidationSplitSeed: (v) => set({ validationSplitSeed: v }),
+  setValidationFullImageLimit: (v) => set({ validationFullImageLimit: v }),
   setLossConfig: (v) => set({ lossConfig: v }),
   setLossWeight: (name, weight) =>
     set((s) => {

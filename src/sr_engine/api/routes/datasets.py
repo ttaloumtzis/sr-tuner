@@ -7,11 +7,48 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
 from sr_engine.api.deps import get_configs, get_workspace
-from sr_engine.api.schemas import DatasetBuildParams, DatasetHealthParams, DatasetMergeParams, DatasetPruneParams, DatasetValidateParams
+from sr_engine.api.schemas import DatasetBuildParams, DatasetFinalizeParams, DatasetHealthParams, DatasetInspectParams, DatasetMergeParams, DatasetPruneParams, DatasetValidateParams
+from sr_engine.data.image_files import list_images
 from sr_engine.utils.config import DefaultConfigs
 from sr_engine.workspace import Workspace
 
 router = APIRouter(prefix="/api/datasets", tags=["datasets"])
+
+
+@router.post("/inspect")
+async def inspect_dataset(params: DatasetInspectParams):
+    """Inspect a pre-extracted HR/LR folder (may live outside the workspace).
+
+    Reports counts, the detected scale from the first readable pair, and
+    warnings — without modifying the source directory.
+    """
+    from sr_engine.data.dataset_builder import inspect_dataset as inspect
+
+    path = Path(params.path).resolve()
+    if not path.is_dir():
+        raise HTTPException(400, f"Not a directory: {params.path}")
+    try:
+        return inspect(path)
+    except Exception as e:
+        raise HTTPException(500, f"Inspection failed: {e}") from e
+
+
+@router.post("/finalize")
+async def finalize_dataset(params: DatasetFinalizeParams, ws: Workspace = Depends(get_workspace)):
+    """Write ``manifest.json`` for a pre-extracted dataset inside the workspace."""
+    path = Path(params.path).resolve()
+    if not str(path).startswith(str(ws.path)):
+        raise HTTPException(403, "Path is outside the workspace")
+    if not path.is_dir():
+        raise HTTPException(400, f"Not a directory: {params.path}")
+    from sr_engine.data.dataset_builder import build_manifest
+
+    try:
+        return build_manifest(path, params.scale)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except Exception as e:
+        raise HTTPException(500, f"Failed to build manifest: {e}") from e
 
 
 @router.post("/build")
@@ -136,7 +173,7 @@ async def prune_dataset(params: DatasetPruneParams, ws: Workspace = Depends(get_
     job_id = tasks.create_job("dataset.prune")
     thread = threading.Thread(
         target=run_dataset_prune,
-        args=(job_id, params.path, params.black_frames, tasks, events),
+        args=(job_id, params.path, params.files, tasks, events),
         daemon=True,
     )
     thread.start()
@@ -190,7 +227,7 @@ async def serve_dataset_image(
         kind_dir = dataset_path / ("HR" if kind == "hr" else "LR")
         if not kind_dir.is_dir():
             raise HTTPException(404, f"No '{kind.upper()}/' directory for dataset")
-        files = sorted(kind_dir.glob("*.png"))
+        files = list_images(kind_dir)
         if index < 0 or index >= len(files):
             raise HTTPException(404, f"Pair index {index} out of range (0-{len(files) - 1})")
         full_path = files[index].resolve()
@@ -228,8 +265,8 @@ async def list_datasets(
         if pairs:
             num_pairs = len(pairs)
         elif (d / "HR").is_dir() and (d / "LR").is_dir():
-            hr_files = list((d / "HR").glob("*.png"))
-            lr_files = list((d / "LR").glob("*.png"))
+            hr_files = list_images(d / "HR")
+            lr_files = list_images(d / "LR")
             num_pairs = min(len(hr_files), len(lr_files))
         else:
             num_pairs = 0

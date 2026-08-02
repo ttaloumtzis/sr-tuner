@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Panel } from "../../components/ui/Panel";
 import { Btn } from "../../components/ui/Btn";
 import { PathInput } from "../../components/ui/PathInput";
@@ -7,6 +7,9 @@ import { useProjectStore } from "../../store/projectStore";
 import { DegradationPanel } from "./DegradationPanel";
 import { validateNamingPattern, previewFilename } from "../../lib/namingPattern";
 import { basename, join, parentFromProjFile } from "../../lib/path";
+import { inspectDataset, finalizeDataset } from "../../lib/api";
+import type { DatasetInspectInfo } from "../../lib/api-types";
+import { useToast } from "../../components/shell/ToastProvider";
 
 
 function TypeCard({ id: _id, label, description, active, onClick }: {
@@ -81,44 +84,73 @@ function DownsampleMethodSelector() {
 function PreExistingMode() {
   const s = useDatasetStore();
   const project = useProjectStore((s) => s.project);
-  const [detectedHr, setDetectedHr] = useState(0);
-  const [detectedLr, setDetectedLr] = useState(0);
+  const { show: toast } = useToast();
+  const [inspectInfo, setInspectInfo] = useState<DatasetInspectInfo | null>(null);
+  const [inspectError, setInspectError] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
+  const inspectSeq = useRef(0);
 
   useEffect(() => {
-    if (!s.rootPath) { setDetectedHr(0); setDetectedLr(0); return; }
-    (async () => {
+    const root = s.rootPath;
+    inspectSeq.current += 1;
+    const seq = inspectSeq.current;
+    if (!root) {
+      setInspectInfo(null);
+      setInspectError(null);
+      return;
+    }
+    setInspectInfo(null);
+    setInspectError(null);
+    const timer = setTimeout(async () => {
       try {
-        const { invoke } = await import("@tauri-apps/api/core");
-        const hrFiles: string[] = await invoke("list_image_files", { path: join(s.rootPath, "HR") });
-        const lrFiles: string[] = await invoke("list_image_files", { path: join(s.rootPath, "LR") });
-        setDetectedHr(hrFiles.length);
-        setDetectedLr(lrFiles.length);
-      } catch { setDetectedHr(0); setDetectedLr(0); }
-    })();
+        const info = await inspectDataset({ path: root });
+        if (inspectSeq.current !== seq) return;
+        setInspectInfo(info);
+      } catch (err) {
+        if (inspectSeq.current !== seq) return;
+        setInspectError(err instanceof Error ? err.message : String(err));
+      }
+    }, 300);
+    return () => clearTimeout(timer);
   }, [s.rootPath]);
+
+  const detectedScale = inspectInfo?.scale_ratio != null ? Math.round(inspectInfo.scale_ratio) : null;
+  const scaleUsable =
+    inspectInfo?.scale_ratio != null && inspectInfo.scale_exact && (detectedScale ?? 0) > 0;
+  const canImport = (inspectInfo?.pair_count ?? 0) > 0 && scaleUsable && !importing;
 
   const handleImport = async () => {
     if (!s.rootPath || !project) return;
     const { invoke } = await import("@tauri-apps/api/core");
     const projectDir = parentFromProjFile(project.filePath);
-    const name = basename(s.rootPath) || "imported";
+    const cleanRoot = s.rootPath.replace(/[/\\]+$/, "");
+    const name = basename(cleanRoot) || "imported";
     const dst = join(projectDir, "datasets", name);
-    await invoke("copy_directory", { src: s.rootPath, dst });
+    setImporting(true);
+    try {
+      if (await invoke<boolean>("path_exists", { path: dst })) {
+        throw new Error(`A dataset named "${name}" already exists in this project`);
+      }
+      await invoke("copy_directory", { src: cleanRoot, dst });
+      let result;
+      try {
+        // canImport guarantees detectedScale is non-null here (scale detected & exact)
+        result = await finalizeDataset({ path: dst, scale: detectedScale! });
+      } catch (err) {
+        await invoke("delete_directory", { path: dst }).catch(() => {});
+        throw err;
+      }
+      toast("success", `Imported "${name}" — ${result.num_pairs.toLocaleString()} pairs at ×${result.scale}`);
+      s.setRootPath("");
+    } catch (err) {
+      toast("error", `Import failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setImporting(false);
+    }
   };
 
-  const handleValidate = async () => {
-    const { validateDatasetPath } = await import("../../lib/api");
-    const res = await validateDatasetPath({ path: s.rootPath });
-    alert(`Valid: ${res.valid}\nProblems: ${res.problems.join("\n")}`);
-  };
-
-  const handleHealth = async () => {
-    s.clearJob();
-    s.setJobType("health");
-    const { healthCheck } = await import("../../lib/api");
-    const res = await healthCheck({ path: s.rootPath });
-    s.setJobId(res.job_id);
-  };
+  const dimsText = (size: { width: number; height: number } | null) =>
+    size ? `${size.width}×${size.height}` : "—";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -128,12 +160,71 @@ function PreExistingMode() {
         <span style={{ fontSize: 10, color: "var(--dim)" }}>Select the root folder containing HR/ and LR/ subdirectories</span>
       </div>
       {s.rootPath && (
-        <div style={{ background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "8px 10px", display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
-          <span style={{ fontSize: 11, color: "var(--muted)" }}>HR: <span style={{ color: "var(--green)", fontFamily: "var(--font-mono)", fontWeight: 600 }}>{detectedHr}</span></span>
-          <span style={{ fontSize: 11, color: "var(--muted)" }}>LR: <span style={{ color: "var(--green)", fontFamily: "var(--font-mono)", fontWeight: 600 }}>{detectedLr}</span></span>
-          <Btn small onClick={handleValidate}>Validate</Btn>
-          <Btn small onClick={handleHealth}>Health Check</Btn>
-          <Btn small variant="solid" onClick={handleImport} disabled={!project}>Import into project</Btn>
+        <div style={{ background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
+          {inspectError && (
+            <div style={{ fontSize: 10, color: "var(--red)", lineHeight: 1.4 }}>Could not inspect folder: {inspectError}</div>
+          )}
+          {inspectInfo === null && !inspectError && (
+            <div style={{ fontSize: 10, color: "var(--muted)" }}>Inspecting folder…</div>
+          )}
+          {inspectInfo && (
+            <>
+              <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+                <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                  HR: <span style={{ color: "var(--green)", fontFamily: "var(--font-mono)", fontWeight: 600 }}>{inspectInfo.hr_count}</span>
+                  {" "}({dimsText(inspectInfo.hr_size)})
+                </span>
+                <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                  LR: <span style={{ color: "var(--green)", fontFamily: "var(--font-mono)", fontWeight: 600 }}>{inspectInfo.lr_count}</span>
+                  {" "}({dimsText(inspectInfo.lr_size)})
+                </span>
+                <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                  Pairs: <span style={{ color: "var(--text)", fontFamily: "var(--font-mono)", fontWeight: 600 }}>{inspectInfo.pair_count}</span>
+                </span>
+                <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                  Scale:
+                  {inspectInfo.scale_ratio != null ? (
+                    <>
+                      <span style={{ color: "var(--green)", fontFamily: "var(--font-mono)", fontWeight: 600 }}> ×{detectedScale}</span>
+                      {" "}
+                      <span style={{ fontSize: 9, color: "var(--dim)" }}>
+                        detected (×{inspectInfo.scale_ratio.toFixed(2)})
+                      </span>
+                    </>
+                  ) : (
+                    <span style={{ fontSize: 9, color: "var(--amber)" }}> unknown</span>
+                  )}
+                </span>
+              </div>
+              {inspectInfo.warnings.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                  {inspectInfo.warnings.map((w, i) => (
+                    <span key={i} style={{ fontSize: 10, color: "var(--amber)", lineHeight: 1.4 }}>⚠ {w}</span>
+                  ))}
+                </div>
+              )}
+              {!scaleUsable && inspectInfo.scale_ratio != null && (
+                <div style={{ fontSize: 10, color: "var(--red)", lineHeight: 1.4 }}>
+                  ⚠ Detected scale ×{inspectInfo.scale_ratio.toFixed(2)} is not a whole number — the HR/LR
+                  dimensions don't match a clean scale factor. The images cannot be rescaled without
+                  destroying data, so import is disabled.
+                </div>
+              )}
+              {!scaleUsable && inspectInfo.scale_ratio == null && inspectInfo.pair_count > 0 && (
+                <div style={{ fontSize: 10, color: "var(--red)", lineHeight: 1.4 }}>
+                  ⚠ Could not determine the scale from the images — import is disabled.
+                </div>
+              )}
+              <div>
+                <Btn small variant="solid" onClick={handleImport} disabled={!project || !canImport}>
+                  {importing ? "Importing…" : "Import into project"}
+                </Btn>
+                {!canImport && !importing && inspectInfo.pair_count === 0 && (
+                  <span style={{ fontSize: 10, color: "var(--red)", marginLeft: 8 }}>No matching HR/LR pairs found</span>
+                )}
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>
@@ -273,6 +364,7 @@ function VideoExtractMode() {
         config_overrides: configOverrides,
       });
       s.setJobId(result.job_id);
+      s.clearVideoFiles();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       s.setJobError(msg);
@@ -349,13 +441,11 @@ function SummaryPanel() {
   const s = useDatasetStore();
   const modeLabel: Record<string, string> = { image_folder: "Pre-extracted", video_extract: "Video Extract", on_the_fly: "On-the-fly" };
 
-  const rows: { label: string; value: string }[] = [
-    { label: "Mode", value: modeLabel[s.mode] || s.mode },
-    { label: "Scale", value: `×${s.scale}` },
-    { label: "Downsample", value: s.kernel },
-  ];
+  const rows: { label: string; value: string }[] = [{ label: "Mode", value: modeLabel[s.mode] || s.mode }];
 
   if (s.mode === "video_extract") {
+    rows.push({ label: "Scale", value: `×${s.scale}` });
+    rows.push({ label: "Downsample", value: s.kernel });
     rows.push({ label: "FPS", value: String(s.frameRate) });
     const activeDegs = [s.degBlur && "blur", s.degNoise && "noise", s.degJpeg && "jpeg", s.degJpeg2000 && "jpeg2000", s.degColorJitter && "color-jitter"].filter(Boolean);
     rows.push({ label: "Degradations", value: activeDegs.length ? activeDegs.join(", ") : "none" });
@@ -384,7 +474,7 @@ export function ScreenDatasetCreate() {
   const s = useDatasetStore();
 
   const typeCards: { id: DatasetMode; label: string; description: string }[] = [
-    { id: "image_folder", label: "Pre-existing", description: "Import existing HR/LR dataset folders. Validate and add to project." },
+    { id: "image_folder", label: "Pre-existing", description: "Import existing HR/LR dataset folders into the project." },
     { id: "video_extract", label: "Video Extract", description: "Extract frames from video files. Full degradation pipeline." },
     { id: "on_the_fly", label: "On-the-fly", description: "Decode video during training. ~90% less disk usage. (Coming soon)" },
   ];

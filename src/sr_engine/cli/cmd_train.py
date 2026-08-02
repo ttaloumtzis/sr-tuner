@@ -41,6 +41,8 @@ def train() -> None:
 @click.option("--save-per-epoch", type=int, default=None, help="Save checkpoint every N epochs.")
 @click.option("--validation-enabled/--no-validation-enabled", default=None, help="Enable/disable validation split.")
 @click.option("--validation-split", type=click.FloatRange(0.0, 1.0), default=None, help="Fraction of data for validation.")
+@click.option("--validation-split-seed", type=int, default=None, help="Seed for the train/validation split (independent of --seed).")
+@click.option("--validation-full-image-limit", type=int, default=None, help="Max images per epoch for the tiled full-image validation pass (0 disables it).")
 @click.option("--machine", is_flag=True, default=False,
               help="Emit metrics as JSON Lines (one JSON object per event) for programmatic consumption.")
 @click.option("--experiment-id", type=str, default=None, help="Experiment identifier (auto-generated if omitted).")
@@ -64,7 +66,8 @@ def train() -> None:
 def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate,
         seed, weight_decay, betas, max_epochs,
         num_workers, patch_size, save_per_epoch,
-        validation_enabled, validation_split, machine, experiment_id, metrics_frequency,
+        validation_enabled, validation_split, validation_split_seed, validation_full_image_limit,
+        machine, experiment_id, metrics_frequency,
         bf16, dump_config, model_config, instance, no_workspace_config,
         losses, perceptual_weight, edge_weight, style_weight, frequency_weight,
         ssim_weight, lpips_weight):
@@ -136,6 +139,10 @@ def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate,
         overrides.setdefault("validation", {})["enabled"] = validation_enabled
     if validation_split is not None:
         overrides.setdefault("validation", {})["split"] = validation_split
+    if validation_split_seed is not None:
+        overrides.setdefault("validation", {})["split_seed"] = validation_split_seed
+    if validation_full_image_limit is not None:
+        overrides.setdefault("validation", {})["full_image_limit"] = validation_full_image_limit
 
     loss_overrides: dict[str, Any] = {}
     if losses:

@@ -36,9 +36,12 @@ export function ScreenMetrics() {
   const totalLossHist   = useTrainingStore((s) => s.totalLossHistory);
   const psnrHistory     = useTrainingStore((s) => s.psnrHistory);
   const ssimHistory     = useTrainingStore((s) => s.ssimHistory);
+  const valLossHistory  = useTrainingStore((s) => s.valLossHistory);
+  const metricEpochs    = useTrainingStore((s) => s.metricEpochs);
 
   const displayedHistory: RunHistory | null = {
     gLossHistory: lossHistory, dLossHistory, totalLossHistory: totalLossHist, psnrHistory, ssimHistory,
+    valLossHistory, metricEpochs,
   };
 
   return (

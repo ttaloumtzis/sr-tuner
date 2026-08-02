@@ -1,13 +1,16 @@
 """Tests for the Trainer class."""
 
+import pickle
+import random
 from pathlib import Path
+from unittest.mock import patch
 
 import cv2
 import numpy as np
 import pytest
 import torch
 
-from sr_engine.engine.trainer import Trainer
+from sr_engine.engine.trainer import Trainer, TrainerCallback, _TransformSubset
 
 
 def _make_image(path: Path, w: int = 64, h: int = 64) -> None:
@@ -18,11 +21,11 @@ def _make_image(path: Path, w: int = 64, h: int = 64) -> None:
 
 
 def _create_dataset_dir(tmp_path: Path, num_pairs: int = 5) -> Path:
-    """Create a temporary HR/LR dataset directory."""
+    """Create a temporary HR/LR dataset directory (4x scale, square images)."""
     d = tmp_path / "dataset"
     for i in range(num_pairs):
-        _make_image(d / "HR" / f"frame_{i:04d}.png", w=256)
-        _make_image(d / "LR" / f"frame_{i:04d}.png", w=64)
+        _make_image(d / "HR" / f"frame_{i:04d}.png", w=256, h=256)
+        _make_image(d / "LR" / f"frame_{i:04d}.png", w=64, h=64)
     return d
 
 
@@ -46,6 +49,43 @@ def train_cfg():
         "losses": {"perceptual_weight": 0.0},
         "validation": {"enabled": False},
     }
+
+
+class TestTrainerWorkerInit:
+    """Tests for the DataLoader ``worker_init_fn``."""
+
+    def test_worker_init_fn_is_picklable(self, model_cfg, train_cfg, tmp_path):
+        """worker_init_fn must survive pickling — spawned DataLoader workers pickle it."""
+        d = _create_dataset_dir(tmp_path, num_pairs=5)
+        trainer = Trainer(
+            model_cfg=model_cfg,
+            train_cfg={**train_cfg, "num_workers": 4, "seed": 42},
+            dataset_dir=d,
+            device="cpu",
+            validation_enabled=False,
+        )
+        restored = pickle.loads(pickle.dumps(trainer._worker_init_fn))
+        assert callable(restored)
+
+    def test_worker_init_fn_seeds_deterministically(self, model_cfg, train_cfg, tmp_path):
+        """Each worker id should get a distinct, seed-derived Python RNG state."""
+        d = _create_dataset_dir(tmp_path, num_pairs=5)
+        trainer = Trainer(
+            model_cfg=model_cfg,
+            train_cfg={**train_cfg, "num_workers": 4, "seed": 7},
+            dataset_dir=d,
+            device="cpu",
+            validation_enabled=False,
+        )
+
+        random.seed(0)
+        trainer._worker_init_fn(0)
+        first = random.random()
+        random.seed(0)
+        trainer._worker_init_fn(0)
+        assert random.random() == first
+        trainer._worker_init_fn(1)
+        assert random.random() != first
 
 
 class TestTrainerInit:
@@ -92,6 +132,261 @@ class TestTrainerInit:
             validation_split=0.0,
         )
         assert trainer.val_dataset is None
+
+
+class TestTrainerSplitSeed:
+    """Tests for the independent train/validation split seed."""
+
+    def _split_indices(self, model_cfg, tmp_path, seed, split_seed):
+        d = _create_dataset_dir(tmp_path, num_pairs=10)
+        cfg = {
+            "max_epochs": 1,
+            "batch_size": 2,
+            "num_workers": 0,
+            "patch_size": 16,
+            "seed": seed,
+            "checkpoint_dir": "checkpoints",
+            "losses": {"perceptual_weight": 0.0},
+            "validation": {"enabled": True, "split": 0.5, "split_seed": split_seed},
+        }
+        trainer = Trainer(
+            model_cfg=model_cfg,
+            train_cfg=cfg,
+            dataset_dir=d,
+            device="cpu",
+            validation_enabled=True,
+            validation_split=0.5,
+        )
+        assert isinstance(trainer.train_dataset, _TransformSubset)
+        assert isinstance(trainer.val_dataset, _TransformSubset)
+        return list(trainer.train_dataset.indices), list(trainer.val_dataset.indices)
+
+    def test_split_stable_across_general_seeds(self, model_cfg, tmp_path):
+        """Changing the general seed must NOT reshuffle the train/validation split."""
+        train_a, val_a = self._split_indices(model_cfg, tmp_path, seed=7, split_seed=1234)
+        train_b, val_b = self._split_indices(model_cfg, tmp_path, seed=8, split_seed=1234)
+        assert train_a == train_b
+        assert val_a == val_b
+
+    def test_split_changes_with_split_seed(self, model_cfg, tmp_path):
+        """Changing the split seed must produce a different train/validation split."""
+        train_a, val_a = self._split_indices(model_cfg, tmp_path, seed=7, split_seed=1234)
+        train_c, val_c = self._split_indices(model_cfg, tmp_path, seed=7, split_seed=999)
+        assert train_a != train_c or val_a != val_c
+
+
+class TestTrainerValidate:
+    """Tests for ``Trainer._validate`` — full-set validation."""
+
+    def test_validate_runs_full_pass_on_all_val_images(self, model_cfg, train_cfg, tmp_path):
+        """Full-image SR should run once per validation image and average the metrics."""
+        d = _create_dataset_dir(tmp_path, num_pairs=8)
+        cfg = {
+            **train_cfg,
+            "validation": {"enabled": True, "split": 0.5, "split_seed": 1234},
+        }
+        trainer = Trainer(
+            model_cfg=model_cfg,
+            train_cfg=cfg,
+            dataset_dir=d,
+            device="cpu",
+            validation_enabled=True,
+            validation_split=0.5,
+        )
+        assert trainer.val_dataset is not None
+        val_count = len(trainer.val_dataset)
+        assert val_count >= 1
+
+        captured: list[torch.Tensor] = []
+
+        def fake_super_resolve(**kwargs):
+            lr_t = kwargs["lr_tensor"]
+            captured.append(lr_t)
+            scale = kwargs["scale"]
+            return torch.rand(3, lr_t.shape[1] * scale, lr_t.shape[2] * scale)
+
+        with patch("sr_engine.engine.trainer._super_resolve_tensor",
+                   side_effect=fake_super_resolve):
+            result = trainer._validate(epoch=1)
+
+        assert len(captured) == val_count
+        assert result["full_psnr"] is not None
+        assert result["full_ssim"] is not None
+
+    def test_validate_saves_frames_only_for_first_image(self, model_cfg, train_cfg, tmp_path):
+        """Display frames should be saved only for the first validation image."""
+        d = _create_dataset_dir(tmp_path, num_pairs=8)
+        cfg = {
+            **train_cfg,
+            "validation": {"enabled": True, "split": 0.5, "split_seed": 1234},
+        }
+        frame_dir = tmp_path / "frames"
+        trainer = Trainer(
+            model_cfg=model_cfg,
+            train_cfg=cfg,
+            dataset_dir=d,
+            device="cpu",
+            validation_enabled=True,
+            validation_split=0.5,
+            validation_frame_dir=frame_dir,
+        )
+        assert trainer.val_dataset is not None
+
+        def fake_super_resolve(**kwargs):
+            lr_t = kwargs["lr_tensor"]
+            scale = kwargs["scale"]
+            return torch.rand(3, lr_t.shape[1] * scale, lr_t.shape[2] * scale)
+
+        with patch("sr_engine.engine.trainer._super_resolve_tensor",
+                   side_effect=fake_super_resolve):
+            result = trainer._validate(epoch=1)
+
+        epoch_dir = frame_dir / "epoch_001"
+        for name in ("lr.png", "sr.png", "gt.png", "diff.png"):
+            assert (epoch_dir / name).exists()
+        assert result["frames"]["lrPath"] == str((epoch_dir / "lr.png").resolve())
+        assert result["full_psnr"] is not None
+
+    def test_validate_first_image_is_deterministic(self, model_cfg, train_cfg, tmp_path):
+        """The displayed first image must be the same across validation runs."""
+        d = _create_dataset_dir(tmp_path, num_pairs=8)
+        cfg = {
+            **train_cfg,
+            "validation": {"enabled": True, "split": 0.5, "split_seed": 1234},
+        }
+        frame_dir = tmp_path / "frames"
+        trainer = Trainer(
+            model_cfg=model_cfg,
+            train_cfg=cfg,
+            dataset_dir=d,
+            device="cpu",
+            validation_enabled=True,
+            validation_split=0.5,
+            validation_frame_dir=frame_dir,
+        )
+
+        def fake_super_resolve(**kwargs):
+            lr_t = kwargs["lr_tensor"]
+            scale = kwargs["scale"]
+            return torch.rand(3, lr_t.shape[1] * scale, lr_t.shape[2] * scale)
+
+        with patch("sr_engine.engine.trainer._super_resolve_tensor",
+                   side_effect=fake_super_resolve):
+            trainer._validate(epoch=1)
+            first_lr = (frame_dir / "epoch_001" / "lr.png").read_bytes()
+            first_gt = (frame_dir / "epoch_001" / "gt.png").read_bytes()
+            trainer._validate(epoch=2)
+            second_lr = (frame_dir / "epoch_002" / "lr.png").read_bytes()
+            second_gt = (frame_dir / "epoch_002" / "gt.png").read_bytes()
+
+        assert first_lr == second_lr
+        assert first_gt == second_gt
+
+    def test_validate_reports_val_loss(self, model_cfg, train_cfg, tmp_path):
+        """Validation should compute and return a composite ``val_loss``."""
+        d = _create_dataset_dir(tmp_path, num_pairs=8)
+        cfg = {
+            **train_cfg,
+            "validation": {"enabled": True, "split": 0.5, "split_seed": 1234},
+        }
+        trainer = Trainer(
+            model_cfg=model_cfg,
+            train_cfg=cfg,
+            dataset_dir=d,
+            device="cpu",
+            validation_enabled=True,
+            validation_split=0.5,
+        )
+
+        def fake_super_resolve(**kwargs):
+            lr_t = kwargs["lr_tensor"]
+            scale = kwargs["scale"]
+            return torch.rand(3, lr_t.shape[1] * scale, lr_t.shape[2] * scale)
+
+        with patch("sr_engine.engine.trainer._super_resolve_tensor",
+                   side_effect=fake_super_resolve):
+            result = trainer._validate(epoch=1)
+
+        assert "val_loss" in result
+        assert result["val_loss"] > 0
+
+    def test_validate_full_image_pass_capped_by_limit(self, model_cfg, train_cfg, tmp_path):
+        """The tiled full-image pass should be capped at ``full_image_limit``."""
+        d = _create_dataset_dir(tmp_path, num_pairs=8)
+        cfg = {
+            **train_cfg,
+            "validation": {"enabled": True, "split": 0.5, "split_seed": 1234, "full_image_limit": 2},
+        }
+        trainer = Trainer(
+            model_cfg=model_cfg,
+            train_cfg=cfg,
+            dataset_dir=d,
+            device="cpu",
+            validation_enabled=True,
+            validation_split=0.5,
+        )
+        assert trainer.val_dataset is not None
+
+        captured: list[torch.Tensor] = []
+
+        def fake_super_resolve(**kwargs):
+            lr_t = kwargs["lr_tensor"]
+            captured.append(lr_t)
+            scale = kwargs["scale"]
+            return torch.rand(3, lr_t.shape[1] * scale, lr_t.shape[2] * scale)
+
+        with patch("sr_engine.engine.trainer._super_resolve_tensor",
+                   side_effect=fake_super_resolve):
+            result = trainer._validate(epoch=1)
+
+        assert len(captured) == 2
+        assert result["full_psnr"] is not None
+
+    def test_validate_emits_progress_events(self, model_cfg, train_cfg, tmp_path):
+        """Validation should emit a progress event after each processed image."""
+        d = _create_dataset_dir(tmp_path, num_pairs=8)
+        cfg = {
+            **train_cfg,
+            "validation": {"enabled": True, "split": 0.5, "split_seed": 1234},
+        }
+        events: list[tuple[int, int, int]] = []
+
+        class Recorder(TrainerCallback):
+            def on_validate_progress(self, epoch: int, done: int, total: int) -> None:
+                events.append((epoch, done, total))
+
+        trainer = Trainer(
+            model_cfg=model_cfg,
+            train_cfg=cfg,
+            dataset_dir=d,
+            device="cpu",
+            validation_enabled=True,
+            validation_split=0.5,
+            callbacks=[Recorder()],
+        )
+        assert trainer.val_dataset is not None
+        val_count = len(trainer.val_dataset)
+
+        def fake_super_resolve(**kwargs):
+            lr_t = kwargs["lr_tensor"]
+            scale = kwargs["scale"]
+            return torch.rand(3, lr_t.shape[1] * scale, lr_t.shape[2] * scale)
+
+        with patch("sr_engine.engine.trainer._super_resolve_tensor",
+                   side_effect=fake_super_resolve):
+            trainer._validate(epoch=1)
+
+        batch_size = int(cfg["batch_size"])
+        import math
+        patch_events = math.ceil(val_count / batch_size)
+        full_events = min(val_count, 8)
+        total = val_count + full_events
+        assert len(events) == patch_events + full_events
+        assert events[0][0] == 1
+        assert events[0][2] == total
+        assert events[-1][1] == total
+        assert all(e[0] == 1 for e in events)
+        assert all(e[2] == total for e in events)
 
 
 class TestTrainRunStep:

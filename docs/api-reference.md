@@ -199,7 +199,7 @@ data: {"type": "done", "elapsed_seconds": 42.5}
 | `postfix` | Any worker | `desc` (string) or key-value pairs |
 | `phase` | Training | `phase` (string: `"training"`, `"validation"`, `"saving"`, `"complete"`) |
 | `step` | Training | `epoch`, `batch`, `total_batches`, `loss_total`, `loss_pixel`, `loss_perceptual`, `lr` |
-| `validate` | Training | `epoch`, `psnr`, `ssim`, `frames` (optional dict of validation images) |
+| `validate` | Training | `epoch`, `psnr`, `ssim`, `full_psnr`, `full_ssim`, `frames` (optional dict of validation images) |
 | `done` | Any worker | `elapsed_seconds` (float), plus job-specific fields |
 | `error` | Any worker | `code` (string), `message` (string) |
 | `hardware` | HardwareMonitor | `gpu_util`, `vram_used`, `vram_total`, `cpu_percent`, `ram_percent`, `temperature` (per 3s interval) |
@@ -475,6 +475,7 @@ Start a training job in the background.
   "save_per_epoch": 5,
   "validation_enabled": true,
   "validation_split": 0.1,
+  "validation_split_seed": 1234,
   "validation_dataset": null,
   "metrics_frequency": 1,
   "perceptual_weight": 0.1,
@@ -504,6 +505,7 @@ Start a training job in the background.
 | `save_per_epoch` | int\|null | No | Config | Save checkpoint every N epochs |
 | `validation_enabled` | bool\|null | No | Config | Enable validation |
 | `validation_split` | float\|null | No | Config | Validation split ratio |
+| `validation_split_seed` | int\|null | No | Config | Seed for the train/validation split (independent of `seed`) |
 | `validation_dataset` | string\|null | No | — | Separate validation dataset name |
 | `metrics_frequency` | int\|null | No | Config | Log metrics every N batches |
 | `perceptual_weight` | float\|null | No | Config | Perceptual loss weight |

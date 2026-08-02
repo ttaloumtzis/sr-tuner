@@ -9,15 +9,19 @@ export function PsnrSsimChart({ history }: { history: RunHistory | null }) {
   const uid = useId();
   const fullPsnrHistory = useTrainingStore((s) => s.fullPsnrHistory);
   const fullSsimHistory = useTrainingStore((s) => s.fullSsimHistory);
+  const metricEpochs = useTrainingStore((s) => s.metricEpochs);
+  const fullEpochs = useTrainingStore((s) => s.fullEpochs);
 
   const fullPsnrLen = history?.psnrHistory?.length ?? 0;
   const windowStart = Math.max(0, fullPsnrLen - CHART_WINDOW);
   const psnrSeries = (history?.psnrHistory ?? []).slice(windowStart);
   const ssimSeries = (history?.ssimHistory ?? []).slice(windowStart);
+  const psnrEpochs = metricEpochs.slice(windowStart);
   // The full-validation histories are recorded on their own cadence, so they
   // are windowed independently rather than sharing the per-batch offset.
   const fullPsnrSeries = fullPsnrHistory.slice(-CHART_WINDOW);
   const fullSsimSeries = fullSsimHistory.slice(-CHART_WINDOW);
+  const fullPsnrEpochs = fullEpochs.slice(-CHART_WINDOW);
 
   const hasFull = fullPsnrSeries.length > 0;
 
@@ -41,7 +45,8 @@ export function PsnrSsimChart({ history }: { history: RunHistory | null }) {
           </div>
           <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
             <SubChart uid={uid} chartKey="psnr" series={psnrSeries} color="var(--green)"
-              fullSeries={fullPsnrSeries} fullColor="var(--teal)" windowStart={windowStart} />
+              seriesEpochs={psnrEpochs}
+              fullSeries={fullPsnrSeries} fullColor="var(--teal)" fullEpochs={fullPsnrEpochs} />
           </div>
         </div>
         <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden" }}>
@@ -50,7 +55,8 @@ export function PsnrSsimChart({ history }: { history: RunHistory | null }) {
           </div>
           <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
             <SubChart uid={uid} chartKey="ssim" series={ssimSeries} color="var(--blue)"
-              fullSeries={fullSsimSeries} fullColor="var(--purple)" windowStart={windowStart} />
+              seriesEpochs={psnrEpochs}
+              fullSeries={fullSsimSeries} fullColor="var(--purple)" fullEpochs={fullPsnrEpochs} />
           </div>
         </div>
       </div>

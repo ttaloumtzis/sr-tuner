@@ -1,5 +1,7 @@
 """Training engine — orchestrates model training, checkpointing, logging."""
 
+import functools
+import random
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -22,7 +24,16 @@ from sr_engine.utils.logging import get_logger
 
 log = get_logger(__name__)
 
-MAX_VALIDATION_FRAMES = 1
+DEFAULT_SPLIT_SEED = 1234
+
+
+def _seed_worker(seed: int, worker_id: int) -> None:
+    """Seed Python's random module for a DataLoader worker.
+
+    Must stay a module-level function (not a closure) so it can be pickled
+    and sent to spawned DataLoader workers.
+    """
+    random.seed(seed * 1000 + worker_id)
 
 
 class TrainingCancelled(Exception):
@@ -78,6 +89,9 @@ class TrainerCallback:
 
     def on_validate(self, epoch: int, frames: dict | None = None, **metrics: Any) -> None:
         """Called after each validation pass with PSNR, SSIM, etc."""
+
+    def on_validate_progress(self, epoch: int, done: int, total: int) -> None:
+        """Called after each image processed during validation."""
 
     def on_done(self, elapsed_seconds: float) -> None:
         """Called once when training finishes."""
@@ -181,6 +195,7 @@ class Trainer:
 
         seed = int(train_cfg.get("seed", 42))
         torch.manual_seed(seed)
+        random.seed(seed)
 
         self.model = build_model(model_cfg["name"], model_cfg).to(self.device)
 
@@ -232,6 +247,8 @@ class Trainer:
         num_workers = int(train_cfg.get("num_workers", 4))
         pin = self.device.type == "cuda"
 
+        self._worker_init_fn = functools.partial(_seed_worker, seed)
+
         full_dataset = PairedImageFolderDataset(dataset_dir, transform=None)
 
         if val_dataset_dir and validation_enabled:
@@ -249,7 +266,9 @@ class Trainer:
         elif validation_enabled and validation_split > 0 and len(full_dataset) > 1:
             val_size = max(1, int(len(full_dataset) * validation_split))
             train_size = len(full_dataset) - val_size
-            generator = torch.Generator().manual_seed(seed)
+            val_cfg = train_cfg.get("validation", {})
+            split_seed = int(val_cfg.get("split_seed", DEFAULT_SPLIT_SEED))
+            generator = torch.Generator().manual_seed(split_seed)
             train_idx, val_idx = random_split(
                 range(len(full_dataset)), [train_size, val_size], generator=generator,
             )
@@ -273,6 +292,7 @@ class Trainer:
         self.train_dataloader = DataLoader(
             self.train_dataset, batch_size=batch_size, shuffle=True,
             num_workers=num_workers, drop_last=True, pin_memory=pin,
+            worker_init_fn=self._worker_init_fn,
         )
 
         if self.val_dataset is not None:
@@ -396,18 +416,80 @@ class Trainer:
         components["lr"] = self.optimizer.param_groups[0]["lr"]
         return components
 
+    def _val_loss_patch(
+        self,
+        lr: torch.Tensor,
+        hr: torch.Tensor,
+        patch_size: int,
+        scale: int,
+        rng: random.Random,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Crop an aligned random patch pair for validation-loss computation.
+
+        Falls back to the whole image when it is smaller than the patch, so
+        the same helper works for both full-image and pre-cropped validation
+        datasets. The crop coordinates are deterministic per epoch.
+
+        Args:
+            lr: Low-resolution image tensor ``(C, H, W)``.
+            hr: High-resolution image tensor ``(C, H*scale, W*scale)``.
+            patch_size: Patch size in LR pixels.
+            scale: Super-resolution scale factor.
+            rng: Seeded ``random.Random`` instance (seed = epoch).
+
+        Returns:
+            Tuple of cropped ``(lr_patch, hr_patch)``.
+        """
+        if lr.dim() == 4:
+            lr, hr = lr.squeeze(0), hr.squeeze(0)
+        _, lr_h, lr_w = lr.shape
+        _, hr_h, hr_w = hr.shape
+        pw = min(patch_size, lr_w, hr_w // scale)
+        ph = min(patch_size, lr_h, hr_h // scale)
+        x = rng.randint(0, lr_w - pw) if lr_w > pw else 0
+        y = rng.randint(0, lr_h - ph) if lr_h > ph else 0
+        return (
+            lr[:, y:y + ph, x:x + pw].contiguous(),
+            hr[:, y * scale:(y + ph) * scale, x * scale:(x + pw) * scale].contiguous(),
+        )
+
     def _validate(self, epoch: int) -> dict[str, Any]:
-        """Run validation: compute average PSNR and SSIM over the validation set.
+        """Run validation over the full validation set.
+
+        Computes patch-based PSNR/SSIM (via the validation dataloader) and
+        full-image PSNR/SSIM (tiled SR of every untransformed validation
+        image), both averaged over the whole set. Display frames are saved
+        only for the first validation image so the same reference is shown
+        every epoch.
+
+        The full-image tiled pass is capped at ``validation.full_image_limit``
+        images (default 8) — the patch-based metrics still cover the whole
+        set, but the slow tiled pass stays bounded. Validation progress is
+        emitted after each processed image via ``validate_progress`` events.
 
         Args:
             epoch: Current epoch number (1-indexed), used for frame directory naming.
 
         Returns:
-            Dict with ``"psnr"``, ``"ssim"``, and optionally ``"frames"`` keys.
+            Dict with ``"psnr"``, ``"ssim"``, ``"full_psnr"``, ``"full_ssim"``,
+            ``"val_loss"``, and optionally ``"frames"`` keys.
         """
+        patch_size = int(self.train_cfg.get("patch_size", 128))
+        scale = int(self.model_cfg.get("scale", 4))
+        full_image_limit = int(self.train_cfg.get("validation", {}).get("full_image_limit", 8))
+        full_count = 0
+        if self.val_dataset is not None and len(self.val_dataset) > 0:
+            full_count = len(self.val_dataset)
+            if full_image_limit > 0:
+                full_count = min(full_count, full_image_limit)
+        total_progress = len(self.val_dataset) + full_count
+        done = 0
+        patch_rng = random.Random(epoch)
+
         self.model.eval()
         total_psnr = 0.0
         total_ssim = 0.0
+        total_val_loss = 0.0
         num = 0
         with torch.no_grad():
             for lr, hr in self.val_dataloader:
@@ -421,53 +503,86 @@ class Trainer:
                 pred_clamped = pred.clamp(0.0, 1.0)
                 total_psnr += psnr(pred_clamped, hr).item()
                 total_ssim += ssim(pred_clamped, hr).item()
+                batch_loss = 0.0
+                for i in range(lr.size(0)):
+                    lr_patch, hr_patch = self._val_loss_patch(lr[i], hr[i], patch_size, scale, patch_rng)
+                    with torch.autocast(
+                        device_type=self.device.type,
+                        dtype=self.amp_dtype,
+                        enabled=self.amp_enabled,
+                    ):
+                        loss, _ = self.loss_fn(
+                        self.model(lr_patch.unsqueeze(0)), hr_patch.unsqueeze(0),
+                    )
+                    batch_loss += loss.item()
+                total_val_loss += batch_loss / lr.size(0)
                 num += 1
-        self.model.train()
+                done += lr.size(0)
+                self._emit("validate_progress", epoch=epoch, done=done, total=total_progress)
         avg_psnr = total_psnr / num if num > 0 else 0.0
         avg_ssim = total_ssim / num if num > 0 else 0.0
+        avg_val_loss = total_val_loss / num if num > 0 else 0.0
 
-        frames: dict[str, str] = {}
+        overlap = max(1, patch_size // 4)
+
         full_psnr: float | None = None
         full_ssim: float | None = None
-        if self.validation_frame_dir is not None and self.val_dataset is not None and len(self.val_dataset) > 0:
-            frame_dir = self.validation_frame_dir / f"epoch_{epoch:03d}"
-            frame_dir.mkdir(parents=True, exist_ok=True)
-            idx = torch.randint(0, len(self.val_dataset), (1,)).item()
-            if isinstance(self.val_dataset, _TransformSubset):
-                lr_t, hr_t = self.val_dataset.dataset[self.val_dataset.indices[idx]]
-            else:
-                lr_t, hr_t = self.val_dataset[idx]
-            patch_size = int(self.train_cfg.get("patch_size", 128))
-            scale = int(self.model_cfg.get("scale", 4))
-            overlap = max(1, patch_size // 4)
-            self.model.eval()
-            full_sr = _super_resolve_tensor(
-                model=self.model,
-                lr_tensor=lr_t,
-                scale=scale,
-                tile_size=patch_size,
-                tile_overlap=overlap,
-                device=str(self.device),
-            )
-            full_sr = full_sr.clamp(0.0, 1.0)
-            hr_t = hr_t.to(full_sr.device)
-            full_psnr = psnr(full_sr, hr_t).item()
-            full_ssim = ssim(full_sr, hr_t).item()
-            vutils.save_image(lr_t, frame_dir / "lr.png")
-            vutils.save_image(hr_t, frame_dir / "gt.png")
-            vutils.save_image(full_sr, frame_dir / "sr.png")
-            diff = (full_sr - hr_t).abs()
-            diff = (diff - diff.min()) / (diff.max() - diff.min() + 1e-8)
-            vutils.save_image(diff, frame_dir / "diff.png")
-            frames = {
-                "lrPath": str((frame_dir / "lr.png").resolve()),
-                "srPath": str((frame_dir / "sr.png").resolve()),
-                "gtPath": str((frame_dir / "gt.png").resolve()),
-                "diffPath": str((frame_dir / "diff.png").resolve()),
-            }
-            self.model.train()
+        frames: dict[str, str] = {}
+        if self.val_dataset is not None and len(self.val_dataset) > 0:
+            frame_dir = None
+            if self.validation_frame_dir is not None:
+                frame_dir = self.validation_frame_dir / f"epoch_{epoch:03d}"
+                frame_dir.mkdir(parents=True, exist_ok=True)
+            total_full_psnr = 0.0
+            total_full_ssim = 0.0
+            with torch.no_grad():
+                for i in range(full_count):
+                    if isinstance(self.val_dataset, _TransformSubset):
+                        lr_t, hr_t = self.val_dataset.dataset[self.val_dataset.indices[i]]
+                    else:
+                        lr_t, hr_t = self.val_dataset[i]
+                    with torch.autocast(
+                        device_type=self.device.type,
+                        dtype=self.amp_dtype,
+                        enabled=self.amp_enabled,
+                    ):
+                        full_sr = _super_resolve_tensor(
+                            model=self.model,
+                            lr_tensor=lr_t,
+                            scale=scale,
+                            tile_size=patch_size,
+                            tile_overlap=overlap,
+                            device=str(self.device),
+                        )
+                    full_sr = full_sr.clamp(0.0, 1.0)
+                    hr_t = hr_t.to(full_sr.device)
+                    total_full_psnr += psnr(full_sr, hr_t).item()
+                    total_full_ssim += ssim(full_sr, hr_t).item()
+                    if frame_dir is not None and i == 0:
+                        vutils.save_image(lr_t, frame_dir / "lr.png")
+                        vutils.save_image(hr_t, frame_dir / "gt.png")
+                        vutils.save_image(full_sr, frame_dir / "sr.png")
+                        diff = (full_sr - hr_t).abs()
+                        diff = (diff - diff.min()) / (diff.max() - diff.min() + 1e-8)
+                        vutils.save_image(diff, frame_dir / "diff.png")
+                        frames = {
+                            "lrPath": str((frame_dir / "lr.png").resolve()),
+                            "srPath": str((frame_dir / "sr.png").resolve()),
+                            "gtPath": str((frame_dir / "gt.png").resolve()),
+                            "diffPath": str((frame_dir / "diff.png").resolve()),
+                        }
+                    done += 1
+                    self._emit("validate_progress", epoch=epoch, done=done, total=total_progress)
+            if full_count > 0:
+                full_psnr = total_full_psnr / full_count
+                full_ssim = total_full_ssim / full_count
 
-        return {"psnr": avg_psnr, "ssim": avg_ssim, "full_psnr": full_psnr, "full_ssim": full_ssim, "frames": frames}
+        self.model.train()
+
+        return {
+            "psnr": avg_psnr, "ssim": avg_ssim, "full_psnr": full_psnr, "full_ssim": full_ssim,
+            "val_loss": avg_val_loss, "frames": frames,
+        }
 
     def train(self) -> None:
         """Run the training loop per epoch."""

@@ -14,6 +14,13 @@ export interface RunHistory {
   totalLossHistory: number[];
   psnrHistory: number[];
   ssimHistory: number[];
+  valLossHistory: number[];
+  metricEpochs: number[];
+}
+
+export interface ValidationProgress {
+  done: number;
+  total: number;
 }
 
 export interface ValidationFrames {
@@ -31,6 +38,8 @@ export interface ValidationHistoryEntry extends ValidationFrames {
   epoch: number;
   psnr: number | null;
   ssim: number | null;
+  fullPsnr: number | null;
+  fullSsim: number | null;
   receivedAt: number;
 }
 
@@ -83,13 +92,18 @@ interface TrainingState {
   totalLossHistory: number[];
   psnrHistory: number[];
   ssimHistory: number[];
+  valLossHistory: number[];
   fullPsnrHistory: number[];
   fullSsimHistory: number[];
+  metricEpochs: number[];
+  fullEpochs: number[];
+  fullEpoch: number | null;
   etaSec: number | null;
   finalEpoch: number | null;
   validationFrames: ValidationFrames | null;
   validationHistory: ValidationHistoryEntry[];
   validationRunning: boolean;
+  validationProgress: ValidationProgress | null;
   errorCode: string | null;
   errorMessage: string | null;
   launchConfig: LaunchConfig | null;
@@ -98,12 +112,13 @@ interface TrainingState {
   setError: (code: string, message: string) => void;
   setActiveRun: (runId: string | null) => void;
   setValidationFrames: (frames: ValidationFrames | null) => void;
-  pushValidationFrames: (epoch: number, frames: ValidationFrames, psnr?: number | null, ssim?: number | null) => void;
+  pushValidationFrames: (epoch: number, frames: ValidationFrames, psnr?: number | null, ssim?: number | null, fullPsnr?: number | null, fullSsim?: number | null) => void;
   setValidationRunning: (v: boolean) => void;
+  setValidationProgress: (p: ValidationProgress | null) => void;
   updateFromStep: (epoch: number, batch: number, totalBatch: number, speed: number) => void;
   setLiveLoss: (avg: number | null) => void;
   pushEpochLoss: (avgLoss: number) => void;
-  updateFromValidate: (epoch: number, psnr: number, ssim: number, fullPsnr?: number, fullSsim?: number) => void;
+  updateFromValidate: (epoch: number, psnr: number, ssim: number, fullPsnr?: number, fullSsim?: number, valLoss?: number) => void;
   updateFromHardware: (data: HardwareData) => void;
   setFinalEpoch: (epoch: number) => void;
   setLaunchConfig: (config: LaunchConfig) => void;
@@ -138,13 +153,18 @@ export const useTrainingStore = create<TrainingState>((set) => ({
   totalLossHistory: [],
   psnrHistory: [],
   ssimHistory: [],
+  valLossHistory: [],
   fullPsnrHistory: [],
   fullSsimHistory: [],
+  metricEpochs: [],
+  fullEpochs: [],
+  fullEpoch: null,
   etaSec: null,
   finalEpoch: null,
   validationFrames: null,
   validationHistory: [],
   validationRunning: false,
+  validationProgress: null,
   errorCode: null,
   errorMessage: null,
   launchConfig: null,
@@ -155,9 +175,9 @@ export const useTrainingStore = create<TrainingState>((set) => ({
   setValidationFrames: (frames) => set({ validationFrames: frames }),
   setLaunchConfig: (config) => set({ launchConfig: config }),
 
-  pushValidationFrames: (epoch, frames, psnr = null, ssim = null) =>
+  pushValidationFrames: (epoch, frames, psnr = null, ssim = null, fullPsnr = null, fullSsim = null) =>
     set((s) => {
-      const entry: ValidationHistoryEntry = { epoch, ...frames, psnr, ssim, receivedAt: Date.now() };
+      const entry: ValidationHistoryEntry = { epoch, ...frames, psnr, ssim, fullPsnr, fullSsim, receivedAt: Date.now() };
       // Each epoch trains into its own validation/epoch_XXX/ subfolder, so a
       // given epoch should only ever appear once — but re-runs of the same
       // epoch (e.g. resumed training) replace the earlier entry in place.
@@ -173,6 +193,8 @@ export const useTrainingStore = create<TrainingState>((set) => ({
 
   setValidationRunning: (v) => set({ validationRunning: v }),
 
+  setValidationProgress: (p) => set({ validationProgress: p }),
+
   updateFromStep: (epoch, batch, totalBatch, speed) =>
     set((s) => ({
       epoch,
@@ -181,6 +203,7 @@ export const useTrainingStore = create<TrainingState>((set) => ({
       speed,
       iter: s.iter + 1,
       validationRunning: false,
+      validationProgress: null,
     })),
 
   setLiveLoss: (avg) => set({ liveLoss: avg }),
@@ -191,16 +214,30 @@ export const useTrainingStore = create<TrainingState>((set) => ({
       lossHistory: [...s.lossHistory, avgLoss].slice(-500),
     })),
 
-  updateFromValidate: (epoch, psnr, ssim, fullPsnr, fullSsim) =>
+  updateFromValidate: (epoch, psnr, ssim, fullPsnr, fullSsim, valLoss) =>
     set((s) => {
       const psnrH = [...s.psnrHistory, psnr].slice(-500);
       const ssimH = [...s.ssimHistory, ssim].slice(-500);
+      const epochsH = [...s.metricEpochs, epoch].slice(-500);
       const fullPsnrH = fullPsnr != null
         ? [...s.fullPsnrHistory, fullPsnr].slice(-500) : s.fullPsnrHistory;
       const fullSsimH = fullSsim != null
         ? [...s.fullSsimHistory, fullSsim].slice(-500) : s.fullSsimHistory;
+      const fullEpochsH = fullPsnr != null
+        ? [...s.fullEpochs, epoch].slice(-500) : s.fullEpochs;
+      const valLossH = valLoss != null
+        ? [...s.valLossHistory, valLoss].slice(-500) : s.valLossHistory;
       const best = s.bestPsnr !== null ? Math.max(s.bestPsnr, psnr) : psnr;
-      return { epoch, psnr, ssim, fullPsnr: fullPsnr ?? s.fullPsnr, fullSsim: fullSsim ?? s.fullSsim, bestPsnr: best, psnrHistory: psnrH, ssimHistory: ssimH, fullPsnrHistory: fullPsnrH, fullSsimHistory: fullSsimH };
+      return {
+        epoch, psnr, ssim,
+        fullPsnr: fullPsnr ?? s.fullPsnr,
+        fullSsim: fullSsim ?? s.fullSsim,
+        fullEpoch: fullPsnr != null ? epoch : s.fullEpoch,
+        bestPsnr: best,
+        psnrHistory: psnrH, ssimHistory: ssimH, metricEpochs: epochsH,
+        fullPsnrHistory: fullPsnrH, fullSsimHistory: fullSsimH, fullEpochs: fullEpochsH,
+        valLossHistory: valLossH,
+      };
     }),
 
   updateFromHardware: (data) =>
@@ -244,13 +281,18 @@ export const useTrainingStore = create<TrainingState>((set) => ({
     totalLossHistory: [],
     psnrHistory: [],
     ssimHistory: [],
+    valLossHistory: [],
     fullPsnrHistory: [],
     fullSsimHistory: [],
+    metricEpochs: [],
+    fullEpochs: [],
+    fullEpoch: null,
     etaSec: null,
     finalEpoch: null,
     validationFrames: null,
     validationHistory: [],
     validationRunning: false,
+    validationProgress: null,
     errorCode: null,
     errorMessage: null,
     launchConfig: null,

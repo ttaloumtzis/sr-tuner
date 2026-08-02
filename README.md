@@ -368,6 +368,10 @@ msiexec /i "src-tauri\target\release\bundle\msi\SR Tuner_0.1.0_x64_en-US.msi" /q
 srengine dataset build --input video.mp4 --out ./datasets/my_set
 ```
 
+> Dataset images (HR/LR pairs) may be PNG, JPG, JPEG, WebP, or BMP. When
+> importing a pre-extracted HR/LR folder, the app detects the scale from the
+> first image pair and writes a `manifest.json` automatically.
+
 **Train a model**
 ```bash
 srengine train run --model rrdb_esrgan --dataset ./datasets/my_set

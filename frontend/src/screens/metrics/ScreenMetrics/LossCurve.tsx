@@ -21,11 +21,14 @@ export function LossCurve({ history }: { history: RunHistory | null }) {
   const fullGLen = history?.gLossHistory?.length ?? 0;
   const windowStart = Math.max(0, fullGLen - CHART_WINDOW);
   const gSeries = (history?.gLossHistory ?? []).slice(windowStart);
+  const valSeries = (history?.valLossHistory ?? []).slice(windowStart);
+  const fullValEpochs = (history?.metricEpochs ?? []).slice(windowStart);
   const dSeries = isGan
     ? (history?.dLossHistory ?? []).filter((v): v is number => v != null).slice(windowStart)
     : [];
   const min = 0;
-  const max = gSeries.length > 0 ? Math.max(...gSeries) * 1.05 || 1 : 2.0;
+  const maxSeries = [...gSeries, ...valSeries];
+  const max = maxSeries.length > 0 ? Math.max(...maxSeries) * 1.05 || 1 : 2.0;
 
   const gChart = buildPoints(gSeries, CW, CH, min, max);
   const dChart = buildPoints(dSeries, CW, CH, min, max);
@@ -33,6 +36,17 @@ export function LossCurve({ history }: { history: RunHistory | null }) {
   const yTicks = niceTicks(min, max, 5);
   const xLabels = gSeries.length;
   const xTicks = xLabels > 1 ? niceTicks(1, xLabels, Math.min(xLabels, 6)) : [];
+
+  // Val-loss points must sit at their true epoch position (validation only
+  // fires every save_per_epoch epochs), not at sequential indices.
+  const valChart = valSeries.map((v, i) => {
+    const ep = fullValEpochs[i] != null ? fullValEpochs[i] : windowStart + i + 1;
+    const xi = Math.max(0, Math.min(xLabels - 1, ep - 1 - windowStart));
+    const x = (xi / Math.max(xLabels - 1, 1)) * CW;
+    return { x, y: CH - ((v - min) / (max - min || 1)) * CH };
+  });
+  const valIdxAtHover = (hIdx: number) =>
+    fullValEpochs.findIndex((ep) => ep === windowStart + hIdx + 1);
 
   const livePoint = liveLoss != null
     ? { x: CW, y: CH - ((liveLoss - min) / (max - min || 1)) * CH }
@@ -61,6 +75,7 @@ export function LossCurve({ history }: { history: RunHistory | null }) {
           <div style={{ display: "flex", gap: 10, fontSize: 10, fontFamily: "var(--font-mono)" }}>
             <span style={{ color: "var(--green)" }}>● generator</span>
             {isGan && <span style={{ color: "var(--blue)" }}>● discriminator</span>}
+            {valSeries.length > 0 && <span style={{ color: "var(--cyan)" }}>● val</span>}
             {liveLoss != null && <span style={{ color: "var(--orange)" }}>◆ live</span>}
           </div>
         }
@@ -111,10 +126,17 @@ export function LossCurve({ history }: { history: RunHistory | null }) {
               {gChart.length > 1 && (
                 <path d={smoothPath(gChart)} fill="none" stroke="var(--green)" strokeWidth={1.8} strokeLinecap="round" />
               )}
+              {valChart.length > 1 && (
+                <path d={smoothPath(valChart)} fill="none" stroke="var(--cyan)" strokeWidth={1.5}
+                  strokeDasharray="4 3" strokeLinecap="round" strokeOpacity={0.9} />
+              )}
               {/* A single epoch of data has nothing to draw a line through —
                   show it as a plain marker instead of an invisible 0-length path. */}
               {gChart.length === 1 && (
                 <circle cx={gChart[0].x} cy={gChart[0].y} r={3.5} fill="var(--green)" />
+              )}
+              {valChart.length === 1 && (
+                <circle cx={valChart[0].x} cy={valChart[0].y} r={3} fill="var(--cyan)" />
               )}
               {livePoint && (
                 <>
@@ -138,11 +160,18 @@ export function LossCurve({ history }: { history: RunHistory | null }) {
               )}
 
               {hoverIdx != null && hoverPoint && (() => {
+                const valAtHover = (() => {
+                  const i = valIdxAtHover(hoverIdx);
+                  return i >= 0 && valSeries[i] != null ? valSeries[i] : null;
+                })();
                 const lines = [
                   { text: `epoch ${windowStart + hoverIdx + 1}`, color: "var(--muted)" },
                   { text: `gen ${fmtAxisLoss(gSeries[hoverIdx])}`, color: "var(--green)" },
                   ...(isGan && dSeries[hoverIdx] != null
                     ? [{ text: `disc ${fmtAxisLoss(dSeries[hoverIdx])}`, color: "var(--blue)" }]
+                    : []),
+                  ...(valAtHover != null
+                    ? [{ text: `val ${fmtAxisLoss(valAtHover)}`, color: "var(--cyan)" }]
                     : []),
                 ];
                 const boxW = 78;

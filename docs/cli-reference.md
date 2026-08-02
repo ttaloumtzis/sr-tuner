@@ -162,6 +162,7 @@ srengine train run \
 | `--device TEXT` | `device` | `cuda` | Device (`cuda`, `cpu`, `auto`) |
 | `--bf16/--no-bf16` | `dtype` | config | Enable bfloat16 mixed precision |
 | `--validation-split F` | `validation.split` | config | Validation split ratio |
+| `--validation-split-seed N` | `validation.split_seed` | config | Seed for the train/validation split (independent of `--seed`) |
 | `--validation-enabled` | `validation.enabled` | config | Enable/disable validation |
 | `--no-validation-enabled` | | | |
 | `--patch-size N` | — | config | Training patch size |

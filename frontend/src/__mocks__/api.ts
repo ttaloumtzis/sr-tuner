@@ -1,6 +1,7 @@
 import { vi } from "vitest";
 
 export const invoke = vi.fn();
+export const convertFileSrc = vi.fn();
 export const apiGet = vi.fn();
 export const apiPost = vi.fn();
 export const initApiUrl = vi.fn().mockResolvedValue(undefined);
@@ -13,6 +14,8 @@ export const getInstance = vi.fn();
 export const startTraining = vi.fn();
 export const startInference = vi.fn();
 export const buildDataset = vi.fn();
+export const inspectDataset = vi.fn();
+export const finalizeDataset = vi.fn();
 export const validateDatasetPath = vi.fn();
 export const healthCheck = vi.fn();
 export const getDatasetHealth = vi.fn();

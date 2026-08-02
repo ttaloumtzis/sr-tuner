@@ -7,6 +7,7 @@ from typing import Optional
 import cv2
 import numpy as np
 
+from sr_engine.data.image_files import list_images, pair_hr_lr
 from sr_engine.utils.progress import ProgressReporter
 
 from sr_engine.utils.logging import get_logger
@@ -14,6 +15,91 @@ from sr_engine.utils.logging import get_logger
 log = get_logger(__name__)
 
 HEALTH_REPORT_FILENAME = ".health_report.json"
+
+MAX_UNREADABLE_FILES_IN_MESSAGE = 20
+
+
+class DatasetIntegrityError(Exception):
+    """Raised when a dataset contains unreadable or missing image files.
+
+    Attributes:
+        files: Relative paths (e.g. ``HR/Scene15.png``) of the affected files.
+    """
+
+    def __init__(self, files: list[str]) -> None:
+        self.files = files
+        shown = files[:MAX_UNREADABLE_FILES_IN_MESSAGE]
+        suffix = f" (+{len(files) - len(shown)} more)" if len(files) > len(shown) else ""
+        message = (
+            f"{len(files)} unreadable image(s) in dataset: "
+            + ", ".join(shown)
+            + suffix
+            + ". Fix or remove them, then retry."
+        )
+        super().__init__(message)
+
+
+def find_unreadable_images(dataset_dir: Path,
+                           reporter: Optional[ProgressReporter] = None,
+                           ) -> list[str]:
+    """Find images that cannot be read or are missing from disk.
+
+    Scans every registered pair (from ``manifest.json`` when present,
+    otherwise by matching files between ``HR/`` and ``LR/``) and decodes
+    both sides. Files that fail to decode, or that are registered in the
+    manifest but missing on disk, are returned as relative paths such as
+    ``HR/Scene15.png``.
+
+    Args:
+        dataset_dir: Path to the dataset directory.
+        reporter: Optional progress reporter.
+
+    Returns:
+        List of relative paths of unreadable or missing image files.
+    """
+    dataset_dir = Path(dataset_dir)
+    manifest_path = dataset_dir / "manifest.json"
+
+    rel_paths: list[Path] = []
+    if manifest_path.is_file():
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                manifest_data = json.load(f)
+            for entry in manifest_data.get("pairs", []):
+                hr_rel = entry.get("hr") or entry.get("HR")
+                lr_rel = entry.get("lr") or entry.get("LR")
+                if hr_rel:
+                    rel_paths.append(Path(hr_rel))
+                if lr_rel:
+                    rel_paths.append(Path(lr_rel))
+        except (json.JSONDecodeError, OSError) as e:
+            log.warning("Could not read manifest for integrity scan: %s", e)
+            rel_paths = []
+    else:
+        hr_dir = dataset_dir / "HR"
+        lr_dir = dataset_dir / "LR"
+        if hr_dir.is_dir():
+            for p in list_images(hr_dir):
+                rel_paths.append(Path("HR") / p.name)
+        if lr_dir.is_dir():
+            for p in list_images(lr_dir):
+                rel_paths.append(Path("LR") / p.name)
+
+    unreadable: list[str] = []
+    if not rel_paths:
+        return unreadable
+
+    reporter = reporter or ProgressReporter()
+    reporter.start(total=len(rel_paths), desc="Checking Image Integrity")
+
+    for rel in rel_paths:
+        abs_path = dataset_dir / rel
+        if not abs_path.is_file() or cv2.imread(str(abs_path)) is None:
+            unreadable.append(str(rel))
+        reporter.update(1)
+
+    reporter.finish()
+    return unreadable
 
 
 def save_health_report(dataset_dir: Path, report: dict) -> None:
@@ -29,7 +115,9 @@ def load_health_report(dataset_dir: Path) -> dict | None:
     if not path.exists():
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        report = json.loads(path.read_text(encoding="utf-8"))
+        report.setdefault("unreadable", [])
+        return report
     except (json.JSONDecodeError, OSError) as e:
         log.warning("Failed to load health report from %s: %s", path, e)
         return None
@@ -178,14 +266,14 @@ def check_dataset_health(dataset_dir: Path,
     Returns:
         A dict with keys:
         ``total_images``, ``resolutions``, ``aspect_ratios``, ``channels``,
-        ``computed_threshold``, ``black_frames``. On error, returns
-        ``{"error": <message>}``.
+        ``computed_threshold``, ``black_frames``, ``unreadable``. On error,
+        returns ``{"error": <message>}``.
     """
     hr_dir = dataset_dir / "HR"
     if not hr_dir.is_dir():
         return {"error": "HR directory not found. Run validation/build first."}
 
-    hr_files = list(hr_dir.glob("*.png"))
+    hr_files = list_images(hr_dir)
     total_files = len(hr_files)
 
     if total_files == 0:
@@ -238,60 +326,93 @@ def check_dataset_health(dataset_dir: Path,
         "aspect_ratios": dict(aspect_ratios),
         "channels": dict(channels_summary),
         "computed_threshold": round(threshold, 2),
-        "black_frames": black_filenames
+        "black_frames": black_filenames,
+        "unreadable": find_unreadable_images(dataset_dir),
     }
 
 
-def prune_black_frames(dataset_dir: Path, black_filenames: list[str],
-                       reporter: Optional[ProgressReporter] = None) -> None:
-    """Delete black frame pairs from disk and update the dataset manifest.
+def _resolve_pair(dataset_dir: Path, rel: Path) -> list[Path]:
+    """Resolve a relative path (e.g. ``HR/x.png``) to its full HR/LR pair.
 
-    Removes the corresponding HR and LR image files, then filters the
-    entries out of ``manifest.json`` so it remains consistent with the
-    filesystem state.
+    Uses ``manifest.json`` when available, otherwise matches the twin by
+    stem name between ``HR/`` and ``LR/`` (mirroring ``pair_hr_lr``).
+
+    Returns:
+        List of absolute paths of the pair files that exist on disk.
+    """
+    manifest_path = dataset_dir / "manifest.json"
+    if manifest_path.is_file():
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                manifest_data = json.load(f)
+            for entry in manifest_data.get("pairs", []):
+                hr_rel = Path(entry.get("hr") or entry.get("HR") or "")
+                lr_rel = Path(entry.get("lr") or entry.get("LR") or "")
+                if hr_rel == rel:
+                    return [dataset_dir / hr_rel, dataset_dir / lr_rel]
+                if lr_rel == rel:
+                    return [dataset_dir / hr_rel, dataset_dir / lr_rel]
+        except (json.JSONDecodeError, OSError) as e:
+            log.warning("Could not read manifest for pair resolution: %s", e)
+
+    side = rel.parts[0] if len(rel.parts) > 1 else ""
+    if side == "HR":
+        hr_dir, lr_dir = dataset_dir / "HR", dataset_dir / "LR"
+        if not lr_dir.is_dir():
+            return [dataset_dir / rel]
+        for hr_p, lr_p in pair_hr_lr(hr_dir, lr_dir):
+            if hr_p == dataset_dir / rel:
+                return [hr_p, lr_p]
+    elif side == "LR":
+        hr_dir, lr_dir = dataset_dir / "HR", dataset_dir / "LR"
+        if not hr_dir.is_dir():
+            return [dataset_dir / rel]
+        for hr_p, lr_p in pair_hr_lr(hr_dir, lr_dir):
+            if lr_p == dataset_dir / rel:
+                return [hr_p, lr_p]
+    return [dataset_dir / rel]
+
+
+def prune_pairs(dataset_dir: Path, rel_paths: list[str],
+                reporter: Optional[ProgressReporter] = None) -> None:
+    """Delete HR/LR image pairs and update the dataset manifest.
+
+    Resolves each relative path (e.g. ``HR/Scene15.png``) to its full pair,
+    deletes both sides from disk, then filters the entries out of
+    ``manifest.json`` so it stays consistent with the filesystem state.
 
     Args:
         dataset_dir: Path to the dataset directory.
-        black_filenames: List of filenames (not full paths) to remove.
+        rel_paths: Relative paths of files whose pairs should be removed.
         reporter: Optional progress reporter.
 
     Raises:
         RuntimeError: If any files could not be deleted.
     """
-    hr_dir = dataset_dir / "HR"
-    lr_dir = dataset_dir / "LR"
+    dataset_dir = Path(dataset_dir)
     manifest_path = dataset_dir / "manifest.json"
-
-    black_set = set(black_filenames)
+    removed_rel: set[str] = set()
 
     reporter = reporter or ProgressReporter()
-    reporter.start(total=len(black_filenames), desc="Pruning Black Frames")
+    reporter.start(total=len(rel_paths), desc="Removing Pairs")
 
-    # Delete physical disk assets
     failed = []
-    for filename in black_filenames:
-        hr_path = hr_dir / filename
-        lr_path = lr_dir / filename
-
-        try:
-            if hr_path.is_file():
-                hr_path.unlink()
-        except OSError as e:
-            failed.append((str(hr_path), e))
-
-        try:
-            if lr_path.is_file():
-                lr_path.unlink()
-        except OSError as e:
-            failed.append((str(lr_path), e))
-
+    for rel in rel_paths:
+        for abs_path in _resolve_pair(dataset_dir, Path(rel)):
+            try:
+                if abs_path.is_file():
+                    abs_path.unlink()
+                if str(abs_path).startswith(str(dataset_dir)):
+                    removed_rel.add(str(abs_path.relative_to(dataset_dir)))
+            except OSError as e:
+                failed.append((str(abs_path), e))
         reporter.update(1)
 
     reporter.finish()
 
     if failed:
         msg = "; ".join(f"{p}: {e}" for p, e in failed)
-        raise RuntimeError(f"Failed to delete some black frame files: {msg}")
+        raise RuntimeError(f"Failed to delete some pair files: {msg}")
 
     # Sync and rewrite structural tracks inside manifest file
     if manifest_path.is_file():
@@ -301,8 +422,8 @@ def prune_black_frames(dataset_dir: Path, black_filenames: list[str],
 
             manifest_data["pairs"] = [
                 p for p in manifest_data.get("pairs", [])
-                if Path(p.get("hr") or p.get("HR", "")).name not in black_set
-                and Path(p.get("lr") or p.get("LR", "")).name not in black_set
+                if (p.get("hr") or p.get("HR") or "") not in removed_rel
+                and (p.get("lr") or p.get("LR") or "") not in removed_rel
             ]
 
             with open(manifest_path, "w", encoding="utf-8") as f:
@@ -318,3 +439,22 @@ def prune_black_frames(dataset_dir: Path, black_filenames: list[str],
             health_path.unlink()
         except OSError as e:
             log.warning("Could not remove stale health report: %s", e)
+
+
+def prune_black_frames(dataset_dir: Path, black_filenames: list[str],
+                       reporter: Optional[ProgressReporter] = None) -> None:
+    """Delete black frame pairs from disk and update the dataset manifest.
+
+    Convenience wrapper around :func:`prune_pairs` that maps HR-side
+    basenames to relative paths.
+
+    Args:
+        dataset_dir: Path to the dataset directory.
+        black_filenames: List of filenames (not full paths) to remove.
+        reporter: Optional progress reporter.
+
+    Raises:
+        RuntimeError: If any files could not be deleted.
+    """
+    rel_paths = [f"HR/{name}" for name in black_filenames]
+    prune_pairs(dataset_dir, rel_paths, reporter=reporter)

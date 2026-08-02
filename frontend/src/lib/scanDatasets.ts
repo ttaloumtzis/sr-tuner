@@ -2,6 +2,23 @@ import { invoke } from "@tauri-apps/api/core";
 import type { DatasetManifest } from "./api-types";
 import { basename, join } from "./path";
 
+let _tauriAvailable: boolean | null = null;
+
+export function __resetTauriAvailability(): void {
+  _tauriAvailable = null;
+}
+
+async function isTauriAvailable(): Promise<boolean> {
+  if (_tauriAvailable !== null) return _tauriAvailable;
+  try {
+    await invoke("path_exists", { path: "/" });
+    _tauriAvailable = true;
+  } catch {
+    _tauriAvailable = false;
+  }
+  return _tauriAvailable;
+}
+
 export interface ScannedDataset {
   name: string;
   path: string;
@@ -84,4 +101,37 @@ export async function listDatasetPairs(datasetPath: string): Promise<{ hr: strin
     pairs.push({ hr: hrFiles[i], lr: lrFiles[i] });
   }
   return pairs;
+}
+
+/**
+ * Resolve the image URLs for every pair of a dataset.
+ *
+ * In the Tauri app, the manifest.json is read once and images are served
+ * directly from disk via the asset protocol (``convertFileSrc``), avoiding a
+ * per-image HTTP round-trip to the API. In browser dev mode (no Tauri), falls
+ * back to the API image endpoint.
+ *
+ * @param datasetPath Absolute path of the dataset folder.
+ * @param datasetName Dataset name (used for API fallback URLs).
+ * @param pairCount Number of pairs, from the datasets listing (browser mode).
+ */
+export async function getDatasetPairUrls(
+  datasetPath: string,
+  datasetName: string,
+  pairCount: number,
+): Promise<{ hr: string; lr: string }[]> {
+  if (await isTauriAvailable()) {
+    try {
+      const pairs = await listDatasetPairs(datasetPath);
+      const { convertFileSrc } = await import("@tauri-apps/api/core");
+      return pairs.map((p) => ({ hr: convertFileSrc(p.hr), lr: convertFileSrc(p.lr) }));
+    } catch {
+      // fall through to API URLs
+    }
+  }
+  const { getDatasetImageUrl } = await import("./api");
+  return Array.from({ length: pairCount }, (_, i) => ({
+    hr: getDatasetImageUrl(datasetName, "hr", i),
+    lr: getDatasetImageUrl(datasetName, "lr", i),
+  }));
 }

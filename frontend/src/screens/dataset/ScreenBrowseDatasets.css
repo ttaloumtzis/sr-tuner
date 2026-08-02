@@ -745,6 +745,11 @@
   font-family: var(--font-mono);
 }
 
+.health-report-summary-unreadable {
+  color: var(--red);
+  font-weight: 600;
+}
+
 .health-report-blackframes {
   display: flex;
   flex-direction: column;

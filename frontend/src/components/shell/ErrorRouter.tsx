@@ -227,6 +227,17 @@ function buildConfig(
         actions: [retryLowerLrAction(dismiss)],
       };
 
+    // ── Dataset integrity ─────────────────────────────────────────────────
+    case "DATASET_INTEGRITY":
+      return {
+        title: "Dataset Integrity Error",
+        detail: message || "One or more images in the dataset could not be read.",
+        suggestions: [
+          "Run Health Check in the Datasets tab to find all corrupt files",
+          "Fix or remove the listed images, or remove the corrupt pairs there, then retry",
+        ],
+      };
+
     // ── CUDA / ROCm device errors ──────────────────────────────────────────
     case "CUDA_ERROR":
       return {

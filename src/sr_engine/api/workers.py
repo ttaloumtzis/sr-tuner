@@ -151,6 +151,21 @@ def _run_training_subprocess(
             cancel_check=_cancel_check,
         )
 
+        # Pre-flight: fail fast on unreadable/missing dataset images instead
+        # of crashing mid-epoch in a DataLoader worker.
+        from sr_engine.data.dataset_health import DatasetIntegrityError, find_unreadable_images
+
+        integrity_dirs: list[Path] = [dataset_path]
+        if val_dataset_dir and val_dataset_dir != dataset_path:
+            integrity_dirs.append(val_dataset_dir)
+
+        integrity_reporter = SSEProgressReporter(events, job_id)
+        unreadable: list[str] = []
+        for dir_path in integrity_dirs:
+            unreadable.extend(find_unreadable_images(dir_path, reporter=integrity_reporter))
+        if unreadable:
+            raise DatasetIntegrityError(sorted(set(unreadable)))
+
         trainer.train()
 
         if ws:
@@ -174,8 +189,14 @@ def _run_training_subprocess(
 
     except Exception as e:
         log.exception("Training subprocess %s failed", job_id)
-        error_type = type(e).__name__
-        error_code = "CUDA_OUT_OF_MEMORY" if "out of memory" in str(e).lower() else error_type
+        from sr_engine.data.dataset_health import DatasetIntegrityError
+
+        if isinstance(e, DatasetIntegrityError):
+            error_code = "DATASET_INTEGRITY"
+        elif "out of memory" in str(e).lower():
+            error_code = "CUDA_OUT_OF_MEMORY"
+        else:
+            error_code = type(e).__name__
         events.publish(job_id, {"type": "error", "code": error_code, "message": str(e)})
         event_queue.put(None)
 
@@ -538,22 +559,22 @@ def run_dataset_validate(
 def run_dataset_prune(
     job_id: str,
     dataset_path: str,
-    black_frames: list[str],
+    files: list[str],
     tasks: BackgroundTaskManager,
     events: SSEEventManager,
 ) -> None:
-    """Prune black frame pairs in a background thread."""
+    """Remove HR/LR pairs (by relative paths) in a background thread."""
     tasks.start_job(job_id)
     structlog.contextvars.bind_contextvars(job_id=job_id)
     try:
-        from sr_engine.data.dataset_health import prune_black_frames
+        from sr_engine.data.dataset_health import prune_pairs
 
         sse = SSEProgressReporter(events, job_id)
         dataset_dir = Path(dataset_path)
-        prune_black_frames(dataset_dir, black_frames, reporter=sse)
+        prune_pairs(dataset_dir, files, reporter=sse)
 
-        events.publish(job_id, {"type": "done", "message": f"Pruned {len(black_frames)} frames"})
-        tasks.complete_job(job_id, {"pruned": len(black_frames)})
+        events.publish(job_id, {"type": "done", "message": f"Removed {len(files)} pair(s)"})
+        tasks.complete_job(job_id, {"pruned": len(files)})
 
     except Exception as e:
         log.exception("Dataset prune job %s failed", job_id)

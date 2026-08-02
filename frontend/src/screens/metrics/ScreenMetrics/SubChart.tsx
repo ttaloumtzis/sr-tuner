@@ -2,9 +2,9 @@ import { useState, type PointerEvent as ReactPointerEvent } from "react";
 import { EmptyChartState } from "./EmptyChartState";
 import { niceTicks, fmt, fmtAxisLoss, smoothPath, areaPath } from "./chartUtils";
 
-export function SubChart({ uid, chartKey, series, color, fullSeries, fullColor, windowStart = 0 }: {
+export function SubChart({ uid, chartKey, series, color, seriesEpochs, fullSeries, fullColor, fullEpochs }: {
   uid: string; chartKey: string; series: number[]; color: string;
-  fullSeries?: number[]; fullColor?: string; windowStart?: number;
+  seriesEpochs?: number[]; fullSeries?: number[]; fullColor?: string; fullEpochs?: number[];
 }) {
   const W = 400; const H = 72; const ML = 42;
   const CW = W - ML - 12;
@@ -118,10 +118,14 @@ export function SubChart({ uid, chartKey, series, color, fullSeries, fullColor, 
         </g>
       </svg>
       {hoverIdx != null && hoverPt != null && (() => {
+        const epochAtHover = seriesEpochs?.[hoverIdx] ?? null;
+        const fullEpochAtHover = hoverFullIdx != null ? fullEpochs?.[hoverFullIdx] ?? null : null;
         const lines = [
-          { text: `epoch ${windowStart + hoverIdx + 1}`, col: "var(--muted)" },
+          { text: epochAtHover != null ? `epoch ${epochAtHover}` : "—", col: "var(--muted)" },
           { text: `patch ${fmt(series[hoverIdx])}`, col: color },
-          ...(hoverFullVal != null ? [{ text: `full ${fmt(hoverFullVal)}`, col: fullCol }] : []),
+          ...(hoverFullVal != null
+            ? [{ text: `full ${fullEpochAtHover != null ? `e${fullEpochAtHover} ` : ""}${fmt(hoverFullVal)}`, col: fullCol }]
+            : []),
         ];
         const boxW = 90;
         const boxH = lines.length * 13 + 6;

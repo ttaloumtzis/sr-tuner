@@ -27,6 +27,20 @@ export interface DatasetInfo {
   num_pairs: number;
 }
 
+export interface DatasetInspectInfo {
+  hr_count: number;
+  lr_count: number;
+  pair_count: number;
+  hr_size: { width: number; height: number } | null;
+  lr_size: { width: number; height: number } | null;
+  scale_ratio: number | null;
+  scale_exact: boolean;
+  scale_w: number | null;
+  scale_h: number | null;
+  has_manifest: boolean;
+  warnings: string[];
+}
+
 export interface HealthReport {
   total_images: number;
   resolutions: Record<string, number>;
@@ -34,6 +48,7 @@ export interface HealthReport {
   channels: Record<string, number>;
   computed_threshold: number;
   black_frames: string[];
+  unreadable: string[];
 }
 
 export type LossType = "l1" | "l2" | "vgg" | "edge" | "style" | "fft" | "ssim" | "lpips";
@@ -85,6 +100,8 @@ export interface TrainParams {
   save_per_epoch?: number;
   validation_enabled?: boolean;
   validation_split?: number;
+  validation_split_seed?: number;
+  validation_full_image_limit?: number;
   validation_dataset?: string;
   metrics_frequency?: number;
   perceptual_weight?: number;

@@ -41,6 +41,14 @@ function PanelHeader({ label, right }: { label: string; right?: ReactNode }) {
   );
 }
 
+function entryPsnr(entry: ValidationHistoryEntry | null): number | null {
+  return entry?.fullPsnr ?? entry?.psnr ?? null;
+}
+
+function entrySsim(entry: ValidationHistoryEntry | null): number | null {
+  return entry?.fullSsim ?? entry?.ssim ?? null;
+}
+
 function Filmstrip({
   history, selectedEpoch, isLive, onSelect, onResumeLive,
 }: {
@@ -72,7 +80,7 @@ function Filmstrip({
               key={entry.epoch}
               ref={active ? activeRef : undefined}
               onClick={() => onSelect(entry.epoch)}
-              title={`Epoch ${entry.epoch}${entry.psnr != null ? ` · PSNR ${fmtMetric(entry.psnr)} dB` : ""}`}
+              title={`Epoch ${entry.epoch}${entryPsnr(entry) != null ? ` · PSNR ${fmtMetric(entryPsnr(entry))} dB` : ""}`}
               style={{
                 flexShrink: 0, width: 42, height: 42, borderRadius: "var(--radius-sm)",
                 border: active ? "1.5px solid var(--blue)" : "1.5px solid var(--border)",
@@ -263,14 +271,14 @@ function Lightbox({
           <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", fontFamily: "var(--font-mono)" }}>
             Epoch {epoch}
           </span>
-          {entry?.psnr != null && (
+          {entryPsnr(entry) != null && (
             <span style={{ fontSize: 10.5, color: "var(--green)", fontFamily: "var(--font-mono)" }}>
-              PSNR {fmtMetric(entry.psnr)} dB
+              PSNR {fmtMetric(entryPsnr(entry))} dB
             </span>
           )}
-          {entry?.ssim != null && (
+          {entrySsim(entry) != null && (
             <span style={{ fontSize: 10.5, color: "var(--blue)", fontFamily: "var(--font-mono)" }}>
-              SSIM {fmtMetric(entry.ssim, 4)}
+              SSIM {fmtMetric(entrySsim(entry), 4)}
             </span>
           )}
           <div style={{ display: "flex", gap: 4, marginLeft: 4 }}>
@@ -476,7 +484,11 @@ export function ValidationPanel() {
                 background: isLive ? "var(--green-dim)" : "var(--bg2)", padding: "2px 8px", borderRadius: 20,
                 border: isLive ? "1px solid rgba(77,186,127,0.3)" : "1px solid var(--border)",
               }}>
-                {isLive && validationRunning ? "● validating" : isLive ? "● live" : `epoch ${selectedEpoch}`}
+                {isLive && validationRunning
+                  ? `● validating · e${selectedEpoch}`
+                  : isLive
+                    ? `● live · e${selectedEpoch}`
+                    : `epoch ${selectedEpoch}`}
               </span>
             )}
           </div>

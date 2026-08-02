@@ -28,6 +28,11 @@ class SSECallback(TrainerCallback):
             event["frames"] = frames
         self._events.publish(self._job_id, event)
 
+    def on_validate_progress(self, epoch: int, done: int, total: int) -> None:
+        self._events.publish(self._job_id, {
+            "type": "validate_progress", "epoch": epoch, "done": done, "total": total,
+        })
+
     def on_done(self, elapsed_seconds: float) -> None:
         self._events.publish(self._job_id, {
             "type": "done", "elapsed_seconds": elapsed_seconds,

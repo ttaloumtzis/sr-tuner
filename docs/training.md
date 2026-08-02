@@ -49,6 +49,32 @@ Callbacks are attached via `trainer.add_callback(callback)`. Multiple callbacks 
 | `_MetricsStreamCallback` | `engine/trainer.py` | Writes JSONL metrics file |
 | `TqdmReporter` | `utils/progress.py` | Terminal progress bar |
 
+## Validation
+
+Validation runs every `save_per_epoch` epochs and reports four metrics on the `validate` event:
+
+| Metric | Meaning |
+|--------|---------|
+| `psnr` / `ssim` | Patch-based (center-cropped) metrics averaged over the whole validation set |
+| `full_psnr` / `full_ssim` | Full-image tiled SR metrics averaged over the whole validation set |
+
+The full-image pass runs the model (tiled, VRAM-safe) on every untransformed validation image and averages the per-image PSNR/SSIM, so the reported `full_*` values describe the entire validation set rather than a single sample.
+
+### Train/Validation Split Seed
+
+The split is seeded by `validation.split_seed` (default `1234`), which is **independent of the general `seed`**. The general seed controls random patches and augmentations, so changing it between train phases varies the crops while the exact same images stay in the train and validation sets — validation results remain comparable across phases of the same dataset/model. Set `validation.split_seed` explicitly to change which images land in the split.
+
+```yaml
+validation:
+  enabled: true
+  split: 0.1
+  split_seed: 1234
+```
+
+### Display Frames
+
+Validation display frames (LR / SR / GT / diff) are saved into `validation/epoch_XXX/` under the run directory. They are always rendered from the **first** validation image (index 0), so the same reference image is shown every epoch and you can visually track per-epoch improvements.
+
 ## Available Models
 
 ### RRDB (ESRGAN-style)

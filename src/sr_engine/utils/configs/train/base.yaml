@@ -16,6 +16,14 @@ checkpoint_dir: "experiments/checkpoints"
 validation:
   enabled: true
   split: 0.1
+  # Fixed seed for the train/validation split — independent of the general
+  # "seed" (which controls random patches). Keeps the same images in train
+  # and validation across recurring train phases of the same dataset.
+  split_seed: 1234
+  # Cap for the slow tiled full-image validation pass (images per epoch).
+  # The patch-based PSNR/SSIM/loss still cover the whole validation set.
+  # 0 disables the full-image pass entirely.
+  full_image_limit: 8
 
 # --- Training dynamics ---
 lr_scheduler: cosine

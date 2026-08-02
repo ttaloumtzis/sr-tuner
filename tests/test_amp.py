@@ -20,8 +20,8 @@ def _make_image(path: Path, w: int = 64, h: int = 64) -> None:
 def _create_dataset_dir(tmp_path: Path, num_pairs: int = 5) -> Path:
     d = tmp_path / "dataset"
     for i in range(num_pairs):
-        _make_image(d / "HR" / f"frame_{i:04d}.png", w=256)
-        _make_image(d / "LR" / f"frame_{i:04d}.png", w=64)
+        _make_image(d / "HR" / f"frame_{i:04d}.png", w=256, h=256)
+        _make_image(d / "LR" / f"frame_{i:04d}.png", w=64, h=64)
     return d
 
 
