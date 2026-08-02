@@ -9,11 +9,11 @@ interface Props {
 }
 
 const STATUS_COLOR: Record<RunStatus, string> = {
-  configured: "var(--dim)",
-  running:    "var(--green)",
-  paused:     "var(--amber)",
-  completed:  "var(--blue)",
-  failed:     "var(--red)",
+  running:     "var(--green)",
+  finished:    "var(--green)",
+  failed:      "var(--red)",
+  stopped:     "var(--amber)",
+  interrupted: "var(--dim)",
 };
 
 function fmt(n: number | null, decimals = 2): string {

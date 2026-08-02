@@ -7,7 +7,6 @@ export type TabId =
   | "training"
   | "metrics"
   | "checkpoints"
-  | "history"
   | "inference";
 
 interface UiState {

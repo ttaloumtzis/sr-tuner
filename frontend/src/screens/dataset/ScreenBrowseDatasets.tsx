@@ -23,7 +23,6 @@ import type { DatasetInfo, HealthReport } from "../../lib/api-types";
 import { getDatasetPairUrls } from "../../lib/scanDatasets";
 import { useToast } from "../../components/shell/ToastProvider";
 import { useDatasetStore } from "../../store/datasetStore";
-import { useDatasetSSE } from "../../hooks/useDatasetSSE";
 import { JobOverlay } from "../../components/dataset/JobOverlay";
 
 const FILMSTRIP_WINDOW = 25;
@@ -51,20 +50,54 @@ export const ScreenBrowseDatasets: React.FC = () => {
   const sliderContainerRef = useRef<HTMLDivElement>(null);
   const thumbScrollRef = useRef<HTMLDivElement>(null);
 
-  useDatasetSSE();
   const jobStatus = useDatasetStore((s) => s.jobStatus);
   const jobType = useDatasetStore((s) => s.jobType);
+  const jobDatasetPath = useDatasetStore((s) => s.jobDatasetPath);
+  const jobHealthReport = useDatasetStore((s) => s.jobHealthReport);
   const setJobId = useDatasetStore((s) => s.setJobId);
   const setJobStatus = useDatasetStore((s) => s.setJobStatus);
   const setJobType = useDatasetStore((s) => s.setJobType);
+  const setJobDatasetPath = useDatasetStore((s) => s.setJobDatasetPath);
 
+  const [healthForPath, setHealthForPath] = useState<string | null>(null);
   const [healthReport, setHealthReport] = useState<HealthReport | null>(null);
   const [healthReportLoading, setHealthReportLoading] = useState(false);
+  const healthReqIdRef = useRef(0);
   const [selectedBlackFrames, setSelectedBlackFrames] = useState<Set<string>>(new Set());
   const [selectedUnreadable, setSelectedUnreadable] = useState<Set<string>>(new Set());
 
   const currentDataset = datasets.find((d) => d.name === selectedName) ?? null;
   const pairsCount = currentDataset?.num_pairs ?? 0;
+
+  const loadHealth = useCallback((path: string) => {
+    const reqId = ++healthReqIdRef.current;
+    setHealthForPath(path);
+    setHealthReportLoading(true);
+    setHealthReport(null);
+    getDatasetHealth(path)
+      .then((report) => {
+        if (healthReqIdRef.current !== reqId) return;
+        setHealthReport(report);
+        setHealthReportLoading(false);
+      })
+      .catch(() => {
+        if (healthReqIdRef.current !== reqId) return;
+        setHealthReport(null);
+        setHealthReportLoading(false);
+      });
+  }, []);
+
+  const applyHealth = useCallback((path: string, report: HealthReport | null) => {
+    healthReqIdRef.current += 1;
+    setHealthForPath(path);
+    setHealthReport(report);
+    setHealthReportLoading(false);
+  }, []);
+
+  const showHealthReport = healthForPath === currentDataset?.path ? healthReport : null;
+  const showHealthLoading = healthForPath === currentDataset?.path ? healthReportLoading : false;
+  const isJobOnCurrent = jobStatus === "running" && jobDatasetPath === currentDataset?.path;
+  const isHealthJobOnCurrent = isJobOnCurrent && jobType === "health";
 
   const setPair = useCallback(
     (n: number) => setCurrentPairIndex(Math.max(1, Math.min(pairsCount, n))),
@@ -92,21 +125,23 @@ export const ScreenBrowseDatasets: React.FC = () => {
       if (report === null) {
         const result = await healthCheck({ path: currentDataset.path, yes: false });
         setJobId(result.job_id);
+        setJobDatasetPath(currentDataset.path);
         setJobType("health");
         setJobStatus("running");
         toast("info", "Health check started");
       } else {
-        setHealthReport(report);
+        applyHealth(currentDataset.path, report);
         const n = report.unreadable?.length ?? 0;
         toast("success", `Health report loaded — ${report.black_frames.length} black frames${n > 0 ? `, ${n} unreadable` : ""}`);
       }
     } catch (err) {
       setJobId(null);
+      setJobDatasetPath(null);
       setJobType(null);
       setJobStatus("idle");
       toast("error", `Health check failed: ${err instanceof Error ? err.message : String(err)}`);
     }
-  }, [currentDataset, toast]);
+  }, [currentDataset, toast, applyHealth, setJobId, setJobDatasetPath, setJobType, setJobStatus]);
 
   const toggleBlackFrame = useCallback((filename: string) => {
     setSelectedBlackFrames((prev) => {
@@ -118,9 +153,9 @@ export const ScreenBrowseDatasets: React.FC = () => {
   }, []);
 
   const selectAllBlackFrames = useCallback(() => {
-    if (!healthReport) return;
-    setSelectedBlackFrames(new Set(healthReport.black_frames));
-  }, [healthReport]);
+    if (!showHealthReport) return;
+    setSelectedBlackFrames(new Set(showHealthReport.black_frames));
+  }, [showHealthReport]);
 
   const deselectAllBlackFrames = useCallback(() => {
     setSelectedBlackFrames(new Set());
@@ -134,6 +169,7 @@ export const ScreenBrowseDatasets: React.FC = () => {
         files: Array.from(selectedBlackFrames).map((name) => `HR/${name}`),
       });
       setJobId(result.job_id);
+      setJobDatasetPath(currentDataset.path);
       setJobType("prune");
       setJobStatus("running");
       toast("info", `Pruning ${selectedBlackFrames.size} black frames...`);
@@ -141,7 +177,7 @@ export const ScreenBrowseDatasets: React.FC = () => {
     } catch (err) {
       toast("error", `Prune failed: ${err instanceof Error ? err.message : String(err)}`);
     }
-  }, [currentDataset, selectedBlackFrames, toast]);
+  }, [currentDataset, selectedBlackFrames, toast, setJobId, setJobDatasetPath, setJobType, setJobStatus]);
 
   const toggleUnreadable = useCallback((rel: string) => {
     setSelectedUnreadable((prev) => {
@@ -153,9 +189,9 @@ export const ScreenBrowseDatasets: React.FC = () => {
   }, []);
 
   const selectAllUnreadable = useCallback(() => {
-    if (!healthReport) return;
-    setSelectedUnreadable(new Set(healthReport.unreadable ?? []));
-  }, [healthReport]);
+    if (!showHealthReport) return;
+    setSelectedUnreadable(new Set(showHealthReport.unreadable ?? []));
+  }, [showHealthReport]);
 
   const deselectAllUnreadable = useCallback(() => {
     setSelectedUnreadable(new Set());
@@ -169,6 +205,7 @@ export const ScreenBrowseDatasets: React.FC = () => {
         files: Array.from(selectedUnreadable),
       });
       setJobId(result.job_id);
+      setJobDatasetPath(currentDataset.path);
       setJobType("prune");
       setJobStatus("running");
       toast("info", `Removing ${selectedUnreadable.size} corrupt pair(s)...`);
@@ -176,7 +213,7 @@ export const ScreenBrowseDatasets: React.FC = () => {
     } catch (err) {
       toast("error", `Remove failed: ${err instanceof Error ? err.message : String(err)}`);
     }
-  }, [currentDataset, selectedUnreadable, toast]);
+  }, [currentDataset, selectedUnreadable, toast, setJobId, setJobDatasetPath, setJobType, setJobStatus]);
 
   const handleOpenDirectory = useCallback(async () => {
     if (!currentDataset) return;
@@ -236,24 +273,10 @@ export const ScreenBrowseDatasets: React.FC = () => {
 
   useEffect(() => {
     if (!currentDataset) return;
-    let cancelled = false;
-    setHealthReportLoading(true);
-    setHealthReport(null);
-    getDatasetHealth(currentDataset.path)
-      .then((report) => {
-        if (!cancelled) {
-          setHealthReport(report);
-          setHealthReportLoading(false);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setHealthReport(null);
-          setHealthReportLoading(false);
-        }
-      });
-    return () => { cancelled = true; };
-  }, [currentDataset?.path]);
+    setSelectedBlackFrames(new Set());
+    setSelectedUnreadable(new Set());
+    loadHealth(currentDataset.path);
+  }, [currentDataset?.path, loadHealth]);
 
   useEffect(() => {
     if (!currentDataset) {
@@ -273,20 +296,26 @@ export const ScreenBrowseDatasets: React.FC = () => {
   }, [currentDataset?.path, currentDataset?.name, currentDataset?.num_pairs]);
 
   useEffect(() => {
-    if (jobStatus !== "done" || jobType !== "health" || !currentDataset) return;
-    getDatasetHealth(currentDataset.path)
-      .then((report) => setHealthReport(report))
-      .catch(() => setHealthReport(null));
-  }, [jobStatus, jobType, currentDataset?.path]);
+    if (jobStatus !== "done" || jobType !== "health") return;
+    const jobPath = jobDatasetPath ?? currentDataset?.path;
+    if (!jobPath || jobPath !== currentDataset?.path) return;
+    if (jobHealthReport) {
+      applyHealth(jobPath, jobHealthReport);
+      return;
+    }
+    getDatasetHealth(jobPath)
+      .then((report) => applyHealth(jobPath, report))
+      .catch(() => applyHealth(jobPath, null));
+  }, [jobStatus, jobType, jobDatasetPath, jobHealthReport, currentDataset?.path, applyHealth]);
 
   useEffect(() => {
-    if (jobStatus === "done" && jobType === "prune") {
+    if (jobStatus === "done" && jobType === "prune" && currentDataset) {
       fetchDatasets();
-      setHealthReport(null);
       setSelectedBlackFrames(new Set());
       setSelectedUnreadable(new Set());
+      loadHealth(currentDataset.path);
     }
-  }, [jobStatus, jobType, fetchDatasets]);
+  }, [jobStatus, jobType, fetchDatasets, currentDataset?.path, loadHealth]);
 
   const filteredDatasets = datasets.filter((ds) => {
     const matchesSearch = ds.name.toLowerCase().includes(searchQuery.toLowerCase());
@@ -470,15 +499,15 @@ export const ScreenBrowseDatasets: React.FC = () => {
                 {pairsCount.toLocaleString()} pairs
               </span>
               <span className="meta-badge manifest">Manifest OK</span>
-              {healthReportLoading
+              {showHealthLoading
   ? <span className="meta-badge health unverified">Health: Checking…</span>
-  : jobStatus === "running" && jobType === "health"
+  : jobStatus === "running" && isHealthJobOnCurrent
     ? <span className="meta-badge health unverified">Health: Running…</span>
-    : healthReport === null
+    : showHealthReport === null
       ? <span className="meta-badge health unverified">Health: Unchecked</span>
-      : healthReport.black_frames.length === 0 && (healthReport.unreadable?.length ?? 0) === 0
+      : showHealthReport.black_frames.length === 0 && (showHealthReport.unreadable?.length ?? 0) === 0
         ? <span className="meta-badge health healthy">Health: OK</span>
-        : <span className="meta-badge health warning">Health: {(healthReport.black_frames.length + (healthReport.unreadable?.length ?? 0))} issue{(healthReport.black_frames.length + (healthReport.unreadable?.length ?? 0)) !== 1 ? "s" : ""}</span>
+        : <span className="meta-badge health warning">Health: {(showHealthReport.black_frames.length + (showHealthReport.unreadable?.length ?? 0))} issue{(showHealthReport.black_frames.length + (showHealthReport.unreadable?.length ?? 0)) !== 1 ? "s" : ""}</span>
 }
             </div>
           </div>
@@ -671,41 +700,41 @@ export const ScreenBrowseDatasets: React.FC = () => {
           <div className="health-report-panel">
             <div className="health-report-header">
               <span className="health-report-title">Health Report</span>
-              {healthReportLoading && (
+              {showHealthLoading && (
                 <span className="health-report-status loading">
                   <Loader2 size={12} className="spin" /> Loading...
                 </span>
               )}
-              {!healthReportLoading && healthReport === null && (
+              {!showHealthLoading && showHealthReport === null && (
                 <span className="health-report-status unchecked">No report</span>
               )}
-              {!healthReportLoading && healthReport !== null && healthReport.black_frames.length === 0 && (healthReport.unreadable?.length ?? 0) === 0 && (
+              {!showHealthLoading && showHealthReport !== null && showHealthReport.black_frames.length === 0 && (showHealthReport.unreadable?.length ?? 0) === 0 && (
                 <span className="health-report-status ok">OK</span>
               )}
-              {!healthReportLoading && healthReport !== null && (healthReport.black_frames.length > 0 || (healthReport.unreadable?.length ?? 0) > 0) && (
+              {!showHealthLoading && showHealthReport !== null && (showHealthReport.black_frames.length > 0 || (showHealthReport.unreadable?.length ?? 0) > 0) && (
                 <span className="health-report-status issues">
-                  {(healthReport.black_frames.length + (healthReport.unreadable?.length ?? 0))} issue{(healthReport.black_frames.length + (healthReport.unreadable?.length ?? 0)) !== 1 ? "s" : ""}
+                  {(showHealthReport.black_frames.length + (showHealthReport.unreadable?.length ?? 0))} issue{(showHealthReport.black_frames.length + (showHealthReport.unreadable?.length ?? 0)) !== 1 ? "s" : ""}
                 </span>
               )}
-              <button className="health-report-run-btn" onClick={handleHealthReport} disabled={jobStatus === "running"}>
-                {jobStatus === "running" && jobType === "health" ? "Running..." : "Run Health Check"}
+              <button className="health-report-run-btn" onClick={handleHealthReport} disabled={isJobOnCurrent}>
+                {jobStatus === "running" && isHealthJobOnCurrent ? "Running..." : "Run Health Check"}
               </button>
             </div>
-            {healthReport !== null && !healthReportLoading && (
+            {showHealthReport !== null && !showHealthLoading && (
               <div className="health-report-body">
                 <div className="health-report-summary">
-                  <span>Total images: {healthReport.total_images.toLocaleString()}</span>
-                  <span>Threshold: {healthReport.computed_threshold}</span>
-                  <span>Black frames: {healthReport.black_frames.length}</span>
-                  {(healthReport.unreadable?.length ?? 0) > 0 && (
-                    <span className="health-report-summary-unreadable">Unreadable: {healthReport.unreadable.length}</span>
+                  <span>Total images: {showHealthReport.total_images.toLocaleString()}</span>
+                  <span>Threshold: {showHealthReport.computed_threshold}</span>
+                  <span>Black frames: {showHealthReport.black_frames.length}</span>
+                  {(showHealthReport.unreadable?.length ?? 0) > 0 && (
+                    <span className="health-report-summary-unreadable">Unreadable: {showHealthReport.unreadable.length}</span>
                   )}
                 </div>
-                {(healthReport.unreadable?.length ?? 0) > 0 && (
+                {(showHealthReport.unreadable?.length ?? 0) > 0 && (
                   <div className="health-report-blackframes">
                     <div className="health-report-blackframes-toolbar">
                       <span className="health-report-blackframes-label">
-                        {selectedUnreadable.size} of {healthReport.unreadable.length} selected
+                        {selectedUnreadable.size} of {showHealthReport.unreadable.length} selected
                       </span>
                       <div className="health-report-blackframes-actions">
                         <button className="btn-text" onClick={selectAllUnreadable}>Select All</button>
@@ -713,7 +742,7 @@ export const ScreenBrowseDatasets: React.FC = () => {
                         <button
                           className="btn-danger btn-sm"
                           onClick={handleRemoveUnreadable}
-                          disabled={selectedUnreadable.size === 0 || jobStatus === "running"}
+                          disabled={selectedUnreadable.size === 0 || isJobOnCurrent}
                           title="Deletes the HR and LR files of each selected pair and removes them from the manifest"
                         >
                           <Trash2 size={12} /> Remove Selected ({selectedUnreadable.size})
@@ -721,7 +750,7 @@ export const ScreenBrowseDatasets: React.FC = () => {
                       </div>
                     </div>
                     <div className="health-report-blackframes-list">
-                      {healthReport.unreadable.map((rel) => (
+                      {showHealthReport.unreadable.map((rel) => (
                         <label key={rel} className="health-report-blackframe-item">
                           <input
                             type="checkbox"
@@ -734,11 +763,11 @@ export const ScreenBrowseDatasets: React.FC = () => {
                     </div>
                   </div>
                 )}
-                {healthReport.black_frames.length > 0 && (
+                {showHealthReport.black_frames.length > 0 && (
                   <div className="health-report-blackframes">
                     <div className="health-report-blackframes-toolbar">
                       <span className="health-report-blackframes-label">
-                        {selectedBlackFrames.size} of {healthReport.black_frames.length} selected
+                        {selectedBlackFrames.size} of {showHealthReport.black_frames.length} selected
                       </span>
                       <div className="health-report-blackframes-actions">
                         <button className="btn-text" onClick={selectAllBlackFrames}>Select All</button>
@@ -746,14 +775,14 @@ export const ScreenBrowseDatasets: React.FC = () => {
                         <button
                           className="btn-danger btn-sm"
                           onClick={handlePrune}
-                          disabled={selectedBlackFrames.size === 0 || jobStatus === "running"}
+                          disabled={selectedBlackFrames.size === 0 || isJobOnCurrent}
                         >
                           <Trash2 size={12} /> Prune Selected ({selectedBlackFrames.size})
                         </button>
                       </div>
                     </div>
                     <div className="health-report-blackframes-list">
-                      {healthReport.black_frames.map((filename) => (
+                      {showHealthReport.black_frames.map((filename) => (
                         <label key={filename} className="health-report-blackframe-item">
                           <input
                             type="checkbox"

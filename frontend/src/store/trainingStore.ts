@@ -67,6 +67,7 @@ export interface HardwareData {
 interface TrainingState {
   status: TrainingStatus;
   activeTrainingRunId: string | null;
+  activeRunDirId: string | null;
   iter: number;
   epoch: number;
   batch: number;
@@ -111,6 +112,7 @@ interface TrainingState {
   setStatus: (status: TrainingStatus) => void;
   setError: (code: string, message: string) => void;
   setActiveRun: (runId: string | null) => void;
+  setActiveRunDir: (runDirId: string | null) => void;
   setValidationFrames: (frames: ValidationFrames | null) => void;
   pushValidationFrames: (epoch: number, frames: ValidationFrames, psnr?: number | null, ssim?: number | null, fullPsnr?: number | null, fullSsim?: number | null) => void;
   setValidationRunning: (v: boolean) => void;
@@ -128,6 +130,7 @@ interface TrainingState {
 export const useTrainingStore = create<TrainingState>((set) => ({
   status: "idle",
   activeTrainingRunId: null,
+  activeRunDirId: null,
   iter: 0,
   epoch: 0,
   batch: 0,
@@ -172,6 +175,7 @@ export const useTrainingStore = create<TrainingState>((set) => ({
   setStatus: (status) => set({ status }),
   setError: (code, message) => set({ errorCode: code, errorMessage: message, status: "failed" }),
   setActiveRun: (runId) => set({ activeTrainingRunId: runId }),
+  setActiveRunDir: (runDirId) => set({ activeRunDirId: runDirId }),
   setValidationFrames: (frames) => set({ validationFrames: frames }),
   setLaunchConfig: (config) => set({ launchConfig: config }),
 
@@ -256,6 +260,7 @@ export const useTrainingStore = create<TrainingState>((set) => ({
   reset: () => set({
     status: "idle",
     activeTrainingRunId: null,
+    activeRunDirId: null,
     iter: 0,
     epoch: 0,
     batch: 0,

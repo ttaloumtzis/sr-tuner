@@ -65,7 +65,7 @@ describe("projectStore", () => {
     const run = {
       run_id: "run-1",
       name: "Run 1",
-      status: "completed" as const,
+      status: "finished" as const,
       created_at: "2024-01-01T00:00:00Z",
       started_at: null,
       completed_at: null,

@@ -493,6 +493,7 @@ export function ScreenTrainingSetup() {
 
       useTrainingStore.getState().reset();
       useTrainingStore.getState().setActiveRun(res.job_id);
+      useTrainingStore.getState().setActiveRunDir(res.run_id ?? null);
       useTrainingStore.getState().setStatus("running");
       useTrainingStore.getState().setLaunchConfig({
         totalEpochs: s.schedule.totalEpochs,

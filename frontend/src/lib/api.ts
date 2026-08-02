@@ -1,4 +1,4 @@
-import type { DatasetInfo, DatasetInspectInfo, HealthReport, JobAccepted, JobStatus, WorkspaceInfo, TrainParams, InferParams, EnvInfo, DatasetBuildParams, DatasetValidateParams, DatasetHealthParams, DatasetMergeParams, ExportParams, ModelInstance, ModelVersion } from "./api-types";
+import type { DatasetInfo, DatasetInspectInfo, HealthReport, JobAccepted, JobStatus, WorkspaceInfo, TrainParams, InferParams, EnvInfo, DatasetBuildParams, DatasetValidateParams, DatasetHealthParams, DatasetMergeParams, ExportParams, ModelInstance, ModelVersion, ModelRuns, CheckpointEntry } from "./api-types";
 
 let BASE_URL = "http://localhost:8765";
 
@@ -106,6 +106,14 @@ export function getDatasetImageUrl(datasetName: string, kind: "hr" | "lr", index
 export const listJobs = () => request<{ jobs: JobStatus[] }>("GET", "/api/jobs");
 export const getJobStatus = (jobId: string) => request<JobStatus>("GET", `/api/jobs/${jobId}`);
 export const cancelJob = (jobId: string) => request<{ status: string }>("POST", `/api/jobs/${jobId}/cancel`);
+
+// ── Runs ────────────────────────────────────────────────────────────────
+
+export const listRuns = () => request<ModelRuns[]>("GET", "/api/runs");
+export const listRunCheckpoints = (instance: string, runId: string) =>
+  request<CheckpointEntry[]>("GET", `/api/runs/${encodeURIComponent(instance)}/${encodeURIComponent(runId)}/checkpoints`);
+export const deleteRun = (instance: string, runId: string) =>
+  request<{ deleted: string }>("DELETE", `/api/runs/${encodeURIComponent(instance)}/${encodeURIComponent(runId)}`);
 
 // ── Env ─────────────────────────────────────────────────────────────────
 

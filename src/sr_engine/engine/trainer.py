@@ -1,6 +1,7 @@
 """Training engine — orchestrates model training, checkpointing, logging."""
 
 import functools
+import json
 import random
 import time
 from pathlib import Path
@@ -93,6 +94,9 @@ class TrainerCallback:
     def on_validate_progress(self, epoch: int, done: int, total: int) -> None:
         """Called after each image processed during validation."""
 
+    def on_checkpoint_saved(self, path: str, epoch: int, **metrics: Any) -> None:
+        """Called after a checkpoint is written to disk."""
+
     def on_done(self, elapsed_seconds: float) -> None:
         """Called once when training finishes."""
 
@@ -125,6 +129,12 @@ class _MetricsStreamCallback(TrainerCallback):
         if frames:
             event["frames"] = frames
         self._stream.write(event)
+
+    def on_checkpoint_saved(self, path: str, epoch: int, **metrics: Any) -> None:
+        """Write a checkpoint-saved event to the metrics stream."""
+        self._stream.write({
+            "type": "checkpoint_saved", "path": path, "epoch": epoch, **metrics,
+        })
 
     def on_done(self, elapsed_seconds: float) -> None:
         """Write a done event and close the metrics stream."""
@@ -185,6 +195,7 @@ class Trainer:
         self.max_epochs = int(train_cfg.get("max_epochs", 100))
         self.save_per_epoch = int(train_cfg.get("save_per_epoch", 5))
         self.current_epoch = 0
+        self.last_val_metrics: dict[str, Any] | None = None
 
         self.learning_rate = float(train_cfg.get("learning_rate", 1e-4))
         if checkpoint_dir is not None:
@@ -380,6 +391,33 @@ class Trainer:
             step=epoch,
             config=ckpt_config,
             backend_info={"device": str(self.device)},
+        )
+
+        # Per-checkpoint metrics snapshot — consumed by the Runs API to
+        # avoid re-parsing metrics.jsonl for every listing.
+        if self.last_val_metrics:
+            sidecar = {
+                "epoch": epoch,
+                "saved_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "psnr": self.last_val_metrics.get("psnr"),
+                "ssim": self.last_val_metrics.get("ssim"),
+                "full_psnr": self.last_val_metrics.get("full_psnr"),
+                "full_ssim": self.last_val_metrics.get("full_ssim"),
+                "val_loss": self.last_val_metrics.get("val_loss"),
+            }
+            try:
+                (path.with_name(f"epoch_{epoch:03d}_metrics.json")).write_text(
+                    json.dumps(sidecar, indent=2) + "\n", encoding="utf-8",
+                )
+            except OSError:
+                log.warning("Could not write metrics sidecar for epoch %d", epoch)
+
+        self._emit(
+            "checkpoint_saved",
+            path=str(path),
+            epoch=epoch,
+            psnr=self.last_val_metrics.get("psnr") if self.last_val_metrics else None,
+            ssim=self.last_val_metrics.get("ssim") if self.last_val_metrics else None,
         )
 
     def _run_step(self, lr: torch.Tensor, hr: torch.Tensor) -> dict[str, float]:
@@ -639,6 +677,7 @@ class Trainer:
                         val_metrics["psnr"], val_metrics["ssim"],
                     )
                     self._emit("validate", epoch=epoch + 1, **val_metrics)
+                    self.last_val_metrics = val_metrics
                 self._emit("phase", phase="saving", epoch=epoch + 1)
                 self._save(epoch + 1)
 

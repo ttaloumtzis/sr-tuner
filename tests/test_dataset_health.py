@@ -157,6 +157,28 @@ class TestCheckDatasetHealth:
         report = check_dataset_health(tmp_path)
         assert report["unreadable"] == ["HR/f0001.png"]
 
+    def test_integrity_scan_reports_progress(self, tmp_path):
+        """The unreadable scan must report progress through the reporter."""
+        from conftest import _create_dataset_with_manifest
+        from sr_engine.utils.progress import ProgressReporter
+
+        class RecordingReporter(ProgressReporter):
+            def __init__(self):
+                self.starts = []
+                self.updates = 0
+
+            def start(self, total=None, desc=""):
+                self.starts.append((total, desc))
+
+            def update(self, n=1):
+                self.updates += n
+
+        d = _create_dataset_with_manifest(tmp_path, num_pairs=2)
+        reporter = RecordingReporter()
+        check_dataset_health(d, reporter=reporter)
+        assert reporter.updates == 2 + 4  # 2 metric frames + 2 HR + 2 LR integrity files
+        assert any(desc == "Checking Image Integrity" for _, desc in reporter.starts)
+
     def test_old_report_normalized_on_load(self, tmp_path):
         """Cached reports without the 'unreadable' key are normalized."""
         from conftest import _make_image

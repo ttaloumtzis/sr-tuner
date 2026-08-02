@@ -31,7 +31,7 @@ const makeSRProjFile = (overrides: Record<string, unknown> = {}) => ({
 const makeRun = (runId = "run-1") => ({
   run_id: runId,
   name: `Run ${runId}`,
-  status: "configured" as const,
+  status: "stopped" as const,
   created_at: "2024-01-01T00:00:00Z",
   started_at: null,
   completed_at: null,
@@ -119,11 +119,11 @@ describe("SRProjManager", () => {
     SRProjManager.addRun(makeRun("run-1"));
     SRProjManager.addRun(makeRun("run-2"));
 
-    SRProjManager.updateRun("run-1", { status: "completed" });
+    SRProjManager.updateRun("run-1", { status: "finished" });
 
     const runs = SRProjManager.current?.runs ?? [];
-    expect(runs.find((r) => r.run_id === "run-1")?.status).toBe("completed");
-    expect(runs.find((r) => r.run_id === "run-2")?.status).toBe("configured");
+    expect(runs.find((r) => r.run_id === "run-1")?.status).toBe("finished");
+    expect(runs.find((r) => r.run_id === "run-2")?.status).toBe("stopped");
   });
 
   it("save() serializes current state to disk via invoke", async () => {

@@ -327,7 +327,7 @@ def check_dataset_health(dataset_dir: Path,
         "channels": dict(channels_summary),
         "computed_threshold": round(threshold, 2),
         "black_frames": black_filenames,
-        "unreadable": find_unreadable_images(dataset_dir),
+        "unreadable": find_unreadable_images(dataset_dir, reporter=reporter),
     }
 
 

@@ -124,6 +124,7 @@ export interface InferParams {
 export interface JobAccepted {
   job_id: string;
   status: string;
+  run_id?: string | null;
 }
 
 export interface JobStatus {
@@ -219,6 +220,30 @@ export interface CheckpointEntry {
   created_at: string;
   file_size_mb: number;
   metrics: { loss?: number; psnr?: number; ssim?: number };
+}
+
+// ── Runs (disk-derived ground truth) ────────────────────────────────
+
+export type RunStatus = "running" | "finished" | "failed" | "stopped" | "interrupted";
+
+export interface RunInfo {
+  run_id: string;
+  status: RunStatus;
+  created_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+  checkpoint_count: number;
+  total_size_mb: number;
+  last_epoch: number;
+  has_metrics: boolean;
+  config: Record<string, unknown> | null;
+}
+
+export interface ModelRuns {
+  name: string;
+  architecture: string | null;
+  scale: number | null;
+  runs: RunInfo[];
 }
 
 export interface MetricsEvent {

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useTrainingStore, type HardwareData } from "../store/trainingStore";
 import { useUiStore } from "../store/uiStore";
+import { useRunsStore } from "../store/runsStore";
 import { getBaseUrl } from "../lib/api";
 
 const SPEED_WINDOW_MS = 5000;
@@ -85,7 +86,12 @@ export function useTrainingSSE() {
               useTrainingStore.getState().setStatus("done");
               useTrainingStore.getState().setValidationRunning(false);
               useTrainingStore.getState().setValidationProgress(null);
+              useRunsStore.getState().bumpRefresh();
             }
+            break;
+          }
+          case "checkpoint_saved": {
+            useRunsStore.getState().bumpRefresh();
             break;
           }
           case "step": {
@@ -186,12 +192,14 @@ export function useTrainingSSE() {
             useTrainingStore.getState().setStatus("done");
             useTrainingStore.getState().setValidationRunning(false);
             useTrainingStore.getState().setValidationProgress(null);
+            useRunsStore.getState().bumpRefresh();
             break;
           }
           case "error": {
             const code = (event.code as string) ?? "UNKNOWN_ERROR";
             const msg = (event.message as string) ?? "An unknown training error occurred";
             useTrainingStore.getState().setError(code, msg);
+            useRunsStore.getState().bumpRefresh();
             useUiStore.getState().setLastApiError({
               type: "error",
               code,

@@ -1,20 +1,21 @@
-// §13 Checkpoints Screen
-// Tasks: 13.1–13.8, 13.9a, 13.9b, §23.2+23.7 RunSelectorPanel sidebar
+// Runs & Checkpoints Screen — 3-column layout:
+//   left   — models & their runs (disk-derived status, run deletion)
+//   center — checkpoints + metrics for the selected run
+//   right  — selected checkpoint detail + inference stub
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useTrainingStore } from "../../store/trainingStore";
-import { useCheckpointStore } from "../../store/checkpointStore";
+import { useRunsStore } from "../../store/runsStore";
 import { useUiStore } from "../../store/uiStore";
 import { useInferenceStore } from "../../store/inferenceStore";
-import { useProjectStore } from "../../store/projectStore";
 import { useModelStore } from "../../store/modelStore";
 import { useRunConfigStore } from "../../store/runConfigStore";
 import { useToast } from "../../components/shell/ToastProvider";
 import { Tag } from "../../components/ui/Tag";
 import { Btn } from "../../components/ui/Btn";
 
-import type { CheckpointEntry } from "../../lib/api-types";
-import { basename } from "../../lib/path";
+import type { CheckpointEntry, ModelRuns, RunInfo, RunStatus } from "../../lib/api-types";
+import type { Hyperparameters } from "../../store/modelStore";
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -28,7 +29,8 @@ function fmtSize(mb: number): string {
   return `${mb.toFixed(1)} MB`;
 }
 
-function fmtDate(iso: string): string {
+function fmtDate(iso: string | null | undefined): string {
+  if (!iso) return "—";
   try {
     return new Date(iso).toLocaleDateString(undefined, {
       month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
@@ -37,6 +39,23 @@ function fmtDate(iso: string): string {
     return iso;
   }
 }
+
+function shortRunId(runId: string): string {
+  // run_20260702_090000 → 2026-07-02 09:00
+  const m = runId.match(/^run_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})(?:_(\d+))?$/);
+  if (!m) return runId;
+  const [, y, mo, d, h, mi] = m;
+  const suffix = m[7] ? ` #${m[7]}` : "";
+  return `${y}-${mo}-${d} ${h}:${mi}${suffix}`;
+}
+
+const STATUS_COLOR: Record<RunStatus, string> = {
+  running: "var(--green)",
+  finished: "var(--green)",
+  failed: "var(--red)",
+  stopped: "var(--amber)",
+  interrupted: "var(--dim)",
+};
 
 // ── Sorting ───────────────────────────────────────────────────────────────
 
@@ -89,7 +108,7 @@ function ColHeader({ label, col, current, dir, onSort }: ColHeaderProps) {
   );
 }
 
-// ── Checkpoints Table (§13.2) ─────────────────────────────────────────────
+// ── Checkpoints Table ─────────────────────────────────────────────────────
 
 interface TableProps {
   entries: CheckpointEntry[];
@@ -200,7 +219,7 @@ function CheckpointsTable({
   );
 }
 
-// ── Storage Summary Panel (§13.6) ─────────────────────────────────────────
+// ── Storage Summary Panel ─────────────────────────────────────────────────
 
 function StorageSummaryPanel({ entries }: { entries: CheckpointEntry[] }) {
   const totalMb = entries.reduce((acc, e) => acc + e.file_size_mb, 0);
@@ -226,7 +245,7 @@ function StorageSummaryPanel({ entries }: { entries: CheckpointEntry[] }) {
   );
 }
 
-// ── Delete-Disabled Banner (§13.5) ────────────────────────────────────────
+// ── Delete-Disabled Banner ────────────────────────────────────────────────
 
 function DeleteDisabledBanner() {
   return (
@@ -259,11 +278,12 @@ function Row({ label, value, mono = true }: { label: string; value: string; mono
   );
 }
 
-// ── Detail Panel (§13.3) ─────────────────────────────────────────────────
+// ── Detail Panel ──────────────────────────────────────────────────────────
 
 interface DetailPanelProps {
   entry: CheckpointEntry | null;
-  trainingActive: boolean;
+  deleteDisabled: boolean;
+  deleteDisabledTitle: string | undefined;
   onExportPth: (e: CheckpointEntry) => void;
   onExportOnnx: (e: CheckpointEntry) => void;
   onDeleteRequest: (e: CheckpointEntry) => void;
@@ -272,7 +292,7 @@ interface DetailPanelProps {
 }
 
 function DetailPanel({
-  entry, trainingActive, onExportPth, onExportOnnx, onDeleteRequest, onRunInference, onResume,
+  entry, deleteDisabled, deleteDisabledTitle, onExportPth, onExportOnnx, onDeleteRequest, onRunInference, onResume,
 }: DetailPanelProps) {
   return (
     <div style={{
@@ -325,7 +345,7 @@ function DetailPanel({
             {entry.filename}
           </div>
 
-          {/* Export buttons (§13.4) */}
+          {/* Export buttons */}
           <div style={{
             padding: "8px 12px", display: "flex", flexDirection: "column", gap: 6,
             borderTop: "1px solid var(--border)", flexShrink: 0,
@@ -338,7 +358,7 @@ function DetailPanel({
             </Btn>
           </div>
 
-          {/* §24.1 — Resume from checkpoint */}
+          {/* Resume from checkpoint */}
           <div style={{
             padding: "8px 12px", display: "flex", flexDirection: "column", gap: 6,
             borderTop: "1px solid var(--border)", flexShrink: 0,
@@ -348,18 +368,18 @@ function DetailPanel({
             </Btn>
           </div>
 
-          {/* Navigation + Delete (§13.9a, §13.5) */}
+          {/* Navigation + Delete */}
           <div style={{
             padding: "8px 12px", display: "flex", flexDirection: "column", gap: 6,
             borderTop: "1px solid var(--border)", flexShrink: 0,
           }}>
-            <Btn variant="ghost" color="var(--blue)" full onClick={onRunInference}>
-              Run Inference →
+            <Btn variant="solid" color="var(--green)" full onClick={onRunInference}>
+              Use in Inference →
             </Btn>
             <Btn
               variant="ghost" color="var(--red)" full
-              disabled={trainingActive}
-              title={trainingActive ? "Cannot delete checkpoints while training is active" : undefined}
+              disabled={deleteDisabled}
+              title={deleteDisabledTitle}
               onClick={() => onDeleteRequest(entry)}
             >
               Delete
@@ -371,7 +391,7 @@ function DetailPanel({
   );
 }
 
-// ── Delete Confirmation Scrim (§13.5) ─────────────────────────────────────
+// ── Delete Confirmation Scrim (checkpoint) ────────────────────────────────
 
 interface DeleteScrimProps {
   entry: CheckpointEntry;
@@ -417,28 +437,299 @@ function DeleteConfirmScrim({ entry, onConfirm, onCancel }: DeleteScrimProps) {
   );
 }
 
-// ── ScreenCheckpoints — §13.1 layout + §23.2+23.7 RunSelectorPanel ───────
+// ── Run Delete Confirmation Scrim ─────────────────────────────────────────
+
+interface RunDeleteScrimProps {
+  run: RunInfo;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+
+function RunDeleteConfirmScrim({ run, onConfirm, onCancel }: RunDeleteScrimProps) {
+  return (
+    <div style={{
+      position: "absolute", inset: 0,
+      background: "rgba(13,15,17,0.72)",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      zIndex: 100,
+    }}>
+      <div style={{
+        background: "var(--bg1)", border: "1px solid var(--border)",
+        borderRadius: "var(--radius-md)", padding: "20px 24px",
+        width: 340, display: "flex", flexDirection: "column", gap: 14,
+      }}>
+        <div style={{ fontSize: 13, color: "var(--text)", fontFamily: "var(--font-sans)", fontWeight: 600 }}>
+          Delete run {run.run_id}?
+        </div>
+        <div style={{ fontSize: 11, color: "var(--dim)", fontFamily: "var(--font-mono)", lineHeight: 1.8 }}>
+          The run folder and everything in it will be permanently deleted:
+          <div style={{
+            marginTop: 6, padding: "6px 10px",
+            background: "var(--bg2)", borderRadius: "var(--radius-sm)",
+            color: "var(--red)", fontSize: 10, lineHeight: 2,
+          }}>
+            {run.checkpoint_count} checkpoint(s) · {fmtSize(run.total_size_mb)}
+            {run.has_metrics && <><br />metrics.jsonl</>}
+            <br />validation frames
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <Btn onClick={onCancel}>Cancel</Btn>
+          <Btn variant="solid" color="var(--red)" onClick={onConfirm}>Delete</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Models & Runs Sidebar ─────────────────────────────────────────────────
+
+interface SidebarProps {
+  models: ModelRuns[];
+  selectedInstance: string | null;
+  selectedRunId: string | null;
+  activeRunDirId: string | null;
+  refreshing: boolean;
+  onSelectRun: (instance: string, runId: string) => void;
+  onDeleteRequest: (run: RunInfo) => void;
+  onRefresh: () => void;
+}
+
+function StatusDot({ status }: { status: RunStatus }) {
+  const running = status === "running";
+  return (
+    <span
+      title={status}
+      style={{
+        display: "inline-block",
+        width: 7, height: 7, borderRadius: "50%",
+        background: STATUS_COLOR[status],
+        flexShrink: 0,
+        animation: running ? "tabbar-pulse 1.4s ease-in-out infinite" : undefined,
+      }}
+    />
+  );
+}
+
+function ModelsRunsSidebar({
+  models, selectedInstance, selectedRunId, activeRunDirId, refreshing, onSelectRun, onDeleteRequest, onRefresh,
+}: SidebarProps) {
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+
+  if (models.length === 0) {
+    return (
+      <div style={{
+        width: 230, borderRight: "1px solid var(--border)", background: "var(--bg1)",
+        display: "flex", flexDirection: "column", flexShrink: 0,
+      }}>
+        <SidebarHeader refreshing={refreshing} onRefresh={onRefresh} />
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <span style={{ fontSize: 11, color: "var(--dim)", fontFamily: "var(--font-mono)", textAlign: "center", lineHeight: 1.7 }}>
+            No model instances yet.
+            <br />
+            Create one in Model Config.
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{
+      width: 230, borderRight: "1px solid var(--border)", background: "var(--bg1)",
+      display: "flex", flexDirection: "column", flexShrink: 0, minWidth: 0,
+    }}>
+      <SidebarHeader refreshing={refreshing} onRefresh={onRefresh} />
+
+      <div style={{ flex: 1, overflow: "auto", padding: "4px 0" }}>
+        {models.map((m) => {
+          const isCollapsed = collapsed[m.name] ?? false;
+          const hasRuns = m.runs.length > 0;
+          return (
+            <div key={m.name}>
+              <button
+                onClick={() => setCollapsed((c) => ({ ...c, [m.name]: !(c[m.name] ?? false) }))}
+                style={{
+                  display: "flex", alignItems: "center", gap: 5,
+                  width: "100%", padding: "6px 10px",
+                  background: "none", border: "none", cursor: "pointer",
+                  color: "var(--text)", fontSize: 11, fontFamily: "var(--font-sans)",
+                  fontWeight: 600,
+                }}
+              >
+                <span style={{ fontSize: 9, color: "var(--dim)", width: 10, flexShrink: 0 }}>
+                  {isCollapsed ? "▸" : "▾"}
+                </span>
+                <span style={{ flex: 1, textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {m.name}
+                </span>
+                <span style={{ fontSize: 9, color: "var(--dim)", fontFamily: "var(--font-mono)" }}>
+                  {hasRuns ? `${m.runs.length} run${m.runs.length > 1 ? "s" : ""}` : "0 runs"}
+                </span>
+              </button>
+
+              {!isCollapsed && hasRuns && (
+                <div>
+                  {m.runs.map((run) => {
+                    const selected = selectedInstance === m.name && selectedRunId === run.run_id;
+                    const active = activeRunDirId === run.run_id;
+                    return (
+                      <div
+                        key={run.run_id}
+                        onClick={() => onSelectRun(m.name, run.run_id)}
+                        title={run.error ? `${run.status}: ${run.error}` : `${run.run_id} — ${run.status}`}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 6,
+                          padding: "4px 10px 4px 25px",
+                          background: selected ? "var(--bg2)" : "transparent",
+                          borderLeft: selected ? "2px solid var(--green)" : "2px solid transparent",
+                          cursor: "pointer",
+                          transition: "var(--transition-fast)",
+                        }}
+                      >
+                        <StatusDot status={run.status} />
+                        <span style={{
+                          flex: 1, fontSize: 10, fontFamily: "var(--font-mono)",
+                          color: selected ? "var(--text)" : "var(--muted)",
+                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                        }}>
+                          {shortRunId(run.run_id)}
+                        </span>
+                        <span style={{ fontSize: 9, color: "var(--dim)", fontFamily: "var(--font-mono)", flexShrink: 0 }}>
+                          {run.checkpoint_count}
+                        </span>
+                        <button
+                          onClick={(ev) => { ev.stopPropagation(); onDeleteRequest(run); }}
+                          disabled={active}
+                          title={active ? "Cannot delete the run that is currently training" : `Delete ${run.run_id}`}
+                          style={{
+                            background: "none", border: "none",
+                            color: active ? "var(--dim)" : "var(--red)",
+                            cursor: active ? "default" : "pointer",
+                            fontSize: 12, lineHeight: 1, padding: "1px 3px",
+                            opacity: active ? 0.35 : 1,
+                            flexShrink: 0,
+                          }}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {!isCollapsed && !hasRuns && (
+                <div style={{ padding: "2px 10px 8px 25px", fontSize: 9, color: "var(--dim)", fontFamily: "var(--font-mono)" }}>
+                  No runs yet — start training
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Legend */}
+      <div style={{
+        borderTop: "1px solid var(--border)", padding: "8px 10px",
+        display: "flex", flexDirection: "column", gap: 4, flexShrink: 0,
+        background: "var(--bg2)",
+      }}>
+        {([
+          ["finished", "finished"],
+          ["failed", "failed"],
+          ["stopped", "stopped"],
+          ["running", "running"],
+          ["interrupted", "interrupted"],
+        ] as [RunStatus, string][]).map(([status, label]) => (
+          <div key={status} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <StatusDot status={status} />
+            <span style={{ fontSize: 9, color: "var(--muted)", fontFamily: "var(--font-mono)" }}>
+              {label}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SidebarHeader({ refreshing, onRefresh }: { refreshing: boolean; onRefresh: () => void }) {
+  return (
+    <div style={{
+      padding: "8px 10px", borderBottom: "1px solid var(--border)",
+      display: "flex", alignItems: "center", gap: 6, flexShrink: 0,
+      background: "var(--bg1)",
+    }}>
+      <span style={{
+        flex: 1, fontSize: 10, color: "var(--muted)", fontFamily: "var(--font-mono)",
+        letterSpacing: "0.08em",
+      }}>
+        MODELS &amp; RUNS
+      </span>
+      <button
+        onClick={onRefresh}
+        title="Refresh runs from disk"
+        style={{
+          background: "none", border: "1px solid var(--border)", borderRadius: 4,
+          color: "var(--muted)", cursor: "pointer", fontSize: 11, lineHeight: 1,
+          padding: "3px 6px", fontFamily: "var(--font-mono)",
+        }}
+      >
+        {refreshing ? "…" : "⟳"}
+      </button>
+    </div>
+  );
+}
+
+// ── ScreenCheckpoints ─────────────────────────────────────────────────────
 
 export function ScreenCheckpoints() {
-  const status         = useTrainingStore((s) => s.status);
-  const activeRunId    = useTrainingStore((s) => s.activeTrainingRunId);
-  const setActiveTab   = useUiStore((s) => s.setActiveTab);
-  const checkpointsByRun  = useCheckpointStore((s) => s.checkpointsByRun);
-  const lastExportDone    = useCheckpointStore((s) => s.lastExportDone);
-  const setLastExportDone = useCheckpointStore((s) => s.setLastExportDone);
-  const project        = useProjectStore((s) => s.project);
+  const status          = useTrainingStore((s) => s.status);
+  const activeRunDirId  = useTrainingStore((s) => s.activeRunDirId);
+  const setActiveTab    = useUiStore((s) => s.setActiveTab);
+  const models          = useRunsStore((s) => s.models);
+  const loading         = useRunsStore((s) => s.loading);
+  const refreshCounter  = useRunsStore((s) => s.refreshCounter);
+  const selectedInstance = useRunsStore((s) => s.selectedInstance);
+  const selectedRunId   = useRunsStore((s) => s.selectedRunId);
+  const checkpointsByRun = useRunsStore((s) => s.checkpointsByRun);
+  const selectedCheckpointPath = useRunsStore((s) => s.selectedCheckpointPath);
   const { show } = useToast();
 
   const trainingActive = status === "running";
-  const runId = activeRunId;
-  const allEntries: CheckpointEntry[] = runId ? (checkpointsByRun[runId] ?? []) : [];
+  const allEntries: CheckpointEntry[] = selectedRunId ? (checkpointsByRun[selectedRunId] ?? []) : [];
 
   const [sortCol, setSortCol]       = useState<SortCol>("epoch");
   const [sortDir, setSortDir]       = useState<SortDir>("desc");
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [deletingEntry, setDeletingEntry] = useState<CheckpointEntry | null>(null);
+  const [deletingRun, setDeletingRun] = useState<{ instance: string; run: RunInfo } | null>(null);
 
-  // §13.8 — Auto-tag highest PSNR checkpoint as "best"
+  // Initial load + background refresh every 15s.
+  useEffect(() => {
+    const { refresh } = useRunsStore.getState();
+    refresh();
+    const t = setInterval(() => useRunsStore.getState().refresh(), 15000);
+    return () => clearInterval(t);
+  }, []);
+
+  // SSE-driven refresh (checkpoint_saved, run lifecycle events).
+  useEffect(() => {
+    if (refreshCounter > 0) useRunsStore.getState().refresh();
+  }, [refreshCounter]);
+
+  // A training run just started — surface it in the sidebar immediately.
+  useEffect(() => {
+    if (trainingActive && activeRunDirId) useRunsStore.getState().refresh();
+  }, [trainingActive, activeRunDirId]);
+
+  const selectedRun: RunInfo | null = useMemo(() => {
+    if (!selectedInstance || !selectedRunId) return null;
+    return models.find((m) => m.name === selectedInstance)?.runs.find((r) => r.run_id === selectedRunId) ?? null;
+  }, [models, selectedInstance, selectedRunId]);
+
+  const isActiveRun = selectedRun != null && activeRunDirId === selectedRun.run_id && trainingActive;
+
   const bestPsnrPath = useMemo(() => {
     let best: CheckpointEntry | null = null;
     for (const e of allEntries) {
@@ -449,7 +740,6 @@ export function ScreenCheckpoints() {
     return best?.path ?? null;
   }, [allEntries]);
 
-  // "latest" = last entry in arrival order
   const latestPath = allEntries[allEntries.length - 1]?.path ?? null;
 
   const sorted = useMemo(
@@ -457,17 +747,7 @@ export function ScreenCheckpoints() {
     [allEntries, sortCol, sortDir],
   );
 
-  const selectedEntry = sorted.find((e) => e.path === selectedPath) ?? null;
-
-  // §13.4 — Fire export-done toast from ipc.ts signal
-  const prevExportRef = useRef<typeof lastExportDone>(null);
-  useEffect(() => {
-    if (lastExportDone && lastExportDone !== prevExportRef.current) {
-      prevExportRef.current = lastExportDone;
-      show("success", `Exported ${basename(lastExportDone.path)} (${fmtSize(lastExportDone.sizeMb)})`, 4000);
-      setLastExportDone(null);
-    }
-  }, [lastExportDone, show, setLastExportDone]);
+  const selectedEntry = sorted.find((e) => e.path === selectedCheckpointPath) ?? null;
 
   // ── Handlers ─────────────────────────────────────────────────────────
 
@@ -483,8 +763,8 @@ export function ScreenCheckpoints() {
 
   const handleDeleteConfirm = () => {
     if (!deletingEntry) return;
-    // TODO: replace with api call
-    if (selectedPath === deletingEntry.path) setSelectedPath(null);
+    // TODO: replace with api call (per-checkpoint delete)
+    if (selectedCheckpointPath === deletingEntry.path) useRunsStore.getState().selectCheckpoint(null);
     setDeletingEntry(null);
   };
 
@@ -496,21 +776,39 @@ export function ScreenCheckpoints() {
     // TODO: replace with api call
   };
 
-  // §24.2 — Pre-fill Training Setup from run config and set resumeFrom
+  const handleRunDeleteConfirm = async () => {
+    if (!deletingRun) return;
+    const { instance, run } = deletingRun;
+    setDeletingRun(null);
+    const ok = await useRunsStore.getState().deleteRun(instance, run.run_id);
+    if (ok) show("success", `Deleted run ${run.run_id}`, 3000);
+  };
+
+  // Resume prefill from the run's on-disk config snapshot (run_config.json)
+  // + instance metadata from the models API.
   const handleResume = (e: CheckpointEntry) => {
-    const run = project?.runs.find((r) => r.run_id === runId);
-    if (run) {
-      useModelStore.getState().setArchitecture(run.architecture.type);
-      useModelStore.getState().setHyperparameters({
-        scale: run.architecture.upscale_factor,
-        batchSize: run.training_config.batch_size,
-        learningRate: run.training_config.learning_rate,
-        lrScheduler: run.training_config.scheduler,
-        optimizer: run.training_config.optimizer,
-        patchSize: run.training_config.patch_size,
-      });
-      useRunConfigStore.getState().setSchedule({ totalEpochs: run.training_config.num_epochs });
+    const tc = (selectedRun?.config?.train_cfg ?? {}) as Record<string, unknown>;
+    const instName = selectedRun?.config?.instance as string | undefined;
+    const inst = models.find((m) => m.name === instName);
+
+    if (inst?.architecture) {
+      useModelStore.getState().setArchitecture(
+        (inst.architecture === "swinir" ? "swinir" : "rrdb_esrgan") as "rrdb_esrgan" | "swinir",
+      );
     }
+
+    const hp: Partial<Hyperparameters> = { scale: inst?.scale ?? 4 };
+    if (typeof tc.batch_size === "number") hp.batchSize = tc.batch_size;
+    if (typeof tc.learning_rate === "number") hp.learningRate = tc.learning_rate;
+    if (typeof tc.scheduler === "string") hp.lrScheduler = tc.scheduler;
+    if (typeof tc.optimizer === "string") hp.optimizer = tc.optimizer;
+    if (typeof tc.patch_size === "number") hp.patchSize = tc.patch_size;
+    useModelStore.getState().setHyperparameters(hp);
+
+    useRunConfigStore.getState().setSelectedInstance(instName ?? null);
+    useRunConfigStore.getState().setSchedule({
+      totalEpochs: typeof tc.max_epochs === "number" ? tc.max_epochs : 100,
+    });
     useRunConfigStore.getState().setResumeFrom(e.path);
     setActiveTab("training");
   };
@@ -523,47 +821,99 @@ export function ScreenCheckpoints() {
       overflow: "hidden", background: "var(--bg0)",
       position: "relative",
     }}>
-      {/* Checkpoint table */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <CheckpointsTable
+      {/* Left — models & runs */}
+      <ModelsRunsSidebar
+        models={models}
+        selectedInstance={selectedInstance}
+        selectedRunId={selectedRunId}
+        activeRunDirId={activeRunDirId}
+        refreshing={loading}
+        onSelectRun={(instance, runId) => useRunsStore.getState().selectRun(instance, runId)}
+        onDeleteRequest={(run) => {
+          const instance = models.find((m) => m.runs.some((r) => r.run_id === run.run_id))?.name ?? "";
+          setDeletingRun({ instance, run });
+        }}
+        onRefresh={() => useRunsStore.getState().refresh()}
+      />
+
+      {/* Center — checkpoints of the selected run */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
+        <div style={{
+          padding: "7px 12px", borderBottom: "1px solid var(--border)",
+          display: "flex", alignItems: "center", gap: 8,
+          background: "var(--bg1)", flexShrink: 0,
+        }}>
+          {selectedRun == null ? (
+            <span style={{ fontSize: 11, color: "var(--dim)", fontFamily: "var(--font-mono)" }}>
+              Select a run from the left to browse its checkpoints
+            </span>
+          ) : (
+            <>
+              <StatusDot status={selectedRun.status} />
+              <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text)", fontWeight: 600 }}>
+                {selectedRun.run_id}
+              </span>
+              <Tag color={selectedRun.status === "failed" ? "red" : selectedRun.status === "running" ? "green" : selectedRun.status === "finished" ? "green" : "amber"}>
+                {selectedRun.status}
+              </Tag>
+              <span style={{ flex: 1 }} />
+              <span style={{ fontSize: 10, color: "var(--dim)", fontFamily: "var(--font-mono)" }}>
+                {selectedRun.checkpoint_count} ckpt · {fmtSize(selectedRun.total_size_mb)}
+              </span>
+            </>
+          )}
+        </div>
+
+        {selectedRun != null && (
+          <>
+            <CheckpointsTable
               entries={sorted}
               bestPsnrPath={bestPsnrPath}
               latestPath={latestPath}
-              selectedPath={selectedPath}
+              selectedPath={selectedCheckpointPath}
               sortCol={sortCol}
               sortDir={sortDir}
-              trainingActive={trainingActive}
+              trainingActive={isActiveRun}
               onSort={handleSort}
-              onSelect={(e) => setSelectedPath(e.path)}
+              onSelect={(e) => useRunsStore.getState().selectCheckpoint(e.path)}
               onDeleteRequest={handleDeleteRequest}
             />
             <StorageSummaryPanel entries={allEntries} />
-            {trainingActive && <DeleteDisabledBanner />}
-          </div>
+            {isActiveRun && <DeleteDisabledBanner />}
+          </>
+        )}
+      </div>
 
-          {/* Right detail panel — 210px (§13.3) */}
-          <DetailPanel
-            entry={selectedEntry}
-            trainingActive={trainingActive}
-            onExportPth={handleExportPth}
-            onExportOnnx={handleExportOnnx}
-            onDeleteRequest={handleDeleteRequest}
-            onResume={handleResume}
-            onRunInference={() => {
-              // §13.9b: pre-select checkpoint path in inferenceStore before navigating
-              if (selectedPath) {
-                useInferenceStore.getState().setPreselectedCheckpointPath(selectedPath);
-              }
-              setActiveTab("inference");
-            }}
-          />
+      {/* Right — checkpoint detail */}
+      <DetailPanel
+        entry={selectedEntry}
+        deleteDisabled={isActiveRun}
+        deleteDisabledTitle={isActiveRun ? "Cannot delete checkpoints of the run that is currently training" : undefined}
+        onExportPth={handleExportPth}
+        onExportOnnx={handleExportOnnx}
+        onDeleteRequest={handleDeleteRequest}
+        onResume={handleResume}
+        onRunInference={() => {
+          if (selectedCheckpointPath) {
+            useInferenceStore.getState().setPreselectedCheckpointPath(selectedCheckpointPath);
+          }
+          setActiveTab("inference");
+        }}
+      />
 
-      {/* Delete confirmation scrim — position:absolute (§13.5) */}
+      {/* Delete confirmations */}
       {deletingEntry != null && (
         <DeleteConfirmScrim
           entry={deletingEntry}
           onConfirm={handleDeleteConfirm}
           onCancel={() => setDeletingEntry(null)}
+        />
+      )}
+      {deletingRun != null && (
+        <RunDeleteConfirmScrim
+          run={deletingRun.run}
+          onConfirm={handleRunDeleteConfirm}
+          onCancel={() => setDeletingRun(null)}
         />
       )}
     </div>

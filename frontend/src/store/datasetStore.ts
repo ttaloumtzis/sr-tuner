@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { basename } from "../lib/path";
+import type { HealthReport } from "../lib/api-types";
 
 export type DatasetSubTab = "create" | "browse" | "merge";
 export type DatasetMode = "image_folder" | "video_extract" | "on_the_fly";
@@ -93,6 +94,8 @@ interface DatasetState {
   jobStatus: JobStatus;
   jobError: string | null;
   jobType: "build" | "health" | "merge" | "prune" | "validate" | null;
+  jobDatasetPath: string | null;
+  jobHealthReport: HealthReport | null;
   progressSteps: ProgressStep[];
   mergeResults: { scale: number; output_path: string; source_datasets: string[] }[] | null;
   validationResult: { valid: boolean; problems: string[]; num_pairs: number } | null;
@@ -154,6 +157,8 @@ interface DatasetState {
   setJobStatus: (status: JobStatus) => void;
   setJobError: (err: string | null) => void;
   setJobType: (t: "build" | "health" | "merge" | "prune" | "validate" | null) => void;
+  setJobDatasetPath: (path: string | null) => void;
+  setJobHealthReport: (report: HealthReport | null) => void;
   startProgressStep: (desc: string, total: number | null) => void;
   updateProgressStep: (stepId: number, current: number, fps: number, etaSec: number | null) => void;
   finishProgressStep: (stepId: number) => void;
@@ -224,19 +229,13 @@ export const useDatasetStore = create<DatasetState>((set) => ({
   jobStatus: "idle",
   jobError: null,
   jobType: null,
+  jobDatasetPath: null,
+  jobHealthReport: null,
   progressSteps: [],
   mergeResults: null,
   validationResult: null,
 
-  setSubTab: (subTab) => set({
-    subTab,
-    jobId: null,
-    jobStatus: "idle",
-    jobError: null,
-    jobType: null,
-    progressSteps: [],
-    extractionProgress: null,
-  }),
+  setSubTab: (subTab) => set({ subTab }),
   setMode: (mode) => set({ mode }),
   setScale: (scale) => set({ scale }),
   setKernel: (kernel) => set({ kernel }),
@@ -304,6 +303,8 @@ export const useDatasetStore = create<DatasetState>((set) => ({
   setJobStatus: (jobStatus) => set({ jobStatus }),
   setJobError: (jobError) => set({ jobError }),
   setJobType: (jobType) => set({ jobType }),
+  setJobDatasetPath: (jobDatasetPath) => set({ jobDatasetPath }),
+  setJobHealthReport: (jobHealthReport) => set({ jobHealthReport }),
   startProgressStep: (desc, total) =>
     set((s) => {
       const id = s.progressSteps.length;
@@ -326,7 +327,7 @@ export const useDatasetStore = create<DatasetState>((set) => ({
         st.id === stepId ? { ...st, status: "done" as const } : st
       ),
     })),
-  clearJob: () => set({ jobId: null, jobStatus: "idle", jobError: null, jobType: null, progressSteps: [], extractionProgress: null, mergeResults: null }),
+  clearJob: () => set({ jobId: null, jobStatus: "idle", jobError: null, jobType: null, jobDatasetPath: null, jobHealthReport: null, progressSteps: [], extractionProgress: null, mergeResults: null }),
   setMergeResults: (mergeResults) => set({ mergeResults }),
   setValidationResult: (validationResult) => set({ validationResult }),
 }));

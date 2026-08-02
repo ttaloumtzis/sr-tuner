@@ -53,6 +53,39 @@ class ExportParams(BaseModel):
     format: str = Field(pattern="^(pth|onnx|torchscript|safetensors)$")
     output: str | None = None
 
+# ── Runs ──────────────────────────────────────────────────────────────
+
+class RunInfo(BaseModel):
+    run_id: str
+    status: str
+    created_at: str | None = None
+    finished_at: str | None = None
+    error: str | None = None
+    checkpoint_count: int = 0
+    total_size_mb: float = 0.0
+    last_epoch: int = 0
+    has_metrics: bool = False
+    config: dict | None = None
+
+class ModelRuns(BaseModel):
+    name: str
+    architecture: str | None = None
+    scale: int | None = None
+    runs: list[RunInfo] = []
+
+class CheckpointMetrics(BaseModel):
+    loss: float | None = None
+    psnr: float | None = None
+    ssim: float | None = None
+
+class RunCheckpointEntry(BaseModel):
+    epoch: int
+    filename: str
+    path: str
+    created_at: str
+    file_size_mb: float
+    metrics: CheckpointMetrics
+
 # ── Datasets ────────────────────────────────────────────────────────────
 
 class DatasetBuildParams(BaseModel):

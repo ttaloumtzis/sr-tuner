@@ -1,7 +1,9 @@
+import json
 import multiprocessing
 import shutil
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import structlog
@@ -93,7 +95,39 @@ def _run_training_subprocess(
         if overrides:
             train_cfg = merge_overrides(train_cfg, overrides)
 
-        run_dir = ws.get_run_path(instance) if ws else None
+        run_dir_spec = params.get("run_dir")
+        if run_dir_spec:
+            run_dir = Path(run_dir_spec)
+            run_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            run_dir = ws.get_run_path(instance) if ws else None
+
+        # Durable run snapshot: config + provenance, ground truth for the
+        # Runs UI (resume prefill, run info) — srproj is reconciled against it.
+        if run_dir is not None:
+            try:
+                (run_dir / "run_config.json").write_text(
+                    json.dumps({
+                        "job_id": job_id,
+                        "model": model_name,
+                        "instance": instance,
+                        "dataset": dataset,
+                        "resume": params.get("resume"),
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                        "train_cfg": {k: v for k, v in train_cfg.items()
+                                      if k in ("max_epochs", "batch_size", "learning_rate",
+                                               "scheduler", "optimizer", "patch_size",
+                                               "seed", "weight_decay", "dtype",
+                                               "save_per_epoch", "metrics_frequency",
+                                               "warmup_steps", "losses", "validation")},
+                    }, indent=2, default=str) + "\n",
+                    encoding="utf-8",
+                )
+            except OSError:
+                log.warning("Could not write run_config.json for job %s", job_id)
+
+        if run_dir is not None:
+            Workspace.write_run_status(run_dir, "running", job_id=job_id)
 
         val_cfg = train_cfg.get("validation", {})
         val_enabled = bool(val_cfg.get("enabled", True))
@@ -180,10 +214,14 @@ def _run_training_subprocess(
                 },
             )
 
+        if run_dir is not None:
+            Workspace.write_run_status(run_dir, "finished", job_id=job_id)
         events.publish(job_id, {"type": "phase", "phase": "complete"})
         event_queue.put(None)
 
     except TrainingCancelled:
+        if run_dir is not None:
+            Workspace.write_run_status(run_dir, "stopped", job_id=job_id)
         events.publish(job_id, {"type": "phase", "phase": "cancelled"})
         event_queue.put(None)
 
@@ -197,6 +235,8 @@ def _run_training_subprocess(
             error_code = "CUDA_OUT_OF_MEMORY"
         else:
             error_code = type(e).__name__
+        if run_dir is not None:
+            Workspace.write_run_status(run_dir, "failed", error=str(e), job_id=job_id)
         events.publish(job_id, {"type": "error", "code": error_code, "message": str(e)})
         event_queue.put(None)
 
@@ -259,6 +299,7 @@ def run_training(
                 "resume": params.get("resume"),
                 "overrides": params.get("overrides", {}),
                 "write_metrics_file": params.get("write_metrics_file", True),
+                "run_dir": params.get("run_dir"),
             },
             str(ws.path) if ws else None,
             event_queue,

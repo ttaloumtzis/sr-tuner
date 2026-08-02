@@ -9,13 +9,12 @@ interface Tab {
 }
 
 const TABS: Tab[] = [
-  { id: "dataset",     label: "Dataset Setup",   n: 1 },
-  { id: "model",       label: "Model Config",     n: 2 },
-  { id: "training",    label: "Training Setup",   n: 3 },
-  { id: "metrics",     label: "Live Metrics",     n: 4 },
-  { id: "checkpoints", label: "Checkpoints",      n: 5 },
-  { id: "history",     label: "Run History",      n: 6 },
-  { id: "inference",   label: "Inference",        n: 7 },
+  { id: "dataset",     label: "Dataset Setup",      n: 1 },
+  { id: "model",       label: "Model Config",        n: 2 },
+  { id: "training",    label: "Training Setup",      n: 3 },
+  { id: "metrics",     label: "Live Metrics",        n: 4 },
+  { id: "checkpoints", label: "Runs & Checkpoints",  n: 5 },
+  { id: "inference",   label: "Inference",           n: 6 },
 ];
 
 function PulsingDot() {

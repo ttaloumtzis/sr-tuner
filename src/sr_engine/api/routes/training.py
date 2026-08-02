@@ -1,6 +1,6 @@
 import threading
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from sr_engine.api.deps import get_configs, get_workspace
 from sr_engine.api.schemas import TrainParams
@@ -17,7 +17,18 @@ async def train_start(params: TrainParams, ws: Workspace = Depends(get_workspace
     from sr_engine.api.workers import run_training
 
     overrides = params.to_overrides()
-    job_id = tasks.create_job("train", params=overrides)
+
+    # Allocate the run directory up-front so the client gets a run_id
+    # immediately (and the Runs UI can show it as "running" with no race).
+    run_dir = None
+    if params.instance:
+        try:
+            ws.get_model_instance(params.instance)
+        except FileNotFoundError as e:
+            raise HTTPException(404, str(e))
+        run_dir = ws.get_run_path(params.instance)
+
+    job_id = tasks.create_job("train", params={**overrides, "run_dir": str(run_dir) if run_dir else None})
     thread = threading.Thread(
         target=run_training,
         args=(job_id, {
@@ -27,12 +38,17 @@ async def train_start(params: TrainParams, ws: Workspace = Depends(get_workspace
             "config": params.config,
             "resume": params.resume,
             "overrides": overrides,
-        "write_metrics_file": params.write_metrics_file,
+            "write_metrics_file": params.write_metrics_file,
+            "run_dir": str(run_dir) if run_dir else None,
         }, ws, cfg, tasks, events),
         daemon=True,
     )
     thread.start()
-    return {"job_id": job_id, "status": "accepted"}
+    return {
+        "job_id": job_id,
+        "status": "accepted",
+        "run_id": run_dir.name if run_dir else None,
+    }
 
 
 @router.post("/validate-dataset")

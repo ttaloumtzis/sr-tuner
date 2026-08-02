@@ -1,7 +1,7 @@
 export type ValidationStrategy = "auto_split" | "separate_folder" | "none";
 export type DatasetType = "image_folder" | "video_extract" | "on_the_fly";
 export type Architecture = "rrdb_esrgan" | "swinir";
-export type RunStatus = "configured" | "running" | "paused" | "completed" | "failed";
+export type RunStatus = "running" | "finished" | "failed" | "stopped" | "interrupted";
 export type TabId = "dataset" | "model" | "training" | "metrics" | "checkpoints" | "inference";
 
 export interface AugmentationConfig {

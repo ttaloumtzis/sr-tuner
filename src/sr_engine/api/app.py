@@ -10,7 +10,7 @@ from starlette.responses import StreamingResponse
 from sr_engine.api.event_manager import SSEEventManager
 from sr_engine.api.middleware import RequestLogMiddleware
 from sr_engine.api.task_manager import BackgroundTaskManager
-from sr_engine.api.routes import workspace, models, training, inference, datasets, jobs, env
+from sr_engine.api.routes import workspace, models, training, inference, datasets, jobs, env, runs
 from sr_engine.utils.logging import configure_logging, get_logger
 
 log = get_logger(__name__)
@@ -99,3 +99,4 @@ app.include_router(inference.router)
 app.include_router(datasets.router)
 app.include_router(jobs.router)
 app.include_router(env.router)
+app.include_router(runs.router)

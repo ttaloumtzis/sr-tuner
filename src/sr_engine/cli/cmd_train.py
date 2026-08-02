@@ -7,9 +7,10 @@ from typing import Any
 import click
 import yaml
 
-from sr_engine.engine.trainer import Trainer
+from sr_engine.engine.trainer import TrainingCancelled, Trainer
 from sr_engine.engine.metrics_stream import MetricsStream
 from sr_engine.utils.config import load_config, merge_overrides, validate_config
+from sr_engine.workspace import Workspace
 from .helpers import (make_workspace_config_loader, resolve_model_config,
                       no_workspace_config_option, resolve_reporter,
                       resolve_callbacks, resolve_cancel_check)
@@ -94,6 +95,8 @@ def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate,
             )
 
         run_dir = ws.get_run_path(instance)
+
+        Workspace.write_run_status(run_dir, "running")
 
         # Resolve version: --resume v1, --resume latest, or auto-detect
         version_path = ws.resolve_version(instance, resume)
@@ -225,7 +228,18 @@ def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate,
         callbacks=resolve_callbacks(),
         cancel_check=resolve_cancel_check(),
     )
-    trainer.train()
+    try:
+        trainer.train()
+    except TrainingCancelled:
+        if run_dir is not None:
+            Workspace.write_run_status(run_dir, "stopped")
+        raise
+    except Exception as e:
+        if run_dir is not None:
+            Workspace.write_run_status(run_dir, "failed", error=str(e))
+        raise
+    if run_dir is not None:
+        Workspace.write_run_status(run_dir, "finished")
 
     # Post-training: save model version if in instance mode
     if instance and run_dir:
