@@ -115,4 +115,62 @@ describe("useDatasetSSE", () => {
     expect(useDatasetStore.getState().jobError).toBe("boom");
     expect(FakeEventSource.instances).toHaveLength(1);
   });
+
+  it("resumes progress from the stored value after a reconnect instead of resetting", async () => {
+    useDatasetStore.getState().setJobId("dataset.health_1");
+    useDatasetStore.getState().setJobType("health");
+
+    const { useDatasetSSE } = await import("../useDatasetSSE");
+    const first = renderHook(() => useDatasetSSE());
+    await act(async () => {});
+
+    act(() => {
+      FakeEventSource.instances[0].emit({ type: "progress_start", total: 100, desc: "Scanning" });
+      FakeEventSource.instances[0].emit({ type: "progress_update", n: 40 });
+    });
+
+    first.unmount();
+    await act(async () => {});
+    renderHook(() => useDatasetSSE());
+    await act(async () => {});
+
+    act(() => {
+      FakeEventSource.instances[1].emit({ type: "progress_update", n: 5 });
+    });
+
+    const step = useDatasetStore.getState().progressSteps[0];
+    expect(step.status).toBe("active");
+    expect(step.current).toBe(45);
+  });
+
+  it("routes progress updates to the active step after a reconnect with multiple steps", async () => {
+    useDatasetStore.getState().setJobId("dataset.health_1");
+    useDatasetStore.getState().setJobType("health");
+
+    const { useDatasetSSE } = await import("../useDatasetSSE");
+    const first = renderHook(() => useDatasetSSE());
+    await act(async () => {});
+
+    act(() => {
+      FakeEventSource.instances[0].emit({ type: "progress_start", total: 100, desc: "Phase A" });
+      FakeEventSource.instances[0].emit({ type: "progress_end" });
+      FakeEventSource.instances[0].emit({ type: "progress_start", total: 100, desc: "Phase B" });
+      FakeEventSource.instances[0].emit({ type: "progress_update", n: 10 });
+    });
+
+    first.unmount();
+    await act(async () => {});
+    renderHook(() => useDatasetSSE());
+    await act(async () => {});
+
+    act(() => {
+      FakeEventSource.instances[1].emit({ type: "progress_update", n: 5 });
+    });
+
+    const steps = useDatasetStore.getState().progressSteps;
+    expect(steps[0].status).toBe("done");
+    expect(steps[0].current).toBe(0);
+    expect(steps[1].status).toBe("active");
+    expect(steps[1].current).toBe(15);
+  });
 });

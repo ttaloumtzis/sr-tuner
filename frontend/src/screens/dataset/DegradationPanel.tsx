@@ -1,5 +1,4 @@
 import { Panel } from "../../components/ui/Panel";
-import { Dropdown } from "../../components/ui/Dropdown";
 import { useDatasetStore } from "../../store/datasetStore";
 
 function RangeRow({ label, min, max, valueMin, valueMax, onMin, onMax, step = 1, unit = "" }: {
@@ -54,10 +53,6 @@ export function DegradationPanel() {
               <span style={{ fontSize: 10, color: "var(--muted)", fontWeight: 600 }}>FPS</span>
               <input type="number" value={s.frameRate} min={1} max={120} onChange={(e) => s.setFrameRate(Number(e.target.value))}
                 style={{ width: "clamp(50px, 4vw, 75px)", background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", color: "var(--text)", fontSize: 10, padding: "2px 6px", fontFamily: "var(--font-mono)", outline: "none" }} />
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ fontSize: 10, color: "var(--muted)", fontWeight: 600 }}>Format</span>
-              <Dropdown value={s.frameFormat} options={["png", "jpg", "webp"]} onChange={s.setFrameFormat} mono />
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <span style={{ fontSize: 10, color: "var(--muted)", fontWeight: 600 }}>Start (s)</span>

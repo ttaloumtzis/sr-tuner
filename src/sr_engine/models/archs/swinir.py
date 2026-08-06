@@ -6,6 +6,7 @@ from typing import Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.utils.checkpoint
 
 from ..registry import register
 
@@ -354,6 +355,7 @@ class SwinIR(nn.Module):
         self.rstb_layers = nn.ModuleList()
         for i, (d, nh) in enumerate(zip(depths, num_heads)):
             self.rstb_layers.append(RSTB(embed_dim, nh, d, window_size, mlp_ratio))
+        self.gradient_checkpointing = False
 
         self.conv_after_body = nn.Conv2d(embed_dim, embed_dim, 3, 1, 1)
 
@@ -398,7 +400,10 @@ class SwinIR(nn.Module):
 
         deep = shallow
         for rstb in self.rstb_layers:
-            deep = rstb(deep)
+            if self.gradient_checkpointing and self.training:
+                deep = torch.utils.checkpoint.checkpoint(rstb, deep, use_reentrant=False)
+            else:
+                deep = rstb(deep)
 
         body = self.conv_after_body(deep) + shallow
         body = self.conv_before_upsample(body)

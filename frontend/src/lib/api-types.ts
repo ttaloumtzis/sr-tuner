@@ -108,6 +108,8 @@ export interface TrainParams {
   warmup_steps?: number;
   write_metrics_file?: boolean;
   losses?: TrainLossConfig;
+  gradient_checkpointing?: string;
+  loss_bf16?: boolean;
 }
 
 export interface InferParams {
@@ -173,6 +175,16 @@ export interface EnvInfo {
   vram_total_mb?: number;
 }
 
+export interface VramProbeResult {
+  arch?: string;
+  dtype?: string;
+  gradient_checkpointing?: boolean;
+  peak_allocated_mb?: number;
+  peak_reserved_mb?: number;
+  error?: string;
+  oom?: boolean;
+}
+
 export interface DatasetBuildParams {
   input: string;
   out?: string;
@@ -192,7 +204,6 @@ export interface DatasetHealthParams {
 
 export interface DatasetMergeParams {
   input: string;
-  out?: string;
   scale?: number;
   name?: string;
   keep_sources?: boolean;
@@ -213,6 +224,7 @@ export interface ModelVersion {
   tag: string;
   path: string;
   metadata?: Record<string, unknown>;
+  has_weights?: boolean;
 }
 
 export interface CheckpointEntry {
@@ -295,14 +307,4 @@ export interface InferenceResult {
   };
 }
 
-// ── Architecture name mapping ───────────────────────────────────────────
-
-export const FRONTEND_ARCH_MAP: Record<string, string> = {
-  "Real-ESRGAN": "rrdb_esrgan",
-  "SwinIR": "swinir",
-};
-
-export const ENGINE_ARCH_MAP: Record<string, string> = {
-  "rrdb_esrgan": "Real-ESRGAN",
-  "swinir": "SwinIR",
-};
+//

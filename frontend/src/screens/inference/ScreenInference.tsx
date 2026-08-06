@@ -11,10 +11,10 @@ import { Field } from "../../components/ui/Field";
 import { PathInput } from "../../components/ui/PathInput";
 import { Dropdown, type DropdownOption } from "../../components/ui/Dropdown";
 import { PBar } from "../../components/ui/PBar";
+import { InlineAlert } from "../../components/ui/InlineAlert";
 import { useInferenceSSE } from "../../hooks/useInferenceSSE";
 import { basename, join } from "../../lib/path";
-import { buildRunDisplays } from "../../lib/runLabel";
-import type { CheckpointEntry, RunInfo } from "../../lib/api-types";
+import type { ModelVersion } from "../../lib/api-types";
 
 // ── Cross-hatch background ─────────────────────────────────────────────────
 
@@ -153,15 +153,12 @@ const DEVICE_OPTIONS = ["auto", "cuda", "cpu"];
 
 function ModelPanel() {
   const store = useInferenceStore();
-  const [mode, setMode] = useState<"instance" | "path">("instance");
   const [instances, setInstances] = useState<DropdownOption[]>([]);
   const [instanceMeta, setInstanceMeta] = useState<Record<string, { architecture: string | null; scale: number | null }>>({});
   const [selInstance, setSelInstance] = useState<string | null>(null);
-  const [runs, setRuns] = useState<RunInfo[]>([]);
-  const [selRunId, setSelRunId] = useState<string | null>(null);
-  const [checkpoints, setCheckpoints] = useState<CheckpointEntry[]>([]);
+  const [versions, setVersions] = useState<ModelVersion[]>([]);
 
-  // Fetch model instances on mount.
+  // Fetch model instances on mount, then sync store state.
   useEffect(() => {
     (async () => {
       try {
@@ -171,176 +168,169 @@ function ModelPanel() {
         const meta: Record<string, { architecture: string | null; scale: number | null }> = {};
         for (const i of list) meta[i.name] = { architecture: i.architecture, scale: i.scale };
         setInstanceMeta(meta);
+
+        // If the store already has an instance selected, seed the local state
+        // and fetch versions so stale selections are cleared.
+        const storedInstance = store.instance;
+        if (storedInstance && list.some((i) => i.name === storedInstance)) {
+          setSelInstance(storedInstance);
+          try {
+            const { getInstanceVersions } = await import("../../lib/api");
+            const vlist = await getInstanceVersions(storedInstance);
+            setVersions(vlist);
+            if (vlist.length > 0 && store.version) {
+              const stillExists = vlist.some((v) => v.tag === store.version);
+              if (!stillExists) {
+                store.setVersion(null);
+                store.setModelPath(null);
+              }
+            }
+          } catch {
+            setVersions([]);
+          }
+        }
       } catch {
         setInstances([]);
       }
     })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // §13.9b — a checkpoint preselected from the Checkpoints tab switches us to path mode.
+  // §13.9b — a checkpoint preselected from the Checkpoints tab lands as a raw model file.
   useEffect(() => {
     const pre = store.preselectedCheckpointPath;
     if (pre) {
-      setMode("path");
+      store.setInstance(null);
+      store.setVersion(null);
       store.setModelPath(pre);
       store.setPreselectedCheckpointPath(null);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [store.preselectedCheckpointPath]);
 
-  const handleModeChange = (m: "instance" | "path") => {
-    setMode(m);
-    if (m === "instance") {
-      store.setModelPath(null);
-    } else {
-      store.setInstance(null);
-      store.setVersion(null);
-    }
-  };
-
-  const loadCheckpoints = async (instance: string, runId: string) => {
-    try {
-      const { listRunCheckpoints } = await import("../../lib/api");
-      const ck = await listRunCheckpoints(instance, runId);
-      setCheckpoints(ck);
-      store.setModelPath(ck.length > 0 ? ck[ck.length - 1].path : null);
-    } catch {
-      setCheckpoints([]);
-      store.setModelPath(null);
-    }
-  };
-
   const handleInstanceChange = async (name: string) => {
     setSelInstance(name || null);
-    setSelRunId(null);
-    setRuns([]);
-    setCheckpoints([]);
-    store.setModelPath(null);
-    if (!name) return;
-    try {
-      const { listRuns } = await import("../../lib/api");
-      const models = await listRuns();
-      const model = models.find((x) => x.name === name);
-      const list = model?.runs ?? [];
-      setRuns(list);
-      if (list.length > 0) {
-        const latest = [...list].sort((a, b) =>
-          (b.created_at ?? "").localeCompare(a.created_at ?? ""),
-        )[0];
-        setSelRunId(latest.run_id);
-        await loadCheckpoints(name, latest.run_id);
-      }
-    } catch {
-      setRuns([]);
-    }
-  };
-
-  const handleRunChange = async (runId: string) => {
-    setSelRunId(runId || null);
-    if (!runId || !selInstance) {
-      setCheckpoints([]);
+    setVersions([]);
+    if (!name) {
+      store.setInstance(null);
+      store.setVersion(null);
       store.setModelPath(null);
       return;
     }
-    await loadCheckpoints(selInstance, runId);
+    store.setInstance(name);
+    store.setVersion(null);
+    store.setModelPath(null);
+    try {
+      const { getInstanceVersions } = await import("../../lib/api");
+      const list = await getInstanceVersions(name);
+      setVersions(list);
+      // Auto-select the latest *available* version (has_weights !== false)
+      const available = list.filter((v) => v.has_weights !== false);
+      if (available.length > 0) {
+        const latest = available[available.length - 1];
+        store.setVersion(latest.tag);
+        store.setModelPath(join(latest.path, "model.pt"));
+      }
+    } catch {
+      setVersions([]);
+    }
   };
 
-  const runDisplays = buildRunDisplays(runs);
-  const runOptions: DropdownOption[] = [...runs]
-    .sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""))
-    .map((r) => {
-      const d = runDisplays.get(r.run_id);
-      return { value: r.run_id, label: d ? `${d.group} · ${d.label}` : r.run_id };
-    });
+  const handleVersionChange = (tag: string) => {
+    const v = versions.find((x) => x.tag === tag);
+    if (!v) {
+      store.setVersion(null);
+      store.setModelPath(null);
+      return;
+    }
+    // Don't select versions missing weights
+    if (v.has_weights === false) {
+      store.setVersion(null);
+      store.setModelPath(null);
+      return;
+    }
+    store.setVersion(v.tag);
+    store.setModelPath(join(v.path, "model.pt"));
+  };
 
-  const checkpointOptions: DropdownOption[] = checkpoints.map((c) => ({
-    value: c.path,
-    label: `Ep ${c.epoch} — ${c.filename}`,
-  }));
+  const missingAny = versions.some((v) => v.has_weights === false);
+  const versionOptions: DropdownOption[] = versions
+    .filter((v) => v.has_weights !== false)
+    .map((v) => ({
+      value: v.tag,
+      label: v.tag,
+    }));
 
   const meta = selInstance ? instanceMeta[selInstance] : undefined;
+  const rawFile = !store.instance && store.modelPath;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {/* Instance / path mode switch */}
-      <div style={{ display: "flex", gap: 4, background: "var(--bg3)", borderRadius: "var(--radius-sm)", padding: 2 }}>
-        {(["instance", "path"] as const).map((m) => (
-          <button
-            key={m}
-            onClick={() => handleModeChange(m)}
+      <Field label="Model">
+        <Dropdown
+          value={selInstance ?? ""}
+          options={instances}
+          onChange={handleInstanceChange}
+          placeholder="Select model…"
+        />
+      </Field>
+      {meta && (
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          {meta.architecture && (
+            <span style={{ fontSize: 9, color: "var(--text)", background: "var(--green-dim)", border: "1px solid var(--green)44", borderRadius: "var(--radius-sm)", padding: "1px 6px", fontFamily: "var(--font-mono)" }}>
+              {meta.architecture}
+            </span>
+          )}
+          {meta.scale != null && (
+            <span style={{ fontSize: 9, color: "var(--text)", background: "var(--blue-dim)", border: "1px solid var(--blue)44", borderRadius: "var(--radius-sm)", padding: "1px 6px", fontFamily: "var(--font-mono)" }}>
+              {meta.scale}×
+            </span>
+          )}
+        </div>
+      )}
+      {rawFile ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <span style={{ fontSize: 9, color: "var(--muted)", fontFamily: "var(--font-mono)" }}>Model file</span>
+          <div
             style={{
-              flex: 1,
-              padding: "4px 8px",
               fontSize: 10,
+              color: "var(--text)",
               fontFamily: "var(--font-mono)",
-              background: mode === m ? "var(--green)" : "transparent",
-              color: mode === m ? "#0d0f11" : "var(--muted)",
-              border: "none",
+              background: "var(--bg3)",
+              border: "1px solid var(--border)",
               borderRadius: "var(--radius-sm)",
-              cursor: "pointer",
-              fontWeight: 600,
-              transition: "var(--transition-fast)",
+              padding: "5px 8px",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
             }}
+            title={store.modelPath ?? ""}
           >
-            {m === "instance" ? "Instance" : "Checkpoint"}
-          </button>
-        ))}
-      </div>
-
-      {mode === "instance" ? (
-        <>
-          <Field label="Model">
-            <Dropdown
-              value={selInstance ?? ""}
-              options={instances}
-              onChange={handleInstanceChange}
-              placeholder="Select instance…"
-            />
-          </Field>
-          {meta && (
-            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              {meta.architecture && (
-                <span style={{ fontSize: 9, color: "var(--text)", background: "var(--green-dim)", border: "1px solid var(--green)44", borderRadius: "var(--radius-sm)", padding: "1px 6px", fontFamily: "var(--font-mono)" }}>
-                  {meta.architecture}
-                </span>
-              )}
-              {meta.scale != null && (
-                <span style={{ fontSize: 9, color: "var(--text)", background: "var(--blue-dim)", border: "1px solid var(--blue)44", borderRadius: "var(--radius-sm)", padding: "1px 6px", fontFamily: "var(--font-mono)" }}>
-                  {meta.scale}×
-                </span>
-              )}
+            {basename(store.modelPath ?? "")}
+          </div>
+          <div>
+            <Btn small onClick={() => store.setModelPath(null)}>Clear</Btn>
+          </div>
+        </div>
+      ) : (
+        <div>
+          {missingAny && (
+            <div style={{ marginBottom: 6 }}>
+              <InlineAlert tone="muted">
+                Some versions are missing weights and are not selectable.
+              </InlineAlert>
             </div>
           )}
-          <Field label="Run">
+          <Field label="Version">
             <Dropdown
-              value={selRunId ?? ""}
-              options={runOptions}
-              onChange={handleRunChange}
-              placeholder={selInstance ? (runs.length ? "Select run…" : "No runs yet — train first") : "Select a model first"}
+              value={store.version ?? ""}
+              options={versionOptions}
+              onChange={handleVersionChange}
+              placeholder={selInstance ? (versionOptions.length ? "Select version…" : "No versions yet — save a checkpoint first") : "Select a model first"}
               mono
             />
           </Field>
-          <Field label="Checkpoint">
-            <Dropdown
-              value={store.modelPath ?? ""}
-              options={checkpointOptions}
-              onChange={(v) => store.setModelPath(v || null)}
-              placeholder={selRunId ? (checkpointOptions.length ? "Select checkpoint…" : "No checkpoints in this run") : "Select a run first"}
-            />
-          </Field>
-        </>
-      ) : (
-        <>
-          <Field label="or path" hint="ad-hoc .pt / .pth">
-            <PathInput
-              value={store.modelPath ?? ""}
-              onChange={(p) => store.setModelPath(p)}
-              browseTitle="Select model checkpoint"
-              compact
-              fileFilters={[{ name: "PyTorch checkpoints", extensions: ["pt", "pth"] }]}
-            />
-          </Field>
-        </>
+        </div>
       )}
     </div>
   );

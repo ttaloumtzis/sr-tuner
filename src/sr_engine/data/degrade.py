@@ -187,7 +187,7 @@ def _degrade_image(
             gauss_cfg = blur_kwargs
 
         use_gauss = gauss_cfg is not None and random.random() < gauss_cfg.get("prob", 1.0)
-        use_motion = bool(motion_cfg) and random.random() < motion_cfg.get("prob", 0.5)
+        use_motion = bool(motion_cfg) and motion_cfg.get("enabled", True) and random.random() < motion_cfg.get("prob", 0.5)
 
         if use_gauss and use_motion:
             if random.random() < 0.5:

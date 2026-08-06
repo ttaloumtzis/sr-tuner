@@ -37,21 +37,21 @@ describe("datasetStore", () => {
     expect(useDatasetStore.getState().frameRate).toBe(30);
   });
 
-  it("setResizeMethod updates resizeMethod", () => {
-    useDatasetStore.getState().setResizeMethod("lanczos");
-    expect(useDatasetStore.getState().resizeMethod).toBe("lanczos");
+  it("setVideoFile stores a single video file", () => {
+    useDatasetStore.getState().setVideoFile({ name: "test.mp4", path: "/videos/test.mp4" });
+    expect(useDatasetStore.getState().videoFile).toEqual({ name: "test.mp4", path: "/videos/test.mp4" });
   });
 
-  it("addVideoFiles appends to videoFiles", () => {
-    useDatasetStore.getState().addVideoFiles(["/videos/test.mp4"]);
-    expect(useDatasetStore.getState().videoFiles).toHaveLength(1);
-    expect(useDatasetStore.getState().videoFiles[0].name).toBe("test.mp4");
+  it("setVideoFile replaces the previous selection", () => {
+    useDatasetStore.getState().setVideoFile({ name: "a.mp4", path: "/videos/a.mp4" });
+    useDatasetStore.getState().setVideoFile({ name: "b.mp4", path: "/videos/b.mp4" });
+    expect(useDatasetStore.getState().videoFile?.path).toBe("/videos/b.mp4");
   });
 
-  it("clearVideoFiles empties the list", () => {
-    useDatasetStore.getState().addVideoFiles(["/videos/test.mp4"]);
-    useDatasetStore.getState().clearVideoFiles();
-    expect(useDatasetStore.getState().videoFiles).toHaveLength(0);
+  it("clearVideoFile removes the selected file", () => {
+    useDatasetStore.getState().setVideoFile({ name: "test.mp4", path: "/videos/test.mp4" });
+    useDatasetStore.getState().clearVideoFile();
+    expect(useDatasetStore.getState().videoFile).toBeNull();
   });
 
   it("initial state has create subTab", () => {

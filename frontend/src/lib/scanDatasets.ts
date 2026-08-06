@@ -27,6 +27,7 @@ export interface ScannedDataset {
   hasManifest: boolean;
   hasHr: boolean;
   hasLr: boolean;
+  isMerged: boolean;
 }
 
 export async function scanDatasets(parentDir: string): Promise<ScannedDataset[]> {
@@ -47,12 +48,14 @@ export async function scanDatasets(parentDir: string): Promise<ScannedDataset[]>
 
     let scale = 4;
     let pairCount = 0;
+    let isMerged = false;
 
     if (hasManifest) {
       const manifest = await readManifest(fullPath);
       if (manifest) {
         scale = manifest.config.scale;
         pairCount = manifest.pairs.length;
+        isMerged = (manifest.config.sources?.length ?? 0) > 0;
       }
     }
 
@@ -61,7 +64,7 @@ export async function scanDatasets(parentDir: string): Promise<ScannedDataset[]>
       pairCount = hrFiles.length;
     }
 
-    results.push({ name, path: fullPath, scale, pairCount, hasManifest, hasHr, hasLr });
+    results.push({ name, path: fullPath, scale, pairCount, hasManifest, hasHr, hasLr, isMerged });
   }
 
   results.sort((a, b) => a.name.localeCompare(b.name));

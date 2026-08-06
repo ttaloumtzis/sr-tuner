@@ -16,7 +16,7 @@ export function Tooltip({ text, children }: TooltipProps) {
   const [pos, setPos] = useState({ top: 0, left: 0 });
   const ref = useRef<HTMLSpanElement>(null);
 
-  const TOOLTIP_WIDTH = 220;
+  const TOOLTIP_WIDTH = 280;
   const show = () => {
     const rect = ref.current?.getBoundingClientRect();
     if (rect) {

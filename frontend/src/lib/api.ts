@@ -1,4 +1,4 @@
-import type { DatasetInfo, DatasetInspectInfo, HealthReport, JobAccepted, JobStatus, WorkspaceInfo, TrainParams, InferParams, EnvInfo, DatasetBuildParams, DatasetValidateParams, DatasetHealthParams, DatasetMergeParams, ExportParams, ModelInstance, ModelVersion, ModelRuns, CheckpointEntry } from "./api-types";
+import type { DatasetInfo, DatasetInspectInfo, HealthReport, JobAccepted, JobStatus, WorkspaceInfo, TrainParams, TrainLossConfig, InferParams, EnvInfo, VramProbeResult, DatasetBuildParams, DatasetValidateParams, DatasetHealthParams, DatasetMergeParams, ExportParams, ModelInstance, ModelVersion, ModelRuns, CheckpointEntry } from "./api-types";
 
 let BASE_URL = "http://localhost:8765";
 
@@ -66,6 +66,8 @@ export const getInstance = (name: string) => request<ModelInstance>("GET", `/api
 export const exportModel = (name: string, params: ExportParams) => request<{ output: string }>("POST", `/api/models/instances/${name}/export`, params);
 export const getInstanceVersions = (name: string) => request<ModelVersion[]>("GET", `/api/models/instances/${encodeURIComponent(name)}/versions`);
 export const deleteInstance = (name: string) => request<{ deleted: string }>("DELETE", `/api/models/instances/${encodeURIComponent(name)}`);
+export const deleteVersion = (instance: string, tag: string) =>
+  request<{ deleted: string }>("DELETE", `/api/models/instances/${encodeURIComponent(instance)}/versions/${encodeURIComponent(tag)}`);
 export const createInstance = (name: string, architecture: string, config: Record<string, unknown>) =>
   request<ModelInstance>("POST", "/api/models/instances", { name, architecture, config });
 
@@ -73,6 +75,17 @@ export const createInstance = (name: string, architecture: string, config: Recor
 
 export const startTraining = (params: TrainParams) => request<JobAccepted>("POST", "/api/train/start", params);
 export const validateDataset = (params: { dataset: string }) => request<{ valid: boolean; problems: string[] }>("POST", "/api/train/validate-dataset", params);
+export const estimateTrainingVram = (params: {
+  model_name: string;
+  config?: Record<string, unknown>;
+  batch_size: number;
+  patch_size: number;
+  dtype?: string;
+  scale?: number;
+  gradient_checkpointing?: string;
+  loss_config?: TrainLossConfig;
+  loss_bf16?: boolean;
+}) => request<VramProbeResult>("POST", "/api/train/estimate-vram", params);
 export const listDatasets = (scale?: number) => {
   const qs = scale !== undefined ? `?scale=${scale}` : "";
   return request<DatasetInfo[]>("GET", `/api/datasets${qs}`);

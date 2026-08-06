@@ -1,13 +1,142 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
+import "./ScreenModelView.css";
 import { Panel } from "../../components/ui/Panel";
 import { Btn } from "../../components/ui/Btn";
+import { Tag } from "../../components/ui/Tag";
 import { InfoRow } from "../../components/ui/InfoRow";
+import { InlineAlert } from "../../components/ui/InlineAlert";
 import { useModelStore } from "../../store/modelStore";
-import { listInstances, getInstanceVersions, deleteInstance } from "../../lib/api";
+import { useTrainingStore } from "../../store/trainingStore";
+import { listInstances, getInstanceVersions, deleteInstance, deleteVersion } from "../../lib/api";
 import { useToast } from "../../components/shell/ToastProvider";
-import type { Architecture } from "../../lib/srproj";
 import type { ModelInstance, ModelVersion } from "../../lib/api-types";
-import { estimateParams, formatParamCount, formatWeightMB } from "./templates";
+import { estimateParamsFor, formatParamCount, formatWeightMB } from "../../lib/architectures";
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+
+function fmtTimestamp(ts: number | undefined | null): string {
+  if (ts == null || Number.isNaN(ts)) return "—";
+  const d = new Date(ts * 1000);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+// ── Confirm Scrim (version + instance deletion) ───────────────────────────
+
+function ConfirmScrim({
+  title, message, confirmLabel, onConfirm, onCancel, danger,
+}: {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+  danger?: boolean;
+}) {
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onCancel]);
+
+  return (
+    <div className="mv-scrim">
+      <div className="mv-scrim-box">
+        <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text)" }}>{title}</div>
+        <div style={{ fontSize: 12, color: "var(--muted)", lineHeight: 1.6 }}>{message}</div>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <Btn onClick={onCancel}>Cancel</Btn>
+          <Btn
+            variant="solid"
+            color={danger ? "var(--red)" : undefined}
+            onClick={onConfirm}
+          >
+            {confirmLabel}
+          </Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Instances Sidebar ─────────────────────────────────────────────────────
+
+function InstancesSidebar({
+  instances, loading, selectedName, onSelect, onCreateClick,
+}: {
+  instances: ModelInstance[];
+  loading: boolean;
+  selectedName: string | null;
+  onSelect: (name: string) => void;
+  onCreateClick: () => void;
+}) {
+  const [query, setQuery] = useState("");
+
+  const filtered = useMemo(
+    () => instances.filter((m) => m.name.toLowerCase().includes(query.toLowerCase())),
+    [instances, query],
+  );
+
+  if (loading) {
+    return (
+      <Panel title="Model Instances" style={{ flexShrink: 0 }}>
+        <div style={{ padding: 16, textAlign: "center", fontSize: 12, color: "var(--muted)" }}>Loading...</div>
+      </Panel>
+    );
+  }
+
+  if (instances.length === 0) {
+    return (
+      <Panel title="Model Instances" style={{ flexShrink: 0 }}>
+        <div style={{ padding: 16, textAlign: "center" }}>
+          <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 12 }}>No model instances yet</div>
+          <Btn variant="solid" small onClick={onCreateClick}>Create Model</Btn>
+        </div>
+      </Panel>
+    );
+  }
+
+  return (
+    <div className="mv-sidebar">
+      <Panel title="Model Instances" style={{ flexShrink: 0 }} noPadding>
+        <div style={{ padding: "8px 10px 4px", display: "flex", flexDirection: "column", gap: 6 }}>
+          <div className="mv-sidebar-header">
+            <span>Instances</span>
+            <span className="mv-sidebar-count">{filtered.length} / {instances.length}</span>
+          </div>
+          <input
+            className="mv-sidebar-search"
+            type="text"
+            placeholder="Search…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
+        <div style={{ flex: 1, overflow: "auto", padding: "4px 0" }}>
+          {filtered.map((m) => (
+            <button
+              key={m.name}
+              className={`mv-instance-row${selectedName === m.name ? " selected" : ""}`}
+              onClick={() => onSelect(m.name)}
+            >
+              <span className="mv-instance-name">{m.name}</span>
+              {m.architecture && (
+                <Tag color="cyan">{m.architecture}</Tag>
+              )}
+              {m.scale != null && (
+                <span style={{ fontSize: 9, color: "var(--dim)", fontFamily: "var(--font-mono)", flexShrink: 0 }}>{m.scale}x</span>
+              )}
+            </button>
+          ))}
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+// ── Version Card ──────────────────────────────────────────────────────────
 
 function CfgChip({ label, value }: { label: string; value: string }) {
   return (
@@ -20,31 +149,52 @@ function CfgChip({ label, value }: { label: string; value: string }) {
   );
 }
 
-function VersionCard({ version, fmtTimestamp }: { version: ModelVersion; fmtTimestamp: (ts: number) => string }) {
+function VersionCard({
+  version, onDelete, trainingActive,
+}: {
+  version: ModelVersion;
+  onDelete: () => void;
+  trainingActive: boolean;
+}) {
   const m = version.metadata ?? {};
-  const createdAt = (m as any).created_at;
+  const ts = (m as any).timestamp ?? (m as any).created_at;
   const runName = (m as any).run_name;
   const tc = (m as any).training_config;
+  const missingWeights = version.has_weights === false;
+
   return (
-    <div style={{
-      background: "var(--bg2)", border: "1px solid var(--border)",
-      borderRadius: 6, padding: 10,
-    }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-        <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text)", fontFamily: "var(--font-mono)" }}>
-          {version.tag}
-        </span>
-        <span style={{ fontSize: 10, color: "var(--muted)" }}>
-          {fmtTimestamp(createdAt)}
-        </span>
+    <div className={`mv-version-card${missingWeights ? " missing" : ""}`}>
+      <div className="mv-version-card-top">
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span className="mv-version-tag">{version.tag}</span>
+          {missingWeights && <Tag color="red">missing</Tag>}
+        </div>
+        <div className="mv-version-card-actions">
+          <span className="mv-version-date">{fmtTimestamp(ts)}</span>
+          <button
+            onClick={(ev) => { ev.stopPropagation(); onDelete(); }}
+            disabled={trainingActive}
+            title={trainingActive ? "Cannot delete versions while training is active" : `Delete ${version.tag}`}
+            style={{
+              background: "none", border: "none",
+              color: trainingActive ? "var(--dim)" : "var(--red)",
+              cursor: trainingActive ? "default" : "pointer",
+              fontSize: 14, lineHeight: 1, padding: "0 4px",
+              opacity: trainingActive ? 0.4 : 1,
+              transition: "var(--transition-fast)",
+            }}
+          >
+            ✕
+          </button>
+        </div>
       </div>
       {runName && (
-        <div style={{ fontSize: 10, color: "var(--muted)", marginBottom: 4 }}>
-          Run: <span style={{ color: "var(--text)" }}>{runName}</span>
+        <div className="mv-version-run">
+          Run: <span>{runName}</span>
         </div>
       )}
       {tc && (
-        <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 }}>
+        <div className="mv-version-chips">
           {tc.epochs != null && <CfgChip label="Epochs" value={String(tc.epochs)} />}
           {tc.batch_size != null && <CfgChip label="BS" value={String(tc.batch_size)} />}
           {tc.learning_rate != null && <CfgChip label="LR" value={String(tc.learning_rate)} />}
@@ -57,112 +207,27 @@ function VersionCard({ version, fmtTimestamp }: { version: ModelVersion; fmtTime
   );
 }
 
-function DeleteConfirmScrim({ name, onConfirm, onCancel }: { name: string; onConfirm: () => void; onCancel: () => void }) {
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onCancel();
-    };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onCancel]);
+// ── Detail Panel ──────────────────────────────────────────────────────────
 
-  return (
-    <div style={{
-      position: "absolute", inset: 0, background: "rgba(0,0,0,0.6)",
-      display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50,
-    }}>
-      <div style={{
-        background: "var(--bg1)", border: "1px solid var(--border)", borderRadius: 12,
-        padding: 24, maxWidth: 400, textAlign: "center",
-      }}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text)", marginBottom: 8 }}>Delete Model?</div>
-        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 16 }}>
-          This will permanently delete "<b>{name}</b>" and all its checkpoints and versions.
-        </div>
-        <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
-          <Btn onClick={onCancel}>Cancel</Btn>
-          <Btn onClick={onConfirm} variant="solid" color="var(--red)">Delete</Btn>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ModelListPanel({ instances, loading, selectedName, onSelect, onCreateClick, scaleLabel }: {
-  instances: ModelInstance[];
-  loading: boolean;
-  selectedName: string | null;
-  onSelect: (name: string) => void;
-  onCreateClick: () => void;
-  scaleLabel: (m: ModelInstance) => string;
-}) {
-  if (loading) {
-    return (
-      <Panel title="Model Instances" style={{ flex: "0 0 280px", overflow: "hidden" }}>
-        <div style={{ padding: 16, textAlign: "center", fontSize: 12, color: "var(--muted)" }}>Loading...</div>
-      </Panel>
-    );
-  }
-  if (instances.length === 0) {
-    return (
-      <Panel title="Model Instances" style={{ flex: "0 0 280px", overflow: "hidden" }}>
-        <div style={{ padding: 16, textAlign: "center" }}>
-          <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 12 }}>No model instances yet</div>
-          <Btn variant="solid" small onClick={onCreateClick}>Create Model</Btn>
-        </div>
-      </Panel>
-    );
-  }
-  return (
-    <Panel title="Model Instances" style={{ flex: "0 0 280px", overflow: "hidden" }}>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: "4px 8px", padding: "0 0 6px", fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.3px" }}>
-        <span>Name</span>
-        <span>Arch</span>
-        <span>Scale</span>
-      </div>
-      <div style={{ overflowY: "auto", flex: 1 }}>
-        {instances.map((m) => (
-          <button
-            key={m.name}
-            onClick={() => onSelect(m.name)}
-            style={{
-              display: "grid", gridTemplateColumns: "1fr auto auto", gap: "4px 8px",
-              width: "100%", textAlign: "left", padding: "6px 0",
-              border: "none", borderBottom: "1px solid var(--border)",
-              background: selectedName === m.name ? "var(--bg3)" : "transparent",
-              cursor: "pointer", fontSize: 11, color: "var(--text)",
-              fontFamily: "var(--font-mono)", transition: "var(--transition-fast)",
-            }}
-          >
-            <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{m.name}</span>
-            <span style={{ color: "var(--muted)", fontSize: 10 }}>{m.architecture}</span>
-            <span style={{ color: "var(--muted)" }}>{scaleLabel(m)}</span>
-          </button>
-        ))}
-      </div>
-    </Panel>
-  );
-}
-
-function ModelDetailPanel({ model, versions, loadingVersions, scaleLabel, onRefresh, onDeleteRequest }: {
+function DetailPanel({
+  model, versions, loadingVersions, trainingActive, onRefresh, onDeleteInstance, onDeleteVersion,
+}: {
   model: ModelInstance | null;
   versions: ModelVersion[];
   loadingVersions: boolean;
-  scaleLabel: (m: ModelInstance) => string;
+  trainingActive: boolean;
   onRefresh: () => void;
-  onDeleteRequest: (name: string) => void;
+  onDeleteInstance: () => void;
+  onDeleteVersion: (v: ModelVersion) => void;
 }) {
-  const fmtTimestamp = (ts: number): string => {
-    const d = new Date(ts * 1000);
-    return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-  };
-
   const paramsM = useMemo(() => {
     if (!model) return 0;
     const config = model.config as Record<string, unknown> | undefined;
     if (!config) return 0;
-    return estimateParams(model.architecture as Architecture, config);
+    return estimateParamsFor(model.architecture ?? "", config);
   }, [model]);
+
+  const missingCount = versions.filter((v) => v.has_weights === false).length;
 
   if (!model) {
     return (
@@ -173,10 +238,10 @@ function ModelDetailPanel({ model, versions, loadingVersions, scaleLabel, onRefr
   }
 
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, overflow: "hidden" }}>
+    <div className="mv-detail">
       <Panel title={model.name} style={{ flexShrink: 0 }}>
         <InfoRow label="Architecture" value={model.architecture === "swinir" ? "SwinIR" : "RRDB-ESRGAN"} />
-        <InfoRow label="Scale" value={scaleLabel(model)} />
+        <InfoRow label="Scale" value={model.scale ? `${model.scale}x` : "—"} />
         <InfoRow label="Latest Version" value={model.latest_version ?? "—"} mono />
         <div style={{ marginTop: 2 }}>
           <InfoRow label="Parameters" value={formatParamCount(paramsM)} mono />
@@ -186,32 +251,57 @@ function ModelDetailPanel({ model, versions, loadingVersions, scaleLabel, onRefr
       </Panel>
 
       <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <div className="mv-versions-header">
           <span style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
             Versions
           </span>
           <Btn small variant="ghost" onClick={onRefresh} disabled={loadingVersions}>&#x21bb;</Btn>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, overflowY: "auto", flex: 1 }}>
-          {loadingVersions ? (
-            <span style={{ fontSize: 11, color: "var(--muted)" }}>Loading...</span>
-          ) : versions.length === 0 ? (
-            <span style={{ fontSize: 11, color: "var(--muted)" }}>No versions yet</span>
-          ) : (
-            versions.map((v) => <VersionCard key={v.tag} version={v} fmtTimestamp={fmtTimestamp} />)
-          )}
-        </div>
+
+        {loadingVersions ? (
+          <span style={{ fontSize: 11, color: "var(--muted)" }}>Loading...</span>
+        ) : versions.length === 0 ? (
+          <span style={{ fontSize: 11, color: "var(--muted)" }}>No versions yet</span>
+        ) : (
+          <div className="mv-versions-list">
+            {missingCount > 0 && (
+              <InlineAlert tone="muted">
+                {missingCount} version(s) missing weights — deleted or incomplete.
+              </InlineAlert>
+            )}
+            {versions.map((v) => (
+              <VersionCard
+                key={v.tag}
+                version={v}
+                onDelete={() => onDeleteVersion(v)}
+                trainingActive={trainingActive}
+              />
+            ))}
+          </div>
+        )}
       </div>
 
       <div style={{ flexShrink: 0, paddingTop: 4 }}>
-        <Btn variant="ghost" color="var(--red)" full onClick={() => onDeleteRequest(model.name)}>Delete Model</Btn>
+        <Btn
+          variant="ghost"
+          color="var(--red)"
+          full
+          onClick={onDeleteInstance}
+          disabled={trainingActive}
+          title={trainingActive ? "Cannot delete model while training is active" : undefined}
+        >
+          Delete Model
+        </Btn>
       </div>
     </div>
   );
 }
 
+// ── Root Screen ───────────────────────────────────────────────────────────
+
 export function ScreenModelView() {
   const setSubTab = useModelStore((s) => s.setSubTab);
+  const trainingActive = useTrainingStore((s) => s.status === "running");
   const { show } = useToast();
 
   const [instances, setInstances] = useState<ModelInstance[]>([]);
@@ -219,7 +309,8 @@ export function ScreenModelView() {
   const [versions, setVersions] = useState<ModelVersion[]>([]);
   const [loadingVersions, setLoadingVersions] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [deletingName, setDeletingName] = useState<string | null>(null);
+  const [confirmDeleteInstance, setConfirmDeleteInstance] = useState(false);
+  const [deletingVersion, setDeletingVersion] = useState<ModelVersion | null>(null);
 
   const selectedModel = instances.find((m) => m.name === selectedName) ?? null;
 
@@ -254,10 +345,6 @@ export function ScreenModelView() {
     return () => clearInterval(interval);
   }, [fetchInstances]);
 
-  // Depends on `selectedName` (a stable primitive) rather than `selectedModel` (an object
-  // that gets a fresh identity every time the 5s instance poll refreshes `instances`, even
-  // when nothing actually changed). Depending on the object previously re-fetched versions
-  // every 5 seconds regardless of whether the selection changed.
   useEffect(() => {
     if (selectedName) {
       fetchVersions(selectedName);
@@ -266,10 +353,12 @@ export function ScreenModelView() {
     }
   }, [selectedName, fetchVersions]);
 
-  const handleDeleteConfirm = async () => {
-    if (!deletingName) return;
-    const name = deletingName;
-    setDeletingName(null);
+  // ── Handlers ────────────────────────────────────────────────────────────
+
+  const handleDeleteInstanceConfirm = async () => {
+    if (!selectedName) return;
+    const name = selectedName;
+    setConfirmDeleteInstance(false);
     try {
       await deleteInstance(name);
       show("success", `Model "${name}" deleted`);
@@ -280,31 +369,59 @@ export function ScreenModelView() {
     fetchInstances();
   };
 
-  const scaleLabel = (m: ModelInstance): string => (m.scale ? `${m.scale}x` : "—");
+  const handleDeleteVersionConfirm = async () => {
+    const v = deletingVersion;
+    if (!v || !selectedName) return;
+    const instance = selectedName;
+    setDeletingVersion(null);
+    try {
+      await deleteVersion(instance, v.tag);
+      show("success", `Version "${v.tag}" deleted`);
+    } catch (e: any) {
+      show("error", e?.message ?? `Failed to delete version "${v.tag}"`);
+    }
+    fetchVersions(instance);
+    fetchInstances();
+  };
 
   return (
-    <div style={{ flex: 1, display: "flex", gap: 16, minHeight: 0, overflow: "hidden", position: "relative" }}>
-      <ModelListPanel
+    <div className="mv-layout">
+      <InstancesSidebar
         instances={instances}
         loading={loading}
         selectedName={selectedName}
         onSelect={setSelectedName}
         onCreateClick={() => setSubTab("create")}
-        scaleLabel={scaleLabel}
       />
-      <ModelDetailPanel
+      <DetailPanel
         model={selectedModel}
         versions={versions}
         loadingVersions={loadingVersions}
-        scaleLabel={scaleLabel}
+        trainingActive={trainingActive}
         onRefresh={() => selectedModel && fetchVersions(selectedModel.name)}
-        onDeleteRequest={(name) => setDeletingName(name)}
+        onDeleteInstance={() => setConfirmDeleteInstance(true)}
+        onDeleteVersion={(v) => setDeletingVersion(v)}
       />
-      {deletingName && (
-        <DeleteConfirmScrim
-          name={deletingName}
-          onConfirm={handleDeleteConfirm}
-          onCancel={() => setDeletingName(null)}
+
+      {confirmDeleteInstance && selectedModel && (
+        <ConfirmScrim
+          title="Delete Model?"
+          message={`This will permanently delete "${selectedModel.name}" and all its checkpoints and versions.`}
+          confirmLabel="Delete"
+          onConfirm={handleDeleteInstanceConfirm}
+          onCancel={() => setConfirmDeleteInstance(false)}
+          danger
+        />
+      )}
+
+      {deletingVersion && selectedModel && (
+        <ConfirmScrim
+          title={`Delete version "${deletingVersion.tag}"?`}
+          message="This will permanently delete this version and its weights."
+          confirmLabel="Delete"
+          onConfirm={handleDeleteVersionConfirm}
+          onCancel={() => setDeletingVersion(null)}
+          danger
         />
       )}
     </div>

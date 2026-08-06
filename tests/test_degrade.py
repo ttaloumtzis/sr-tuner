@@ -1,6 +1,6 @@
 """Tests for data/degrade.py — batch degradation pipeline."""
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 
@@ -98,6 +98,51 @@ class TestDegradeImageEnabled:
         )
         # No blur was applied (enabled: false), so resize + noise remain
         assert blurred.shape == (16, 16, 3)
+
+    def test_motion_blur_enabled_false_skips_motion(self):
+        """Motion blur must be skipped when ``motion.enabled`` is false."""
+        img = _make_test_image()
+        with (
+            patch("sr_engine.data.degrade._apply_motion_blur") as mock_motion,
+            patch("sr_engine.data.degrade.random.random", return_value=0.0),
+        ):
+            result = _degrade_image(
+                img, scale=4,
+                blur_kwargs={
+                    "enabled": True,
+                    "gaussian": {"kernel_size": 21, "sigma": [3.0, 3.0], "prob": 1.0},
+                    "motion": {"enabled": False, "max_kernel_size": 31, "prob": 1.0},
+                },
+                noise_kwargs={"enabled": False},
+                jpeg_kwargs={"enabled": False},
+                jpeg2000_kwargs={"enabled": False},
+                color_jitter_kwargs={"enabled": False},
+            )
+        assert mock_motion.call_count == 0
+        assert result.shape == (16, 16, 3)
+
+    def test_motion_blur_enabled_true_applies_motion(self):
+        """Motion blur is applied when ``motion.enabled`` is true."""
+        img = _make_test_image()
+        mock_motion = MagicMock(side_effect=lambda im, *a, **kw: im)
+        with (
+            patch("sr_engine.data.degrade._apply_motion_blur", mock_motion),
+            patch("sr_engine.data.degrade.random.random", return_value=0.0),
+        ):
+            result = _degrade_image(
+                img, scale=4,
+                blur_kwargs={
+                    "enabled": True,
+                    "gaussian": {"kernel_size": 21, "sigma": [3.0, 3.0], "prob": 0.0},
+                    "motion": {"enabled": True, "max_kernel_size": 31, "prob": 1.0},
+                },
+                noise_kwargs={"enabled": False},
+                jpeg_kwargs={"enabled": False},
+                jpeg2000_kwargs={"enabled": False},
+                color_jitter_kwargs={"enabled": False},
+            )
+        assert mock_motion.call_count == 1
+        assert result.shape == (16, 16, 3)
 
     def test_noise_enabled_false_skips_noise(self):
         img = _make_test_image()

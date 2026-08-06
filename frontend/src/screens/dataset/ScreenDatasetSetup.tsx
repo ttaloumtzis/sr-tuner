@@ -1,6 +1,5 @@
 import { useDatasetStore, type DatasetSubTab } from "../../store/datasetStore";
 import { useDatasetSSE } from "../../hooks/useDatasetSSE";
-import { JobOverlay } from "../../components/dataset/JobOverlay";
 import { SubTabPill } from "../../components/ui/SubTabPill";
 import { ScreenDatasetCreate } from "./ScreenDatasetCreate";
 import { ScreenBrowseDatasets } from "./ScreenBrowseDatasets";
@@ -24,7 +23,6 @@ export function ScreenDatasetSetup() {
           <SubTabPill key={t.id} label={t.label} active={subTab === t.id} onClick={() => setSubTab(t.id)} />
         ))}
       </div>
-      <JobOverlay />
       <div style={{ flex: 1, overflow: "auto", padding: 16, position: "relative" }}>
         {subTab === "create" && <ScreenDatasetCreate />}
         {subTab === "browse" && <ScreenBrowseDatasets />}

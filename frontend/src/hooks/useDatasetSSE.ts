@@ -66,10 +66,6 @@ export function useDatasetSSE() {
       const es = new EventSource(`${baseUrl}/api/events?job_id=${jobId}`);
       esRef.current = es;
 
-      let stepId = 0;
-      let stepStartTime = performance.now();
-      let stepCurrent = 0;
-
       es.onmessage = (e) => {
         try {
           const event = JSON.parse(e.data) as Record<string, unknown>;
@@ -80,24 +76,20 @@ export function useDatasetSSE() {
               const total = (event.total as number | null) ?? null;
               const desc = (event.desc as string) || "";
               startProgressStep(desc, total);
-              stepId = useDatasetStore.getState().progressSteps.length - 1;
-              stepStartTime = performance.now();
-              stepCurrent = 0;
               setJobStatus("running");
               break;
             }
             case "progress_update": {
               const n = (event.n as number) ?? 1;
-              stepCurrent += n;
-              const elapsed = (performance.now() - stepStartTime) / 1000;
-              const fps = elapsed > 0 ? stepCurrent / elapsed : 0;
-              const total = useDatasetStore.getState().progressSteps[stepId]?.total ?? null;
-              const etaSec = total != null && fps > 0 ? (total - stepCurrent) / fps : null;
-              updateProgressStep(stepId, stepCurrent, fps, etaSec);
+              const steps = useDatasetStore.getState().progressSteps;
+              const active = [...steps].reverse().find((st) => st.status === "active");
+              if (active) updateProgressStep(active.id, active.current + n);
               break;
             }
             case "progress_end": {
-              finishProgressStep(stepId);
+              const steps = useDatasetStore.getState().progressSteps;
+              const active = [...steps].reverse().find((st) => st.status === "active");
+              if (active) finishProgressStep(active.id);
               break;
             }
             case "done": {

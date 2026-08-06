@@ -1,19 +1,10 @@
 import { create } from "zustand";
-import { basename } from "../lib/path";
 import type { HealthReport } from "../lib/api-types";
 
 export type DatasetSubTab = "create" | "browse" | "merge";
 export type DatasetMode = "image_folder" | "video_extract" | "on_the_fly";
 export type DownscaleKernel = "bicubic" | "bilinear" | "area" | "lanczos" | "nearest";
-export type ResizeMethod = "area" | "bicubic" | "bilinear" | "lanczos" | "nearest";
 export type JobStatus = "idle" | "running" | "done" | "error";
-
-export interface ExtractionProgress {
-  framesDone: number;
-  framesTotal: number | null;
-  fps: number;
-  etaSec: number | null;
-}
 
 export interface ProgressStep {
   id: number;
@@ -26,7 +17,6 @@ export interface ProgressStep {
 export interface VideoFileEntry {
   name: string;
   path: string;
-  status: "pending" | "extracting" | "done";
 }
 
 interface DatasetState {
@@ -35,15 +25,12 @@ interface DatasetState {
 
   scale: number;
   kernel: DownscaleKernel;
-  namingPattern: string;
 
   rootPath: string;
 
   frameRate: number;
-  frameFormat: string;
   startTime: number;
   duration: number | null;
-  resizeMethod: ResizeMethod;
   antialias: boolean;
 
   degBlur: boolean;
@@ -82,10 +69,8 @@ interface DatasetState {
   jitterValueRange: number;
   jitterProb: number;
 
-  videoFiles: VideoFileEntry[];
-  extractionProgress: ExtractionProgress | null;
+  videoFile: VideoFileEntry | null;
 
-  mergeOutputPath: string;
   mergeCustomName: string;
   mergeKeepSources: boolean;
   mergeScaleFilter: number | null;
@@ -104,13 +89,10 @@ interface DatasetState {
   setMode: (mode: DatasetMode) => void;
   setScale: (s: number) => void;
   setKernel: (k: DownscaleKernel) => void;
-  setNamingPattern: (p: string) => void;
   setRootPath: (p: string) => void;
   setFrameRate: (n: number) => void;
-  setFrameFormat: (f: string) => void;
   setStartTime: (t: number) => void;
   setDuration: (d: number | null) => void;
-  setResizeMethod: (m: ResizeMethod) => void;
   setAntialias: (v: boolean) => void;
 
   setDegBlur: (v: boolean) => void;
@@ -143,12 +125,9 @@ interface DatasetState {
   setJitterValueRange: (n: number) => void;
   setJitterProb: (n: number) => void;
 
-  addVideoFiles: (paths: string[]) => void;
-  clearVideoFiles: () => void;
-  removeVideoFile: (path: string) => void;
-  setExtractionProgress: (p: ExtractionProgress | null) => void;
+  setVideoFile: (file: VideoFileEntry | null) => void;
+  clearVideoFile: () => void;
 
-  setMergeOutputPath: (p: string) => void;
   setMergeCustomName: (n: string) => void;
   setMergeKeepSources: (v: boolean) => void;
   setMergeScaleFilter: (s: number | null) => void;
@@ -160,7 +139,7 @@ interface DatasetState {
   setJobDatasetPath: (path: string | null) => void;
   setJobHealthReport: (report: HealthReport | null) => void;
   startProgressStep: (desc: string, total: number | null) => void;
-  updateProgressStep: (stepId: number, current: number, fps: number, etaSec: number | null) => void;
+  updateProgressStep: (stepId: number, current: number) => void;
   finishProgressStep: (stepId: number) => void;
   clearJob: () => void;
   setMergeResults: (results: { scale: number; output_path: string; source_datasets: string[] }[] | null) => void;
@@ -172,13 +151,10 @@ export const useDatasetStore = create<DatasetState>((set) => ({
   mode: "image_folder",
   scale: 4,
   kernel: "bicubic",
-  namingPattern: "%06d",
   rootPath: "",
   frameRate: 10,
-  frameFormat: "png",
   startTime: 0,
   duration: null,
-  resizeMethod: "area",
   antialias: true,
 
   degBlur: true,
@@ -217,10 +193,8 @@ export const useDatasetStore = create<DatasetState>((set) => ({
   jitterValueRange: 0.3,
   jitterProb: 0.8,
 
-  videoFiles: [],
-  extractionProgress: null,
+  videoFile: null,
 
-  mergeOutputPath: "",
   mergeCustomName: "",
   mergeKeepSources: false,
   mergeScaleFilter: null,
@@ -239,13 +213,10 @@ export const useDatasetStore = create<DatasetState>((set) => ({
   setMode: (mode) => set({ mode }),
   setScale: (scale) => set({ scale }),
   setKernel: (kernel) => set({ kernel }),
-  setNamingPattern: (namingPattern) => set({ namingPattern }),
   setRootPath: (rootPath) => set({ rootPath }),
   setFrameRate: (frameRate) => set({ frameRate }),
-  setFrameFormat: (frameFormat) => set({ frameFormat }),
   setStartTime: (startTime) => set({ startTime }),
   setDuration: (duration) => set({ duration }),
-  setResizeMethod: (resizeMethod) => set({ resizeMethod }),
   setAntialias: (antialias) => set({ antialias }),
 
   setDegBlur: (degBlur) => set({ degBlur }),
@@ -278,23 +249,9 @@ export const useDatasetStore = create<DatasetState>((set) => ({
   setJitterValueRange: (jitterValueRange) => set({ jitterValueRange }),
   setJitterProb: (jitterProb) => set({ jitterProb }),
 
-  addVideoFiles: (paths) =>
-    set((s) => {
-      const existing = new Set(s.videoFiles.map((f) => f.path));
-      const toAdd = paths.filter((p) => !existing.has(p));
-      return {
-        videoFiles: [
-          ...s.videoFiles,
-          ...toAdd.map((p) => ({ name: basename(p) ?? p, path: p, status: "pending" as const })),
-        ],
-      };
-    }),
-  clearVideoFiles: () => set({ videoFiles: [] }),
-  removeVideoFile: (path: string) =>
-    set((s) => ({ videoFiles: s.videoFiles.filter((f) => f.path !== path) })),
-  setExtractionProgress: (extractionProgress) => set({ extractionProgress }),
+  setVideoFile: (videoFile) => set({ videoFile }),
+  clearVideoFile: () => set({ videoFile: null }),
 
-  setMergeOutputPath: (mergeOutputPath) => set({ mergeOutputPath }),
   setMergeCustomName: (mergeCustomName) => set({ mergeCustomName }),
   setMergeKeepSources: (mergeKeepSources) => set({ mergeKeepSources }),
   setMergeScaleFilter: (mergeScaleFilter) => set({ mergeScaleFilter }),
@@ -314,12 +271,11 @@ export const useDatasetStore = create<DatasetState>((set) => ({
       );
       return { progressSteps: [...steps, step] };
     }),
-  updateProgressStep: (stepId, current, fps, etaSec) =>
+  updateProgressStep: (stepId, current) =>
     set((s) => ({
       progressSteps: s.progressSteps.map((st) =>
         st.id === stepId ? { ...st, current } : st
       ),
-      extractionProgress: { framesDone: current, framesTotal: s.progressSteps[stepId]?.total ?? null, fps, etaSec: etaSec ?? null },
     })),
   finishProgressStep: (stepId) =>
     set((s) => ({
@@ -327,7 +283,7 @@ export const useDatasetStore = create<DatasetState>((set) => ({
         st.id === stepId ? { ...st, status: "done" as const } : st
       ),
     })),
-  clearJob: () => set({ jobId: null, jobStatus: "idle", jobError: null, jobType: null, jobDatasetPath: null, jobHealthReport: null, progressSteps: [], extractionProgress: null, mergeResults: null }),
+  clearJob: () => set({ jobId: null, jobStatus: "idle", jobError: null, jobType: null, jobDatasetPath: null, jobHealthReport: null, progressSteps: [], mergeResults: null }),
   setMergeResults: (mergeResults) => set({ mergeResults }),
   setValidationResult: (validationResult) => set({ validationResult }),
 }));

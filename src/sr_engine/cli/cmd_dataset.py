@@ -181,11 +181,11 @@ def health_cmd(path: Path, yes: bool) -> None:
 @click.option("--input", "-i", required=True, type=click.Path(exists=True, path_type=Path),
               help="Directory containing dataset subdirectories (each must have HR/, LR/, and manifest.json).")
 @click.option("--out", "-o", required=False, type=click.Path(path_type=Path),
-              help="Output directory. Defaults to <input>/merged.")
+              help="Output directory. Defaults to the input directory (merged datasets are created in place).")
 @click.option("--scale", type=int, default=None,
               help="Only merge datasets with this scale factor.")
 @click.option("--name", type=str, default=None,
-              help="Custom output subdirectory name (default: scale_{N}). Requires --scale or single scale group.")
+              help="Custom output subdirectory name (default: merged-x{N}). Requires --scale or single scale group.")
 @click.option("--yes", "-y", is_flag=True, default=False,
               help="Skip deletion confirmation.")
 @click.option("--keep-sources", is_flag=True, default=False,
@@ -194,8 +194,6 @@ def health_cmd(path: Path, yes: bool) -> None:
 def merge(ctx, input: Path, out: Path | None, scale: int | None,
           name: str | None, yes: bool, keep_sources: bool) -> None:
     """Merge all datasets under INPUT into combined datasets grouped by scale."""
-    if out is None:
-        out = input / "merged"
 
     click.echo(f"Scanning for datasets in: {input}")
     results = merge_datasets(

@@ -2,56 +2,42 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { Panel } from "../../components/ui/Panel";
 import { Btn } from "../../components/ui/Btn";
 import { PathInput } from "../../components/ui/PathInput";
+import { PBar } from "../../components/ui/PBar";
 import { useDatasetStore, type DatasetMode, type DownscaleKernel } from "../../store/datasetStore";
 import { useProjectStore } from "../../store/projectStore";
 import { DegradationPanel } from "./DegradationPanel";
-import { validateNamingPattern, previewFilename } from "../../lib/namingPattern";
 import { basename, join, parentFromProjFile } from "../../lib/path";
 import { inspectDataset, finalizeDataset } from "../../lib/api";
 import type { DatasetInspectInfo } from "../../lib/api-types";
 import { useToast } from "../../components/shell/ToastProvider";
 
 
-function TypeCard({ id: _id, label, description, active, onClick }: {
-  id: DatasetMode; label: string; description: string; active: boolean; onClick: () => void;
+function TypeCard({ id: _id, label, description, active, disabled, onClick }: {
+  id: DatasetMode; label: string; description: string; active: boolean; disabled?: boolean; onClick: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
   return (
-    <div onClick={onClick} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
-      style={{ background: active ? "var(--greenDim)" : hovered ? "var(--bg2)" : "var(--bg1)", border: `1px solid ${active ? "var(--green)" : hovered ? "var(--muted)" : "var(--border)"}`, borderRadius: "var(--radius-md)", padding: "12px 14px", cursor: "pointer", transition: "var(--transition-fast)", display: "flex", flexDirection: "column", gap: 4 }}>
-      <span style={{ fontSize: 12, fontWeight: 600, color: active ? "var(--green)" : "var(--text)" }}>{label}</span>
+    <div onClick={disabled ? undefined : onClick} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
+      style={{ background: active ? "var(--greenDim)" : hovered && !disabled ? "var(--bg2)" : "var(--bg1)", border: `1px solid ${active ? "var(--green)" : hovered && !disabled ? "var(--muted)" : "var(--border)"}`, borderRadius: "var(--radius-md)", padding: "12px 14px", cursor: disabled ? "not-allowed" : "pointer", transition: "var(--transition-fast)", display: "flex", flexDirection: "column", gap: 4, opacity: disabled ? 0.5 : 1 }}>
+      <span style={{ fontSize: 12, fontWeight: 600, color: active ? "var(--green)" : "var(--text)" }}>{label}{disabled && <span style={{ color: "var(--dim)", fontWeight: 400, marginLeft: 6 }}>(soon)</span>}</span>
       <span style={{ fontSize: 10, color: "var(--muted)", lineHeight: 1.4 }}>{description}</span>
     </div>
   );
 }
 
-function ScaleNamingBar() {
+function ScaleBar() {
   const s = useDatasetStore();
   const presets = [1, 2, 4, 8];
-  const [customVal, setCustomVal] = useState(presets.includes(s.scale) ? "" : String(s.scale));
-  const [customActive, setCustomActive] = useState(!presets.includes(s.scale));
-  const patternError = validateNamingPattern(s.namingPattern);
-  const isValid = !patternError;
-  const preview = isValid ? previewFilename(s.namingPattern) : "invalid";
 
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 10px", background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", flexWrap: "wrap" }}>
       <span style={{ fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: 1 }}>Scale</span>
       {presets.map((p) => (
-        <button key={p} onClick={() => { s.setScale(p); setCustomActive(false); setCustomVal(""); }}
-          style={{ background: s.scale === p && !customActive ? "var(--green)" : "var(--bg3)", border: `1px solid ${s.scale === p && !customActive ? "var(--green)" : "var(--border)"}`, color: s.scale === p && !customActive ? "#0d0f11" : "var(--muted)", fontSize: 11, fontWeight: 600, padding: "2px 9px", borderRadius: "var(--radius-sm)", cursor: "pointer", transition: "var(--transition-fast)" }}>
+        <button key={p} onClick={() => { s.setScale(p); }}
+          style={{ background: s.scale === p ? "var(--green)" : "var(--bg3)", border: `1px solid ${s.scale === p ? "var(--green)" : "var(--border)"}`, color: s.scale === p ? "#0d0f11" : "var(--muted)", fontSize: 11, fontWeight: 600, padding: "2px 9px", borderRadius: "var(--radius-sm)", cursor: "pointer", transition: "var(--transition-fast)" }}>
           ×{p}
         </button>
       ))}
-      <input value={customVal} onChange={(e) => { setCustomActive(true); const n = parseInt(e.target.value, 10); if (!isNaN(n) && n > 0) s.setScale(n); setCustomVal(e.target.value); }}
-        onFocus={() => setCustomActive(true)} placeholder="custom"
-        style={{ width: 68, background: customActive ? "var(--greenDim)" : "var(--bg3)", border: `1px solid ${customActive ? "var(--green)" : "var(--border)"}`, color: "var(--text)", fontSize: 11, padding: "2px 7px", borderRadius: "var(--radius-sm)", outline: "none", fontFamily: "var(--font-mono)" }} />
-      <div style={{ width: 1, height: 16, background: "var(--border)" }} />
-      <span style={{ fontSize: 10, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: 1 }}>Naming</span>
-      <input value={s.namingPattern} onChange={(e) => s.setNamingPattern(e.target.value)} placeholder="%06d"
-        style={{ width: 68, background: patternError ? "color-mix(in srgb, var(--red) 15%, var(--bg3))" : "var(--bg3)", border: `1px solid ${patternError ? "var(--red)" : "var(--border)"}`, color: "var(--text)", fontSize: 11, padding: "2px 7px", borderRadius: "var(--radius-sm)", outline: "none", fontFamily: "var(--font-mono)" }} />
-      <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: isValid ? "var(--green)" : "var(--red)" }}>→ {preview}</span>
-      {patternError && <span style={{ fontSize: 10, color: "var(--red)" }}>{patternError}</span>}
     </div>
   );
 }
@@ -235,6 +221,7 @@ function VideoExtractMode() {
   const s = useDatasetStore();
   const s_error = useDatasetStore((s) => s.jobError);
   const s_status = useDatasetStore((s) => s.jobStatus);
+  const progressSteps = useDatasetStore((s) => s.progressSteps);
   const project = useProjectStore((s) => s.project);
   const [dragOver, setDragOver] = useState(false);
   const [starting, setStarting] = useState(false);
@@ -244,25 +231,26 @@ function VideoExtractMode() {
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
       const selected = await open({
-        multiple: true,
+        multiple: false,
         filters: [{ name: "Video", extensions: ["mkv", "mp4", "avi", "mov"] }],
       });
       if (selected) {
-        const paths = Array.isArray(selected) ? selected : [selected];
-        s.addVideoFiles(paths.filter(Boolean));
+        const path = Array.isArray(selected) ? selected[0] : selected;
+        if (path) s.setVideoFile({ name: basename(path) ?? path, path });
       }
     } catch {
       const input = document.createElement("input");
       input.type = "file";
       input.accept = ".mkv,.mp4,.avi,.mov";
-      input.multiple = true;
+      input.multiple = false;
       input.onchange = () => {
-        const paths = Array.from(input.files ?? []).map((f) => (f as File & { path?: string }).path || f.name).filter(Boolean);
-        if (paths.length > 0) s.addVideoFiles(paths);
+        const file = input.files?.[0];
+        const path = (file as File & { path?: string }).path || file?.name;
+        if (path) s.setVideoFile({ name: basename(path) ?? path, path });
       };
       input.click();
     }
-  }, [s.addVideoFiles]);
+  }, [s.setVideoFile]);
 
   useEffect(() => {
     if (s_status === "error" && s_error) setExtractError(s_error);
@@ -281,8 +269,10 @@ function VideoExtractMode() {
             setDragOver(false);
           } else if (event.payload.type === "drop") {
             setDragOver(false);
-            if (event.payload.paths && event.payload.paths.length > 0) {
-              s.addVideoFiles(event.payload.paths as string[]);
+            const paths = event.payload.paths as string[];
+            if (paths.length > 0) {
+              const path = paths[0];
+              s.setVideoFile({ name: basename(path) ?? path, path });
             }
           }
         });
@@ -295,11 +285,9 @@ function VideoExtractMode() {
 
   const handleStartExtraction = async () => {
     try {
-      const patternErr = validateNamingPattern(s.namingPattern);
-      if (patternErr) { s.setJobError(patternErr); s.setJobStatus("error"); return; }
       if (!project) { s.setJobError("No project loaded"); s.setJobStatus("error"); return; }
       const projectDir = parentFromProjFile(project.filePath);
-      const firstVideo = s.videoFiles[0]?.path;
+      const firstVideo = s.videoFile?.path;
       if (!firstVideo) { s.setJobError("No video file selected"); s.setJobStatus("error"); return; }
       const videoName = basename(firstVideo).replace(/\.[^/.]+$/, "") || "extracted";
       const out = join(projectDir, "datasets", videoName);
@@ -313,7 +301,6 @@ function VideoExtractMode() {
       const configOverrides: Record<string, unknown> = {};
       configOverrides["scale"] = s.scale;
       configOverrides["frame_rate"] = s.frameRate;
-      configOverrides["frame_format"] = s.frameFormat;
       if (s.startTime > 0) configOverrides["start_time"] = s.startTime;
       if (s.duration !== null) configOverrides["duration"] = s.duration;
 
@@ -364,7 +351,7 @@ function VideoExtractMode() {
         config_overrides: configOverrides,
       });
       s.setJobId(result.job_id);
-      s.clearVideoFiles();
+      s.clearVideoFile();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       s.setJobError(msg);
@@ -377,41 +364,51 @@ function VideoExtractMode() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <div onDragOver={(e) => { e.preventDefault(); setDragOver(true); }} onDragLeave={() => setDragOver(false)}
-        onDrop={(e) => { e.preventDefault(); setDragOver(false); try { const paths = Array.from(e.dataTransfer?.files ?? []).map((f) => (f as File & { path?: string }).path || f.name).filter(Boolean); if (paths.length > 0) s.addVideoFiles(paths); } catch {} }}
+        onDrop={(e) => { e.preventDefault(); setDragOver(false); try { const file = e.dataTransfer?.files?.[0]; const path = (file as File & { path?: string } | undefined)?.path || file?.name; if (path) s.setVideoFile({ name: basename(path) ?? path, path }); } catch {} }}
         style={{ border: `2px dashed ${dragOver ? "var(--green)" : "var(--border)"}`, borderRadius: "var(--radius-md)", padding: "20px", display: "flex", flexDirection: "column", alignItems: "center", gap: 6, background: dragOver ? "var(--greenDim)" : "var(--bg2)", transition: "var(--transition-fast)", cursor: "pointer" }}>
-        <span style={{ fontSize: 12, color: "var(--muted)" }}>Drop video files here</span>
+        <span style={{ fontSize: 12, color: "var(--muted)" }}>Drop a video file here</span>
         <span style={{ fontSize: 10, color: "var(--dim)" }}>Supported: MKV, MP4, AVI, MOV</span>
         <Btn small variant="ghost" onClick={() => handleBrowse()} style={{ marginTop: 4 }}>
           Browse Files
         </Btn>
       </div>
 
-      {s.videoFiles.length > 0 && (
+      {s.videoFile && (
           <div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", overflow: "hidden" }}>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 80px 30px", padding: "5px 10px", background: "var(--bg2)", borderBottom: "1px solid var(--border)" }}>
-              {["Filename", "Status"].map((h) => (
-                <span key={h} style={{ fontSize: 9, color: "var(--dim)", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.8 }}>{h}</span>
-              ))}
-              <span />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 30px", padding: "6px 10px", alignItems: "center" }}>
+              <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.videoFile.name}</span>
+              <button onClick={() => s.clearVideoFile()} title="Remove"
+                style={{ background: "none", border: "none", color: "var(--muted)", cursor: "pointer", fontSize: 14, lineHeight: 1, padding: 2, opacity: 0.4, transition: "var(--transition-fast)" }}
+                onMouseEnter={(e) => { (e.target as HTMLButtonElement).style.opacity = "1"; }}
+                onMouseLeave={(e) => { (e.target as HTMLButtonElement).style.opacity = "0.4"; }}>
+                ✕
+              </button>
             </div>
-            {s.videoFiles.map((f, i) => (
-              <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 80px 30px", padding: "6px 10px", borderBottom: i < s.videoFiles.length - 1 ? "1px solid var(--border)" : undefined, alignItems: "center" }}>
-                <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
-                <span style={{ fontSize: 10, fontWeight: 600, color: f.status === "done" ? "var(--green)" : f.status === "extracting" ? "var(--amber)" : "var(--dim)", background: f.status === "done" ? "var(--greenDim)" : f.status === "extracting" ? "color-mix(in srgb, var(--amber) 15%, transparent)" : "var(--bg3)", border: `1px solid ${f.status === "done" ? "var(--green)" : f.status === "extracting" ? "var(--amber)" : "var(--border)"}`, borderRadius: 8, padding: "2px 7px", display: "inline-block" }}>{f.status}</span>
-                <button onClick={() => s.removeVideoFile(f.path)} title="Remove"
-                  style={{ background: "none", border: "none", color: "var(--muted)", cursor: "pointer", fontSize: 14, lineHeight: 1, padding: 2, opacity: 0.4, transition: "var(--transition-fast)" }}
-                  onMouseEnter={(e) => { (e.target as HTMLButtonElement).style.opacity = "1"; }}
-                  onMouseLeave={(e) => { (e.target as HTMLButtonElement).style.opacity = "0.4"; }}>
-                  ✕
-                </button>
-              </div>
-            ))}
           </div>
       )}
 
-      <ScaleNamingBar />
+      <ScaleBar />
       <DownsampleMethodSelector />
       <DegradationPanel />
+
+      {s_status === "running" && (() => {
+        const active = [...progressSteps].reverse().find((st) => st.status === "active");
+        return (
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: "8px 10px", background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+              <span style={{ fontSize: 11, color: "var(--text)", fontWeight: 600 }}>
+                {active ? active.desc : "Extracting frames…"}
+              </span>
+              {active && active.total != null && active.total > 0 && (
+                <span style={{ fontSize: 11, color: "var(--muted)", fontFamily: "var(--font-mono)" }}>
+                  {Math.round((active.current / active.total) * 100)}%
+                </span>
+              )}
+            </div>
+            <PBar value={active?.current ?? 0} max={active?.total ?? (active?.current || 1)} color="var(--amber)" height={5} />
+          </div>
+        );
+      })()}
 
       {extractError && (
         <div style={{ border: "1px solid color-mix(in srgb, var(--red) 40%, transparent)", borderRadius: "var(--radius-sm)", padding: "7px 10px", fontSize: 10, color: "var(--red)", background: "color-mix(in srgb, var(--red) 10%, transparent)", lineHeight: 1.4 }}>
@@ -419,7 +416,7 @@ function VideoExtractMode() {
         </div>
       )}
 
-      {s.videoFiles.length > 0 && s.jobStatus !== "running" && (
+      {s.videoFile && s.jobStatus !== "running" && (
         <Btn variant="solid" onClick={handleStartExtraction} disabled={starting}>
           {starting ? "Starting..." : s.jobStatus === "done" ? "Start Another" : "Start Extraction"}
         </Btn>
@@ -484,7 +481,7 @@ export function ScreenDatasetCreate() {
       <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
           {typeCards.map((c) => (
-            <TypeCard key={c.id} id={c.id} label={c.label} description={c.description} active={s.mode === c.id} onClick={() => s.setMode(c.id)} />
+            <TypeCard key={c.id} id={c.id} label={c.label} description={c.description} active={s.mode === c.id} disabled={c.id === "on_the_fly"} onClick={() => s.setMode(c.id)} />
           ))}
         </div>
 

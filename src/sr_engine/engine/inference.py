@@ -2,7 +2,7 @@
 
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import cv2
 import numpy as np
@@ -13,6 +13,10 @@ from sr_engine.utils.progress import ProgressReporter
 from sr_engine.engine.tiling import tile_image, stitch_tiles
 from sr_engine.models.checkpoint import load_checkpoint
 from sr_engine.models.registry import build_model
+
+
+class CancellationRequested(Exception):
+    """Raised inside a tiled inference loop when a cancel_check callback returns True."""
 
 
 def load_model(model_checkpoint: Path, device: str) -> tuple[torch.nn.Module, int]:
@@ -73,8 +77,14 @@ def _super_resolve_tensor(
     tile_overlap: int,
     device: str,
     reporter: Optional[ProgressReporter] = None,
+    cancel_check: Optional[Callable[[], bool]] = None,
 ) -> torch.Tensor:
-    """Run *model* on a single LR image tensor, tiling if needed, and return the HR tensor."""
+    """Run *model* on a single LR image tensor, tiling if needed, and return the HR tensor.
+
+    Args:
+        cancel_check: Optional callback invoked before each tile; when it returns
+            True, :class:`CancellationRequested` is raised to abort the pass early.
+    """
     _, h, w = lr_tensor.shape
 
     if tile_size <= 0 or (h <= tile_size and w <= tile_size):
@@ -89,6 +99,8 @@ def _super_resolve_tensor(
     hr_tiles: list[tuple[torch.Tensor, tuple[int, int]]] = []
     with torch.no_grad():
         for tile, (row, col) in lr_tiles:
+            if cancel_check is not None and cancel_check():
+                raise CancellationRequested()
             output = model(tile.unsqueeze(0).to(device))[0].cpu()
             # Tile positions are in LR pixel space — scale them up to match
             # the HR output resolution before stitching.

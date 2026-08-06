@@ -40,6 +40,5 @@ degradation:
     quality_range: [30, 95]
     prob: 0.5
 frame_rate: 10
-frame_format: png
 start_time: 0.0
 duration: null

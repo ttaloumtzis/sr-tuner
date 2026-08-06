@@ -104,9 +104,7 @@ frontend/
     │   │   ├── PBar.tsx
     │   │   ├── Tag.tsx
     │   │   └── Toggle.tsx
-    │   ├── dataset/
-    │   │   └── JobOverlay.tsx
-    │   └── metrics/
+    │   ├── metrics/
     │       └── RunComparisonTable.tsx
     └── __mocks__/
 ```
@@ -149,7 +147,7 @@ Build a dataset from a video file.
 - Config overrides for blur, noise, JPEG, JPEG2000, color jitter
 - Resize method selection
 - Build button → triggers `POST /api/datasets/build`
-- Job overlay with SSE progress (JobOverlay)
+- Inline SSE progress while extraction is running
 
 #### 2b. ScreenBrowseDatasets
 
@@ -454,7 +452,6 @@ function useDatasetSSE(jobId: string | null)
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| `JobOverlay` | `components/dataset/JobOverlay.tsx` | Overlay showing dataset job progress |
 | `RunComparisonTable` | `components/metrics/RunComparisonTable.tsx` | Side-by-side training run comparison |
 
 ---

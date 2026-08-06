@@ -13,17 +13,16 @@ import {
   ChevronRight,
   Eye,
   Columns,
-  Layers,
   RotateCcw,
   Loader2,
 } from "lucide-react";
 import "./ScreenBrowseDatasets.css";
-import { listDatasets, validateDatasetPath, healthCheck, getDatasetHealth, deleteDataset, pruneDatasetFiles } from "../../lib/api";
+import { listDatasets, startValidateDataset, healthCheck, getDatasetHealth, deleteDataset, pruneDatasetFiles } from "../../lib/api";
 import type { DatasetInfo, HealthReport } from "../../lib/api-types";
 import { getDatasetPairUrls } from "../../lib/scanDatasets";
 import { useToast } from "../../components/shell/ToastProvider";
 import { useDatasetStore } from "../../store/datasetStore";
-import { JobOverlay } from "../../components/dataset/JobOverlay";
+import { PBar } from "../../components/ui/PBar";
 
 const FILMSTRIP_WINDOW = 25;
 const FALLBACK_IMG =
@@ -40,12 +39,14 @@ export const ScreenBrowseDatasets: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   const [currentPairIndex, setCurrentPairIndex] = useState(1);
-  const [viewMode, setViewMode] = useState<"slider" | "split" | "diff">("slider");
+  const [viewMode, setViewMode] = useState<"slider" | "split">("slider");
   const [sliderPosition, setSliderPosition] = useState(50);
   const [isDraggingSlider, setIsDraggingSlider] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(1);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [pairUrls, setPairUrls] = useState<{ hr: string; lr: string }[]>([]);
+  const isPanningRef = useRef(false);
+  const panStartRef = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
 
   const sliderContainerRef = useRef<HTMLDivElement>(null);
   const thumbScrollRef = useRef<HTMLDivElement>(null);
@@ -54,6 +55,8 @@ export const ScreenBrowseDatasets: React.FC = () => {
   const jobType = useDatasetStore((s) => s.jobType);
   const jobDatasetPath = useDatasetStore((s) => s.jobDatasetPath);
   const jobHealthReport = useDatasetStore((s) => s.jobHealthReport);
+  const validationResult = useDatasetStore((s) => s.validationResult);
+  const progressSteps = useDatasetStore((s) => s.progressSteps);
   const setJobId = useDatasetStore((s) => s.setJobId);
   const setJobStatus = useDatasetStore((s) => s.setJobStatus);
   const setJobType = useDatasetStore((s) => s.setJobType);
@@ -107,16 +110,25 @@ export const ScreenBrowseDatasets: React.FC = () => {
   const handleValidate = useCallback(async () => {
     if (!currentDataset) return;
     try {
-      const res = await validateDatasetPath({ path: currentDataset.path });
-      if (res.valid) {
-        toast("success", `Dataset validated — ${res.num_pairs} pairs, no problems`);
-      } else {
-        toast("warning", `Validation found ${res.problems.length} problem(s): ${res.problems.join(", ")}`);
-      }
+      const res = await startValidateDataset({ path: currentDataset.path });
+      setJobId(res.job_id);
+      setJobDatasetPath(currentDataset.path);
+      setJobType("validate");
+      setJobStatus("running");
+      toast("info", "Validation started");
     } catch (err) {
       toast("error", `Validation failed: ${err instanceof Error ? err.message : String(err)}`);
     }
-  }, [currentDataset, toast]);
+  }, [currentDataset, toast, setJobId, setJobDatasetPath, setJobType, setJobStatus]);
+
+  useEffect(() => {
+    if (validationResult === null) return;
+    if (validationResult.valid) {
+      toast("success", `Dataset validated — ${validationResult.num_pairs} pairs, no problems`);
+    } else {
+      toast("warning", `Validation found ${validationResult.problems.length} problem(s): ${validationResult.problems.join(", ")}`);
+    }
+  }, [validationResult, toast]);
 
   const handleHealthReport = useCallback(async () => {
     if (!currentDataset) return;
@@ -359,6 +371,26 @@ export const ScreenBrowseDatasets: React.FC = () => {
     setSliderPosition(Math.max(0, Math.min(100, (x / rect.width) * 100)));
   }, []);
 
+  const onCanvasMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.button !== 1) return;
+    e.preventDefault();
+    isPanningRef.current = true;
+    panStartRef.current = { x: e.clientX, y: e.clientY, px: panOffset.x, py: panOffset.y };
+  }, [panOffset]);
+
+  const onCanvasMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (!isPanningRef.current || !panStartRef.current) return;
+    setPanOffset({
+      x: panStartRef.current.px + (e.clientX - panStartRef.current.x),
+      y: panStartRef.current.py + (e.clientY - panStartRef.current.y),
+    });
+  }, []);
+
+  const stopPan = useCallback(() => {
+    isPanningRef.current = false;
+    panStartRef.current = null;
+  }, []);
+
   useEffect(() => {
     if (!isDraggingSlider) return;
     const onMove = (e: MouseEvent) => handleMove(e.clientX);
@@ -378,7 +410,6 @@ export const ScreenBrowseDatasets: React.FC = () => {
       else if (e.key === "ArrowLeft") setPair(currentPairIndex - 1);
       else if (e.key === "1") setViewMode("slider");
       else if (e.key === "2") setViewMode("split");
-      else if (e.key === "3") setViewMode("diff");
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -393,7 +424,6 @@ export const ScreenBrowseDatasets: React.FC = () => {
             Loading datasets…
           </div>
         </div>
-        <JobOverlay />
       </>
     );
   }
@@ -408,7 +438,6 @@ export const ScreenBrowseDatasets: React.FC = () => {
             <button onClick={fetchDatasets}>Retry</button>
           </div>
         </div>
-        <JobOverlay />
       </>
     );
   }
@@ -419,7 +448,6 @@ export const ScreenBrowseDatasets: React.FC = () => {
         <div className="sr-browse-container">
           <div className="empty-state">No datasets found. Create one in the "Create Dataset" tab.</div>
         </div>
-        <JobOverlay />
       </>
     );
   }
@@ -445,7 +473,7 @@ export const ScreenBrowseDatasets: React.FC = () => {
           </div>
 
           <div className="scale-filter-pills">
-            {["all", "x2", "x4", "x8"].map((scale) => (
+            {["all", ...Array.from(new Set(datasets.map((d) => `x${d.scale}`))).sort()].map((scale) => (
               <button
                 key={scale}
                 className={`scale-pill ${selectedScaleFilter === scale ? "active" : ""}`}
@@ -460,6 +488,11 @@ export const ScreenBrowseDatasets: React.FC = () => {
         <div className="dataset-list">
           {filteredDatasets.map((ds) => {
             const isSelected = ds.name === selectedName;
+            const validatingThis = jobStatus === "running" && jobType === "validate" && jobDatasetPath === ds.path;
+            const activeStep = [...progressSteps].reverse().find((st) => st.status === "active");
+            const valPct = validatingThis && activeStep && activeStep.total != null && activeStep.total > 0
+              ? Math.round((activeStep.current / activeStep.total) * 100)
+              : null;
             return (
               <div
                 key={ds.name}
@@ -475,7 +508,13 @@ export const ScreenBrowseDatasets: React.FC = () => {
                   <span className="dataset-name" title={ds.name}>
                     {ds.name}
                   </span>
-                  <CheckCircle size={14} className="manifest-check" />
+                  {validatingThis ? (
+                    <span className="validation-progress-badge" title={activeStep?.desc}>
+                      {valPct != null ? `${valPct}%` : "…"}
+                    </span>
+                  ) : (
+                    <CheckCircle size={14} className="manifest-check" />
+                  )}
                 </div>
                 <div className="card-bottom-row">
                   <span className="scale-tag">x{ds.scale}</span>
@@ -544,13 +583,6 @@ export const ScreenBrowseDatasets: React.FC = () => {
             >
               <Columns size={15} /> Side-by-Side
             </button>
-            <button
-              className={`mode-btn ${viewMode === "diff" ? "active" : ""}`}
-              onClick={() => setViewMode("diff")}
-              title="Difference Layer (3)"
-            >
-              <Layers size={15} /> Overlay
-            </button>
           </div>
 
           <div className="zoom-controls">
@@ -604,7 +636,7 @@ export const ScreenBrowseDatasets: React.FC = () => {
         </div>
 
         {viewMode === "slider" && (
-          <div className="canvas-wrapper">
+          <div className="canvas-wrapper" onMouseDown={onCanvasMouseDown} onMouseMove={onCanvasMouseMove} onMouseUp={stopPan} onMouseLeave={stopPan}>
             <div
               className="comparison-slider-container"
               ref={sliderContainerRef}
@@ -649,19 +681,8 @@ export const ScreenBrowseDatasets: React.FC = () => {
         )}
 
         {viewMode === "split" && (
-          <div className="canvas-wrapper">
+          <div className="canvas-wrapper" onMouseDown={onCanvasMouseDown} onMouseMove={onCanvasMouseMove} onMouseUp={stopPan} onMouseLeave={stopPan}>
             <div className="side-by-side-container">
-              <div className="split-pane">
-                <span className="badge-tag tag-hr">HR (Ground Truth)</span>
-                <img
-                  src={currentHrUrl}
-                  alt="HR Ground Truth"
-                  style={imgTransform(true)}
-                  onError={(e) => {
-                    (e.currentTarget as HTMLImageElement).src = FALLBACK_IMG;
-                  }}
-                />
-              </div>
               <div className="split-pane">
                 <span className="badge-tag tag-lr">LR (Degraded)</span>
                 <img
@@ -673,25 +694,17 @@ export const ScreenBrowseDatasets: React.FC = () => {
                   }}
                 />
               </div>
-            </div>
-          </div>
-        )}
-
-        {viewMode === "diff" && (
-          <div className="canvas-wrapper">
-            <div className="diff-container">
-              <span className="badge-tag tag-diff">Difference / Residual Map</span>
-              <img
-                src={currentHrUrl}
-                alt="Residual Difference"
-                style={{
-                  ...imgTransform(true),
-                  filter: "invert(0.8) contrast(200%)",
-                }}
-                onError={(e) => {
-                  (e.currentTarget as HTMLImageElement).src = FALLBACK_IMG;
-                }}
-              />
+              <div className="split-pane">
+                <span className="badge-tag tag-hr">HR (Ground Truth)</span>
+                <img
+                  src={currentHrUrl}
+                  alt="HR Ground Truth"
+                  style={imgTransform(true)}
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).src = FALLBACK_IMG;
+                  }}
+                />
+              </div>
             </div>
           </div>
         )}
@@ -720,6 +733,21 @@ export const ScreenBrowseDatasets: React.FC = () => {
                 {jobStatus === "running" && isHealthJobOnCurrent ? "Running..." : "Run Health Check"}
               </button>
             </div>
+            {jobStatus === "running" && isHealthJobOnCurrent && (() => {
+              const active = [...progressSteps].reverse().find((st) => st.status === "active");
+              const pct = active && active.total != null && active.total > 0
+                ? Math.round((active.current / active.total) * 100)
+                : null;
+              return (
+                <div className="health-report-progress">
+                  <div className="health-report-progress-label">
+                    <span>{active ? active.desc : "Scanning frames…"}</span>
+                    {pct != null && <span className="health-report-progress-pct">{pct}%</span>}
+                  </div>
+                  <PBar value={active?.current ?? 0} max={active?.total ?? (active?.current || 1)} color="var(--amber)" height={5} />
+                </div>
+              );
+            })()}
             {showHealthReport !== null && !showHealthLoading && (
               <div className="health-report-body">
                 <div className="health-report-summary">
@@ -831,7 +859,6 @@ export const ScreenBrowseDatasets: React.FC = () => {
         )}
       </main>
     </div>
-    <JobOverlay />
     </>
   );
 };

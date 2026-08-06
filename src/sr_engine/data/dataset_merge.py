@@ -36,6 +36,27 @@ def _is_dataset_dir(d: Path) -> bool:
     return (d / "HR").is_dir() and (d / "LR").is_dir() and (d / "manifest.json").is_file()
 
 
+def _is_merged_dataset(d: Path) -> bool:
+    """Whether a dataset is a previously-merged output.
+
+    Merged datasets carry a non-empty ``config.sources`` array in their
+    manifest. They are excluded from discovery so a ``merged-x{N}`` aggregate
+    never shows up as a merge source again.
+
+    Args:
+        d: Dataset directory.
+
+    Returns:
+        ``True`` if the manifest marks the dataset as merged.
+    """
+    try:
+        with open(d / "manifest.json", "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return False
+    return bool(data.get("config", {}).get("sources"))
+
+
 def _discover_datasets(root: Path, exclude: Optional[Path] = None) -> list[Path]:
     """Find all valid dataset directories under a root directory.
 
@@ -54,6 +75,9 @@ def _discover_datasets(root: Path, exclude: Optional[Path] = None) -> list[Path]
         if not child.is_dir():
             continue
         if exclude is not None and child.resolve() == exclude.resolve():
+            continue
+        if _is_merged_dataset(child):
+            log.info("Skipping '%s': previously-merged dataset", child.name)
             continue
         if _is_dataset_dir(child):
             datasets.append(child)
@@ -102,34 +126,9 @@ def _scan_pairs_from_disk(dataset_dir: Path) -> list[dict[str, str]]:
     return pairs
 
 
-def _safe_copy(src: Path, dst_dir: Path, prefix: str) -> Path:
-    """Copy a file into a directory with a prefix to avoid name collisions.
-
-    If a file with the same prefixed name already exists, appends a
-    numeric counter (e.g. ``prefix_file_1.png``) until the path is unique.
-
-    Args:
-        src: Source file to copy.
-        dst_dir: Destination directory.
-        prefix: String prepended to the filename for disambiguation.
-
-    Returns:
-        The destination path of the copied file.
-    """
-    dst = dst_dir / f"{prefix}_{src.name}"
-    counter = 1
-    while dst.exists():
-        stem = src.stem
-        suffix = src.suffix
-        dst = dst_dir / f"{prefix}_{stem}_{counter}{suffix}"
-        counter += 1
-    shutil.copy2(src, dst)
-    return dst
-
-
 def merge_datasets(
     datasets_root: Path,
-    out_dir: Path,
+    out_dir: Optional[Path] = None,
     scale: Optional[int] = None,
     output_name: Optional[str] = None,
     reporter: Optional[ProgressReporter] = None,
@@ -139,16 +138,20 @@ def merge_datasets(
 
     Each dataset subdirectory must contain ``HR/``, ``LR/``, and ``manifest.json``.
     Datasets are grouped by the ``scale`` value in their manifest. For each scale
-    group a new merged dataset is created under ``out_dir/scale_{N}`` with:
+    group a new merged dataset is created inside the datasets folder (or *out_dir*
+    if given) under ``merged-x{N}`` with:
 
-    * A minimal ``manifest.json`` containing only ``config.scale`` and ``sources``.
-    * All HR/LR image pairs copied with source-directory prefixes.
+    * A ``manifest.json`` containing ``config.scale``, ``config.sources``, and the
+      full ``pairs`` list.
+    * All HR/LR image pairs copied with sequential, zero-padded names
+      (``000001``, ``000002``, …) that continue across the source datasets.
 
     Args:
         datasets_root: Parent directory whose immediate subdirectories are datasets.
         out_dir: Base output directory. Per-scale subdirectories are created inside.
+            Defaults to *datasets_root* (merged datasets are created in place).
         scale: If set, only merge datasets with this exact scale.
-        output_name: Custom subdirectory name instead of ``scale_{N}``.
+        output_name: Custom subdirectory name instead of ``merged-x{N}``.
             Only allowed when merging a single scale group.
         reporter: Optional progress reporter.
         dataset_dirs: If set, only merge these specific subdirectories (relative to
@@ -163,12 +166,13 @@ def merge_datasets(
         FileExistsError: If the output directory for a scale group already exists.
     """
     reporter = reporter or ProgressReporter()
+    out_dir = out_dir or datasets_root
 
     if dataset_dirs is not None:
-        datasets = [d for d in dataset_dirs if _is_dataset_dir(d)]
+        datasets = [d for d in dataset_dirs if _is_dataset_dir(d) and not _is_merged_dataset(d)]
         if not datasets:
             raise ValueError(
-                "None of the specified directories are valid datasets. "
+                "None of the specified directories are valid, non-merged datasets. "
                 "Each must contain HR/, LR/, and manifest.json."
             )
     else:
@@ -202,7 +206,7 @@ def merge_datasets(
     results: list[MergeResult] = []
 
     for s, source_dirs in sorted(groups.items()):
-        dir_name = output_name if output_name is not None else f"scale_{s}"
+        dir_name = output_name if output_name is not None else f"merged-x{s}"
         target = out_dir / dir_name
 
         if target.exists():
@@ -224,7 +228,6 @@ def merge_datasets(
             reporter.start(total=len(source_dirs), desc=f"Merging scale {s} datasets")
 
             for src_dir in source_dirs:
-                prefix = str(src_dir.relative_to(datasets_root)).replace("/", "--").replace("\\", "--")
                 manifest_path = src_dir / "manifest.json"
                 with open(manifest_path, "r", encoding="utf-8") as f:
                     manifest_data = json.load(f)
@@ -250,13 +253,17 @@ def merge_datasets(
                         log.warning("Skipping missing pair: %s / %s", hr_rel, lr_rel)
                         continue
 
-                    hr_dst = _safe_copy(hr_src, tmp_hr, prefix)
-                    lr_dst = _safe_copy(lr_src, tmp_lr, prefix)
+                    # Sequential numbering continues across source datasets
+                    total_pairs += 1
+                    index = f"{total_pairs:06d}"
+                    hr_dst = tmp_hr / f"{index}{hr_src.suffix}"
+                    lr_dst = tmp_lr / f"{index}{lr_src.suffix}"
+                    shutil.copy2(hr_src, hr_dst)
+                    shutil.copy2(lr_src, lr_dst)
                     pairs.append({
                         "hr": str(hr_dst.relative_to(tmp_dir)),
                         "lr": str(lr_dst.relative_to(tmp_dir)),
                     })
-                    total_pairs += 1
 
                 reporter.update(1)
 

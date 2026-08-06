@@ -29,3 +29,4 @@ AppDir/
 AppDirsrc-tauri/
 appimage-build/
 .test-sr-tuner/
+calibration_results.json

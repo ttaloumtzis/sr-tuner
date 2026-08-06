@@ -17,7 +17,7 @@ from sr_engine.data.datasets import PairedImageFolderDataset
 from sr_engine.data.transforms import CenterCrop, Compose, RandomCrop, RandomFlip, RandomRotate
 from sr_engine.engine.metrics import psnr, ssim
 from sr_engine.engine.metrics_stream import MetricsStream
-from sr_engine.engine.inference import _super_resolve_tensor
+from sr_engine.engine.inference import CancellationRequested, _super_resolve_tensor
 from sr_engine.models.checkpoint import load_checkpoint, save_checkpoint
 from sr_engine.models.losses import build_composite_loss
 from sr_engine.models.registry import build_model
@@ -158,7 +158,7 @@ class Trainer:
         validation_split: float = 0.1,
         val_dataset_dir: Path | None = None,
         metrics_stream: MetricsStream | None = None,
-        metrics_frequency: int = 1,
+        metrics_frequency: int = 10,
         validation_frame_dir: Path | None = None,
         progress_reporter: ProgressReporter | None = None,
         callbacks: list[TrainerCallback] | None = None,
@@ -210,6 +210,17 @@ class Trainer:
 
         self.model = build_model(model_cfg["name"], model_cfg).to(self.device)
 
+        gc_setting = str(train_cfg.get("gradient_checkpointing", "auto")).lower()
+        if gc_setting == "auto":
+            arch_name = str(model_cfg.get("name", "")).lower()
+            is_transformer = arch_name == "swinir"
+            gc_enabled = is_transformer
+        else:
+            gc_enabled = gc_setting in ("true", "1", "yes")
+        if hasattr(self.model, "gradient_checkpointing"):
+            self.model.gradient_checkpointing = gc_enabled
+            log.info("Gradient checkpointing %s for %s", "enabled" if gc_enabled else "disabled", model_cfg.get("name", "?"))
+
         if load_weights_from:
             sd = torch.load(load_weights_from, weights_only=True,
                             map_location=self.device)
@@ -240,6 +251,14 @@ class Trainer:
 
         self.amp_enabled = self.amp_dtype is not None
         self.grad_scaler = torch.amp.GradScaler() if self.amp_dtype == torch.float16 else None
+
+        loss_bf16_setting = str(train_cfg.get("loss_bf16", "true")).lower()
+        self._loss_bf16 = (
+            self.device.type == "cuda"
+            and torch.cuda.is_bf16_supported()
+            and self.amp_dtype is None
+            and loss_bf16_setting in ("true", "1", "yes")
+        )
 
         self.loss_fn = build_composite_loss(
             train_cfg.get("losses"), self.device,
@@ -362,6 +381,17 @@ class Trainer:
         """Return the underlying model instance."""
         return self.model
 
+    def _handle_cancel(self, epoch: int) -> None:
+        """Save a checkpoint, emit cancelled phase, and raise TrainingCancelled.
+
+        Follows the same pattern as the inline cancel checks in :meth:`train`.
+        """
+        log.warning("Cancellation requested — saving checkpoint at epoch %d", epoch)
+        self._save(epoch)
+        torch.cuda.empty_cache()
+        self._emit("phase", phase="cancelled", epoch=epoch)
+        raise TrainingCancelled()
+
     def _emit(self, event: str, **payload: Any) -> None:
         """Dispatch an event to all registered callbacks.
 
@@ -439,6 +469,15 @@ class Trainer:
             enabled=self.amp_enabled,
         ):
             pred = self.model(lr)
+
+        if self._loss_bf16:
+            with torch.autocast(
+                device_type=self.device.type,
+                dtype=torch.bfloat16,
+                enabled=True,
+            ):
+                loss, components = self.loss_fn(pred, hr)
+        else:
             loss, components = self.loss_fn(pred, hr)
 
         if self.grad_scaler is not None:
@@ -453,43 +492,6 @@ class Trainer:
         components["total"] = loss.item()
         components["lr"] = self.optimizer.param_groups[0]["lr"]
         return components
-
-    def _val_loss_patch(
-        self,
-        lr: torch.Tensor,
-        hr: torch.Tensor,
-        patch_size: int,
-        scale: int,
-        rng: random.Random,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Crop an aligned random patch pair for validation-loss computation.
-
-        Falls back to the whole image when it is smaller than the patch, so
-        the same helper works for both full-image and pre-cropped validation
-        datasets. The crop coordinates are deterministic per epoch.
-
-        Args:
-            lr: Low-resolution image tensor ``(C, H, W)``.
-            hr: High-resolution image tensor ``(C, H*scale, W*scale)``.
-            patch_size: Patch size in LR pixels.
-            scale: Super-resolution scale factor.
-            rng: Seeded ``random.Random`` instance (seed = epoch).
-
-        Returns:
-            Tuple of cropped ``(lr_patch, hr_patch)``.
-        """
-        if lr.dim() == 4:
-            lr, hr = lr.squeeze(0), hr.squeeze(0)
-        _, lr_h, lr_w = lr.shape
-        _, hr_h, hr_w = hr.shape
-        pw = min(patch_size, lr_w, hr_w // scale)
-        ph = min(patch_size, lr_h, hr_h // scale)
-        x = rng.randint(0, lr_w - pw) if lr_w > pw else 0
-        y = rng.randint(0, lr_h - ph) if lr_h > ph else 0
-        return (
-            lr[:, y:y + ph, x:x + pw].contiguous(),
-            hr[:, y * scale:(y + ph) * scale, x * scale:(x + pw) * scale].contiguous(),
-        )
 
     def _validate(self, epoch: int) -> dict[str, Any]:
         """Run validation over the full validation set.
@@ -522,7 +524,9 @@ class Trainer:
                 full_count = min(full_count, full_image_limit)
         total_progress = len(self.val_dataset) + full_count
         done = 0
-        patch_rng = random.Random(epoch)
+
+        if self._cancel_check():
+            self._handle_cancel(epoch)
 
         self.model.eval()
         total_psnr = 0.0
@@ -531,6 +535,8 @@ class Trainer:
         num = 0
         with torch.no_grad():
             for lr, hr in self.val_dataloader:
+                if self._cancel_check():
+                    self._handle_cancel(epoch)
                 lr, hr = lr.to(self.device), hr.to(self.device)
                 with torch.autocast(
                     device_type=self.device.type,
@@ -541,19 +547,16 @@ class Trainer:
                 pred_clamped = pred.clamp(0.0, 1.0)
                 total_psnr += psnr(pred_clamped, hr).item()
                 total_ssim += ssim(pred_clamped, hr).item()
-                batch_loss = 0.0
-                for i in range(lr.size(0)):
-                    lr_patch, hr_patch = self._val_loss_patch(lr[i], hr[i], patch_size, scale, patch_rng)
+                if self._loss_bf16:
                     with torch.autocast(
                         device_type=self.device.type,
-                        dtype=self.amp_dtype,
-                        enabled=self.amp_enabled,
+                        dtype=torch.bfloat16,
+                        enabled=True,
                     ):
-                        loss, _ = self.loss_fn(
-                        self.model(lr_patch.unsqueeze(0)), hr_patch.unsqueeze(0),
-                    )
-                    batch_loss += loss.item()
-                total_val_loss += batch_loss / lr.size(0)
+                        loss, _ = self.loss_fn(pred, hr)
+                else:
+                    loss, _ = self.loss_fn(pred, hr)
+                total_val_loss += loss.item()
                 num += 1
                 done += lr.size(0)
                 self._emit("validate_progress", epoch=epoch, done=done, total=total_progress)
@@ -573,8 +576,29 @@ class Trainer:
                 frame_dir.mkdir(parents=True, exist_ok=True)
             total_full_psnr = 0.0
             total_full_ssim = 0.0
+
+            # Run the tiled full-image pass on the selected device by default.
+            # Set ``validation.offload_cpu`` to instead run it on a throwaway
+            # CPU model copy so the GPU stays idle during the most VRAM-hungry
+            # part of validation. Never move the live model (would orphan the
+            # optimizer state).
+            use_cpu_offload = (
+                bool(self.train_cfg.get("validation", {}).get("offload_cpu", False))
+                and self.device.type != "cpu"
+                and torch.cuda.is_available()
+            )
+            val_model = self.model
+            val_device = str(self.device)
+            if use_cpu_offload:
+                val_model = build_model(self.model_cfg["name"], self.model_cfg)
+                val_model.load_state_dict(self.model.state_dict())
+                val_model = val_model.cpu().eval()
+                val_device = "cpu"
+
             with torch.no_grad():
                 for i in range(full_count):
+                    if self._cancel_check():
+                        self._handle_cancel(epoch)
                     if isinstance(self.val_dataset, _TransformSubset):
                         lr_t, hr_t = self.val_dataset.dataset[self.val_dataset.indices[i]]
                     else:
@@ -584,14 +608,18 @@ class Trainer:
                         dtype=self.amp_dtype,
                         enabled=self.amp_enabled,
                     ):
-                        full_sr = _super_resolve_tensor(
-                            model=self.model,
-                            lr_tensor=lr_t,
-                            scale=scale,
-                            tile_size=patch_size,
-                            tile_overlap=overlap,
-                            device=str(self.device),
-                        )
+                        try:
+                            full_sr = _super_resolve_tensor(
+                                model=val_model,
+                                lr_tensor=lr_t,
+                                scale=scale,
+                                tile_size=patch_size,
+                                tile_overlap=overlap,
+                                device=val_device,
+                                cancel_check=self._cancel_check,
+                            )
+                        except CancellationRequested:
+                            self._handle_cancel(epoch)
                     full_sr = full_sr.clamp(0.0, 1.0)
                     hr_t = hr_t.to(full_sr.device)
                     total_full_psnr += psnr(full_sr, hr_t).item()
@@ -614,6 +642,10 @@ class Trainer:
             if full_count > 0:
                 full_psnr = total_full_psnr / full_count
                 full_ssim = total_full_ssim / full_count
+
+            if use_cpu_offload:
+                del val_model
+                torch.cuda.empty_cache()
 
         self.model.train()
 

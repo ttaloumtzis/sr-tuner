@@ -39,6 +39,28 @@ from sr_engine.workspace import Workspace
 log = get_logger(__name__)
 
 
+def _apply_allocator_tuning() -> None:
+    """Apply best-effort GPU allocator and cuDNN settings.
+
+    Safe to call on non-CUDA systems — catches exceptions.
+    expandable_segments is guarded by torch version (ROCm may not support it).
+    """
+    try:
+        torch.backends.cudnn.benchmark = True
+    except Exception:
+        pass
+    try:
+        if torch.cuda.is_available():
+            from torch import version as torch_ver
+            ver = tuple(int(x) for x in torch_ver.__version__.split("+")[0].split("."))
+            if ver >= (2, 1):
+                torch.cuda.memory._set_allocator_settings("expandable_segments:True")
+            else:
+                log.info("expandable_segments requires torch >= 2.1 (found %s)", torch_ver.__version__)
+    except Exception:
+        log.info("expandable_segments not supported on this platform — skipping")
+
+
 class QueueEventBus:
     """Drop-in for SSEEventManager that forwards events via multiprocessing.Queue.
 
@@ -67,6 +89,8 @@ def _run_training_subprocess(
     Sends events back to the main process via *event_queue*.
     Uses *cancel_event* (multiprocessing.Event) for cancellation checks.
     """
+    _apply_allocator_tuning()
+
     events = QueueEventBus(event_queue)
 
     def _cancel_check() -> bool:
@@ -186,7 +210,7 @@ def _run_training_subprocess(
             validation_split=val_split,
             val_dataset_dir=val_dataset_dir,
             metrics_stream=metrics_stream,
-            metrics_frequency=int(train_cfg.get("metrics_frequency", 1)),
+            metrics_frequency=int(train_cfg.get("metrics_frequency", 10)),
             validation_frame_dir=validation_frame_dir,
             progress_reporter=sse_reporter,
             callbacks=[sse_callback],
@@ -559,8 +583,6 @@ def run_dataset_merge(
 
         datasets_root = Path(params["input"])
         out_dir = Path(params["out"]) if params.get("out") else None
-        if out_dir is None:
-            raise ValueError("--out is required for dataset merge")
 
         results = merge_datasets(
             datasets_root=datasets_root,

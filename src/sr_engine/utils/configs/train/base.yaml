@@ -11,6 +11,8 @@ betas: [0.9, 0.99]
 max_epochs: 10
 save_per_epoch: 5
 checkpoint_dir: "experiments/checkpoints"
+# Log metrics every N batches (JSONL + SSE events). Higher = less I/O overhead.
+metrics_frequency: 10
 
 # --- Validation ---
 validation:
@@ -24,6 +26,9 @@ validation:
   # The patch-based PSNR/SSIM/loss still cover the whole validation set.
   # 0 disables the full-image pass entirely.
   full_image_limit: 8
+  # Run the full-image validation pass on the selected device (GPU). Set true
+  # to offload it to a throwaway CPU model copy instead (keeps GPU idle).
+  offload_cpu: false
 
 # --- Training dynamics ---
 lr_scheduler: cosine
@@ -32,6 +37,15 @@ min_lr: 1e-7
 
 # --- Mixed precision ---
 dtype: float32  # "bf16" enables bfloat16, "float16" enables fp16 + GradScaler
+
+# --- VRAM / memory ---
+# Recompute activations during backward instead of storing them (trades compute
+# for memory, ~4-6x fewer activations for transformer archs). "auto" enables it
+# for transformer architectures (swinir) and disables it for conv ones (rrdb).
+gradient_checkpointing: auto
+# Compute pixel + VGG losses in bf16 even during fp32 training (halves loss-side
+# activation memory on GPUs that support bf16).
+loss_bf16: true
 
 # --- Losses ---
 # Each loss is a named entry with a "type" and "weight".

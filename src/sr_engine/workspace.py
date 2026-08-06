@@ -270,18 +270,28 @@ class Workspace:
     # ── Model version API ─────────────────────────────────────────────
 
     def latest_model_version(self, instance_name: str) -> str | None:
-        """Return the highest existing version tag (e.g. ``'v3'``) or ``None``."""
+        """Return the highest existing version tag (e.g. ``'v3'``) or ``None``.
+
+        Prefers tags whose directory contains ``model.pt`` — a version
+        without weights (e.g. partially deleted) won't be selected when
+        a complete one exists.
+        """
         versions_dir = self.path / "models" / instance_name / "versions"
         if not versions_dir.is_dir():
             return None
-        versions = []
+        candidates: list[tuple[int, str, bool]] = []
         for d in versions_dir.iterdir():
             m = re.fullmatch(r"v(\d+)", d.name)
             if d.is_dir() and m:
-                versions.append((int(m.group(1)), d.name))
-        if not versions:
+                has_w = (d / "model.pt").is_file()
+                candidates.append((int(m.group(1)), d.name, has_w))
+        if not candidates:
             return None
-        return max(versions, key=lambda x: x[0])[1]
+        # Prefer complete versions; if none, fall back to highest tag
+        complete = [c for c in candidates if c[2]]
+        if complete:
+            return max(complete, key=lambda x: x[0])[1]
+        return max(candidates, key=lambda x: x[0])[1]
 
     def next_model_version(self, instance_name: str) -> str:
         """Return the next available version tag (e.g. ``'v4'``).
@@ -386,7 +396,8 @@ class Workspace:
     def list_model_versions(self, instance_name: str) -> list[dict]:
         """List all version directories for an instance, sorted ascending.
 
-        Returns a list of ``{tag, path, metadata}`` dicts.
+        Returns a list of ``{tag, path, metadata, has_weights}`` dicts.
+        Corrupt ``version.json`` is silently treated as empty metadata.
         """
         versions_dir = self.path / "models" / instance_name / "versions"
         if not versions_dir.is_dir():
@@ -398,11 +409,17 @@ class Workspace:
                 meta: dict = {}
                 meta_path = d / "version.json"
                 if meta_path.is_file():
-                    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                    try:
+                        raw = json.loads(meta_path.read_text(encoding="utf-8"))
+                    except Exception:
+                        raw = {}
+                    if isinstance(raw, dict):
+                        meta = raw
                 versions.append({
                     "tag": d.name,
                     "path": str(d),
                     "metadata": meta,
+                    "has_weights": (d / "model.pt").is_file(),
                 })
         versions.sort(key=lambda x: int(x["tag"][1:]))
         return versions
@@ -417,6 +434,30 @@ class Workspace:
         if not inst_path.is_dir():
             raise FileNotFoundError(f"Model instance '{name}' not found")
         shutil.rmtree(inst_path)
+
+    def delete_model_version(self, instance_name: str, version: str) -> None:
+        """Remove a specific version directory for a model instance.
+
+        Args:
+            instance_name: Model instance name.
+            version: Version tag (e.g. ``'v3'``).
+
+        Raises:
+            FileNotFoundError: If the instance or version does not exist.
+            ValueError: If the version tag is invalid or attempts path traversal.
+        """
+        if not re.fullmatch(r"v\d+", version):
+            raise ValueError(f"Invalid version tag: {version!r}")
+        inst_path = self.path / "models" / instance_name
+        if not inst_path.is_dir():
+            raise FileNotFoundError(f"Model instance '{instance_name}' not found")
+        versions_root = (inst_path / "versions").resolve()
+        v_path = (versions_root / version).resolve()
+        if v_path.parent != versions_root or not v_path.is_dir():
+            raise FileNotFoundError(
+                f"Version '{version}' not found for instance '{instance_name}'"
+            )
+        shutil.rmtree(v_path)
 
     def get_run_path(self, instance: str) -> Path:
         """Return a new timestamp-based run directory (creates it).

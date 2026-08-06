@@ -156,3 +156,151 @@ class TestGetRunPath:
         run_dir = ws.get_run_path("v1")
         assert run_dir.is_dir()
         assert run_dir.name.startswith("run_")
+
+
+class TestModelVersions:
+    """Tests for ``Workspace.list_model_versions``."""
+
+    def test_list_model_versions_basic(self, tmp_path):
+        """list_model_versions() returns versions sorted ascending."""
+        ws = Workspace(tmp_path)
+        ws.init()
+        ws.create_model_instance("m1", {"name": "swinir"})
+        v_dir = tmp_path / "models" / "m1" / "versions"
+        (v_dir / "v2").mkdir()
+        (v_dir / "v1").mkdir()
+        (v_dir / "v1" / "model.pt").write_text("dummy")
+        versions = ws.list_model_versions("m1")
+        assert [v["tag"] for v in versions] == ["v1", "v2"]
+        assert versions[0]["has_weights"] is True
+        assert versions[1]["has_weights"] is False
+
+    def test_list_model_versions_corrupt_metadata(self, tmp_path):
+        """Corrupt version.json is treated as empty metadata."""
+        ws = Workspace(tmp_path)
+        ws.init()
+        ws.create_model_instance("m1", {"name": "swinir"})
+        v_dir = tmp_path / "models" / "m1" / "versions"
+        (v_dir / "v1").mkdir()
+        (v_dir / "v1" / "version.json").write_text("{not json", encoding="utf-8")
+        versions = ws.list_model_versions("m1")
+        assert len(versions) == 1
+        assert versions[0]["metadata"] == {}
+
+    def test_list_model_versions_non_dict_metadata(self, tmp_path):
+        """Non-dict JSON in version.json is treated as empty metadata."""
+        ws = Workspace(tmp_path)
+        ws.init()
+        ws.create_model_instance("m1", {"name": "swinir"})
+        v_dir = tmp_path / "models" / "m1" / "versions"
+        (v_dir / "v1").mkdir()
+        (v_dir / "v1" / "version.json").write_text('"just a string"', encoding="utf-8")
+        versions = ws.list_model_versions("m1")
+        assert len(versions) == 1
+        assert versions[0]["metadata"] == {}
+
+    def test_list_model_versions_empty(self, tmp_path):
+        """list_model_versions() returns empty list when no versions exist."""
+        ws = Workspace(tmp_path)
+        ws.init()
+        ws.create_model_instance("m1", {"name": "swinir"})
+        assert ws.list_model_versions("m1") == []
+
+
+class TestLatestModelVersion:
+    """Tests for ``Workspace.latest_model_version``."""
+
+    def test_prefers_complete_version(self, tmp_path):
+        """latest_model_version prefers a version with model.pt over a higher tag without."""
+        ws = Workspace(tmp_path)
+        ws.init()
+        ws.create_model_instance("m1", {"name": "swinir"})
+        v_dir = tmp_path / "models" / "m1" / "versions"
+        (v_dir / "v1").mkdir()
+        (v_dir / "v1" / "model.pt").write_text("dummy")
+        (v_dir / "v2").mkdir()  # no model.pt
+        assert ws.latest_model_version("m1") == "v1"
+
+    def test_falls_back_to_highest_tag(self, tmp_path):
+        """When no version has model.pt, returns the highest tag."""
+        ws = Workspace(tmp_path)
+        ws.init()
+        ws.create_model_instance("m1", {"name": "swinir"})
+        v_dir = tmp_path / "models" / "m1" / "versions"
+        (v_dir / "v1").mkdir()
+        (v_dir / "v2").mkdir()
+        assert ws.latest_model_version("m1") == "v2"
+
+    def test_no_versions(self, tmp_path):
+        """Returns None when no versions exist."""
+        ws = Workspace(tmp_path)
+        ws.init()
+        ws.create_model_instance("m1", {"name": "swinir"})
+        assert ws.latest_model_version("m1") is None
+
+    def test_resolve_version_prefers_complete(self, tmp_path):
+        """resolve_version('latest') returns a path only when the latest complete version has weights."""
+        ws = Workspace(tmp_path)
+        ws.init()
+        ws.create_model_instance("m1", {"name": "swinir"})
+        v_dir = tmp_path / "models" / "m1" / "versions"
+        (v_dir / "v1").mkdir()
+        (v_dir / "v1" / "model.pt").write_text("dummy")
+        (v_dir / "v2").mkdir()
+        path = ws.resolve_version("m1", "latest")
+        assert path is not None
+        assert path.name == "model.pt"
+        assert path.parent.name == "v1"
+
+
+class TestDeleteModelVersion:
+    """Tests for ``Workspace.delete_model_version``."""
+
+    def test_delete_version_success(self, tmp_path):
+        """delete_model_version removes the version directory."""
+        ws = Workspace(tmp_path)
+        ws.init()
+        ws.create_model_instance("m1", {"name": "swinir"})
+        v_dir = tmp_path / "models" / "m1" / "versions"
+        (v_dir / "v1").mkdir()
+        (v_dir / "v1" / "model.pt").write_text("dummy")
+        assert (v_dir / "v1").is_dir()
+        ws.delete_model_version("m1", "v1")
+        assert not (v_dir / "v1").is_dir()
+
+    def test_delete_version_missing_instance(self, tmp_path):
+        """Raises FileNotFoundError when instance does not exist."""
+        ws = Workspace(tmp_path)
+        ws.init()
+        with pytest.raises(FileNotFoundError):
+            ws.delete_model_version("nonexistent", "v1")
+
+    def test_delete_version_missing_version(self, tmp_path):
+        """Raises FileNotFoundError when version does not exist."""
+        ws = Workspace(tmp_path)
+        ws.init()
+        ws.create_model_instance("m1", {"name": "swinir"})
+        with pytest.raises(FileNotFoundError):
+            ws.delete_model_version("m1", "v99")
+
+    def test_delete_version_invalid_tag(self, tmp_path):
+        """Raises ValueError for invalid tag format."""
+        ws = Workspace(tmp_path)
+        ws.init()
+        ws.create_model_instance("m1", {"name": "swinir"})
+        with pytest.raises(ValueError):
+            ws.delete_model_version("m1", "latest")
+        with pytest.raises(ValueError):
+            ws.delete_model_version("m1", "../../etc")
+
+    def test_delete_version_containment_guard(self, tmp_path):
+        """Prevents path traversal via version tag."""
+        ws = Workspace(tmp_path)
+        ws.init()
+        ws.create_model_instance("m1", {"name": "swinir"})
+        # Create a directory outside the versions dir that should not be reachable
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        # '../outside' fails the v\d+ regex so ValueError is raised first
+        with pytest.raises(ValueError):
+            ws.delete_model_version("m1", "../outside")

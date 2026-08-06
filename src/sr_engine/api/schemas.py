@@ -47,6 +47,7 @@ class ModelVersion(BaseModel):
     tag: str
     path: str
     metadata: dict | None = None
+    has_weights: bool = False
 
 class ExportParams(BaseModel):
     instance: str
@@ -144,12 +145,15 @@ class TrainParams(BaseModel):
     validation_split: float | None = None
     validation_split_seed: int | None = None
     validation_full_image_limit: int | None = None
+    validation_offload_cpu: bool | None = None
     validation_dataset: str | None = None
     metrics_frequency: int | None = None
     perceptual_weight: float | None = None
     warmup_steps: int | None = None
     write_metrics_file: bool = True
     losses: dict[str, Any] | None = None
+    gradient_checkpointing: str | None = None
+    loss_bf16: bool | None = None
 
     @validator("losses")
     def validate_losses(cls, v):
@@ -190,12 +194,14 @@ class TrainParams(BaseModel):
         if any(v is not None for v in (self.validation_enabled, self.validation_split,
                                        self.validation_split_seed,
                                        self.validation_full_image_limit,
+                                       self.validation_offload_cpu,
                                        self.validation_dataset)):
             d.setdefault("validation", {})
             for k, v in (("enabled", self.validation_enabled),
                           ("split", self.validation_split),
                           ("split_seed", self.validation_split_seed),
                           ("full_image_limit", self.validation_full_image_limit),
+                          ("offload_cpu", self.validation_offload_cpu),
                           ("dataset", self.validation_dataset)):
                 if v is not None:
                     d["validation"][k] = v
@@ -206,6 +212,10 @@ class TrainParams(BaseModel):
                 "pixel": {"type": "l1", "weight": 1.0},
                 "perceptual": {"type": "vgg", "weight": self.perceptual_weight},
             }
+        if self.gradient_checkpointing is not None:
+            d["gradient_checkpointing"] = self.gradient_checkpointing
+        if self.loss_bf16 is not None:
+            d["loss_bf16"] = self.loss_bf16
         return d
 
 # ── Inference ───────────────────────────────────────────────────────────
@@ -221,6 +231,27 @@ class InferParams(BaseModel):
     tile: int = 0
     overlap: int = 64
     device: str = "auto"
+
+
+# ── VRAM probe ───────────────────────────────────────────────────────────
+
+class VramProbeParams(BaseModel):
+    model_name: str
+    config: dict[str, Any] | None = None
+    batch_size: int = 1
+    patch_size: int = 64
+    dtype: str = "float32"
+    scale: int | None = None
+    gradient_checkpointing: str = "auto"
+    loss_config: dict[str, Any] | None = None
+    loss_bf16: bool | None = None
+
+    @validator("dtype")
+    def validate_dtype(cls, v):
+        if v not in ("float32", "bf16", "float16"):
+            raise ValueError(f"dtype must be float32/bf16/float16, got '{v}'")
+        return v
+
 
 # ── Jobs ────────────────────────────────────────────────────────────────
 

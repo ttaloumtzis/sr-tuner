@@ -12,14 +12,18 @@ router = APIRouter(prefix="/api/models", tags=["models"])
 
 def _enrich_instance(ws: Workspace, inst: ModelInstance) -> ModelInstance:
     """Populate architecture, scale, and latest_version from config.yaml / versions dir."""
-    import yaml
     cfg_path = Path(inst.path) / "config.yaml"
     if cfg_path.exists():
-        with open(cfg_path) as f:
-            cfg = yaml.safe_load(f) or {}
-        inst.architecture = cfg.get("architecture") or inst.architecture
-        inst.scale = cfg.get("scale") or cfg.get("scale_factor")
-        inst.config = cfg
+        try:
+            import yaml
+            with open(cfg_path) as f:
+                cfg = yaml.safe_load(f) or {}
+            inst.architecture = cfg.get("architecture") or inst.architecture
+            inst.scale = cfg.get("scale") or cfg.get("scale_factor")
+            inst.config = cfg
+        except Exception:
+            # Corrupt config.yaml — leave instance metadata as-is
+            pass
     inst.latest_version = ws.latest_model_version(inst.name)
     return inst
 
@@ -101,3 +105,14 @@ async def delete_instance(name: str, ws: Workspace = Depends(get_workspace)):
     except FileNotFoundError as e:
         raise HTTPException(404, str(e))
     return {"deleted": name}
+
+
+@router.delete("/instances/{name}/versions/{version}")
+async def delete_version(name: str, version: str, ws: Workspace = Depends(get_workspace)):
+    try:
+        ws.delete_model_version(name, version)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"deleted": version}

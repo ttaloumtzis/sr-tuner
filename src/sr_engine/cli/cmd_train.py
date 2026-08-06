@@ -44,10 +44,11 @@ def train() -> None:
 @click.option("--validation-split", type=click.FloatRange(0.0, 1.0), default=None, help="Fraction of data for validation.")
 @click.option("--validation-split-seed", type=int, default=None, help="Seed for the train/validation split (independent of --seed).")
 @click.option("--validation-full-image-limit", type=int, default=None, help="Max images per epoch for the tiled full-image validation pass (0 disables it).")
+@click.option("--validation-offload-cpu", type=bool, default=None, help="Run the full-image validation pass on a throwaway CPU model copy instead of the selected device.")
 @click.option("--machine", is_flag=True, default=False,
               help="Emit metrics as JSON Lines (one JSON object per event) for programmatic consumption.")
 @click.option("--experiment-id", type=str, default=None, help="Experiment identifier (auto-generated if omitted).")
-@click.option("--metrics-frequency", type=int, default=1, help="Log metrics every N batches.")
+@click.option("--metrics-frequency", type=int, default=10, help="Log metrics every N batches.")
 @click.option("--bf16/--no-bf16", default=None, help="Enable bfloat16 mixed precision training.")
 @click.option("--dump-config", is_flag=True, default=False, help="Print final merged config and exit.")
 @no_workspace_config_option
@@ -68,6 +69,7 @@ def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate,
         seed, weight_decay, betas, max_epochs,
         num_workers, patch_size, save_per_epoch,
         validation_enabled, validation_split, validation_split_seed, validation_full_image_limit,
+        validation_offload_cpu,
         machine, experiment_id, metrics_frequency,
         bf16, dump_config, model_config, instance, no_workspace_config,
         losses, perceptual_weight, edge_weight, style_weight, frequency_weight,
@@ -146,6 +148,8 @@ def run(ctx, config, model, dataset, resume, device, batch_size, learning_rate,
         overrides.setdefault("validation", {})["split_seed"] = validation_split_seed
     if validation_full_image_limit is not None:
         overrides.setdefault("validation", {})["full_image_limit"] = validation_full_image_limit
+    if validation_offload_cpu is not None:
+        overrides.setdefault("validation", {})["offload_cpu"] = validation_offload_cpu
 
     loss_overrides: dict[str, Any] = {}
     if losses:

@@ -8,6 +8,7 @@ import { useInferenceStore } from "../store/inferenceStore";
 import { useCheckpointStore } from "../store/checkpointStore";
 
 export function resetAllStores(): void {
+  if (typeof localStorage !== "undefined") localStorage.clear();
   useProjectStore.setState(useProjectStore.getInitialState(), true);
   useTrainingStore.setState(useTrainingStore.getInitialState(), true);
   useDatasetStore.setState(useDatasetStore.getInitialState(), true);

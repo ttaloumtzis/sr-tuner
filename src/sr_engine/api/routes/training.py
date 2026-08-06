@@ -1,14 +1,17 @@
+import asyncio
 import threading
+from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from sr_engine.api.deps import get_configs, get_workspace
-from sr_engine.api.schemas import TrainParams
+from sr_engine.api.schemas import TrainParams, VramProbeParams
 from sr_engine.data.dataset_validator import validate
 from sr_engine.utils.config import DefaultConfigs
 from sr_engine.workspace import Workspace
 
 router = APIRouter(prefix="/api/train", tags=["training"])
+_executor = ThreadPoolExecutor(max_workers=1)
 
 
 @router.post("/start")
@@ -59,3 +62,12 @@ async def validate_dataset(params: TrainParams, ws: Workspace = Depends(get_work
         raise HTTPException(404, f"Dataset not found: {params.dataset}")
     report = validate(dataset_path)
     return {"valid": report.ok, "problems": report.problems}
+
+
+@router.post("/estimate-vram")
+async def estimate_vram(params: VramProbeParams):
+    """Run a dry forward+loss+backward in a subprocess and return peak GPU memory."""
+    from sr_engine.api.vram_probe import run_vram_probe
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(_executor, run_vram_probe, params.model_dump())
+    return result

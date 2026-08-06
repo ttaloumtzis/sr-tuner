@@ -2,6 +2,7 @@
 
 import torch
 import torch.nn as nn
+import torch.utils.checkpoint
 from ..registry import register
 
 
@@ -71,6 +72,7 @@ class RRDBNet(nn.Module):
         self.conv_first = nn.Conv2d(num_in_ch, num_feat, 3, 1, 1)
 
         self.body = nn.Sequential(*[RRDB(num_feat, num_grow_ch) for _ in range(num_block)])
+        self.gradient_checkpointing = False
 
         self.conv_body = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
 
@@ -89,5 +91,10 @@ class RRDBNet(nn.Module):
             Output tensor ``(B, C_out, H*scale, W*scale)``.
         """
         feat = self.conv_first(x)
-        body_feat = self.conv_body(self.body(feat)) + feat
+        if self.gradient_checkpointing and self.training:
+            body_feat = self.conv_body(
+                torch.utils.checkpoint.checkpoint(self.body, feat, use_reentrant=False)
+            ) + feat
+        else:
+            body_feat = self.conv_body(self.body(feat)) + feat
         return self.upsample(body_feat)

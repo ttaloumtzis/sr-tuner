@@ -9,6 +9,7 @@ interface CollapsibleSectionProps {
   defaultOpen?: boolean;
   children: ReactNode;
   style?: CSSProperties;
+  contentStyle?: CSSProperties;
 }
 
 export function CollapsibleSection({
@@ -19,6 +20,7 @@ export function CollapsibleSection({
   defaultOpen = true,
   children,
   style,
+  contentStyle,
 }: CollapsibleSectionProps) {
   const [open, setOpen] = useState(defaultOpen);
 
@@ -62,7 +64,7 @@ export function CollapsibleSection({
           />
         </span>
       </button>
-      {open && <div style={{ padding: 10 }}>{children}</div>}
+      {open && <div style={{ padding: 10, ...contentStyle }}>{children}</div>}
     </div>
   );
 }

@@ -1,32 +1,33 @@
 import { useState, useMemo, useCallback } from "react";
+import "./ScreenModelCreate.css";
 import { Panel } from "../../components/ui/Panel";
 import { Btn } from "../../components/ui/Btn";
 import { InfoRow } from "../../components/ui/InfoRow";
 import { SubTabPill } from "../../components/ui/SubTabPill";
+import { Tag } from "../../components/ui/Tag";
+import { Field } from "../../components/ui/Field";
+import { IconCpu, IconSliders, IconRocket } from "../../components/ui/icons";
 import { useModelStore } from "../../store/modelStore";
 import { createInstance } from "../../lib/api";
 import { useToast } from "../../components/shell/ToastProvider";
-import type { Architecture } from "../../lib/srproj";
-import { ArchSelector, ARCH_DEFS } from "./ArchSelector";
-import { ConfigFieldRow, CodeRow } from "./ConfigFieldRow";
 import {
+  getArch,
+  getDefaultTemplate,
   getTemplateValues,
-  getTemplateDefaultId,
-  getSwinirTemplates,
-  getRrdbTemplates,
-  getNumHeads,
-  generateNumHeadsCsv,
-  estimateParams,
+  matchTemplate,
+  serializeValue,
+  buildYaml,
   formatParamCount,
   formatWeightMB,
-  parseCSV,
-  doesConfigMatchTemplate,
-  type ModelTemplateId,
-  type TemplateDef,
-} from "./templates";
+  type Architecture,
+} from "../../lib/architectures";
+import { ArchSelector } from "./ArchSelector";
+import { ConfigFieldRow, CodeRow } from "./ConfigFieldRow";
 
-function TemplateCard({ tpl, active, recommended, onClick }: {
-  tpl: TemplateDef;
+function TemplateCard({
+  tpl, active, recommended, onClick,
+}: {
+  tpl: { id: string; name: string; description: string; paramsM: number };
   active: boolean;
   recommended?: boolean;
   onClick: () => void;
@@ -36,8 +37,8 @@ function TemplateCard({ tpl, active, recommended, onClick }: {
       onClick={onClick}
       style={{
         display: "flex", flexDirection: "column", gap: 4,
-        padding: 12, borderRadius: 8, cursor: "pointer",
-        background: active ? "var(--bg3)" : "var(--bg2)",
+        padding: 12, borderRadius: "var(--radius-md)", cursor: "pointer",
+        background: active ? "var(--green-dim)" : "var(--bg2)",
         border: `1px solid ${active ? "var(--green)" : "var(--border)"}`,
         transition: "var(--transition-fast)",
         textAlign: "left", position: "relative",
@@ -55,47 +56,46 @@ function TemplateCard({ tpl, active, recommended, onClick }: {
       )}
       <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>{tpl.name}</span>
       <span style={{ fontSize: 11, color: "var(--muted)" }}>{tpl.description}</span>
-      <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text)", fontFamily: "var(--font-mono)" }}>
+      <span style={{
+        fontSize: 11, fontWeight: 600, color: "var(--text)", fontFamily: "var(--font-mono)",
+      }}>
         {formatParamCount(tpl.paramsM)} params
       </span>
     </button>
   );
 }
 
-function ConfigPanel({ fields, values, onChange, arch }: {
-  fields: import("./ConfigFieldRow").ConfigField[];
+function ConfigPanel({
+  def, values, onChange,
+}: {
+  def: ReturnType<typeof getArch>;
   values: Record<string, unknown>;
   onChange: (key: string, value: unknown) => void;
-  arch: Architecture;
 }) {
-  const isSwinir = arch === "swinir";
-  const displayFields = isSwinir
-    ? fields.filter(f => f.key !== "depths" && f.key !== "num_heads")
-    : fields;
-
-  const derivedHeads = isSwinir
-    ? generateNumHeadsCsv(
-        String(values.depths ?? "6,6,6,6,6,6"),
-        getNumHeads(values.embed_dim as number),
-      )
-    : null;
+  const displayFields = def.fields.filter((f) => !def.derivedKeys.includes(f.key));
+  const derivedFields = def.fields.filter((f) => def.derivedKeys.includes(f.key));
 
   return (
-    <Panel title="Architecture Config">
+    <Panel title="Architecture Config" icon={<IconSliders size={13} />}>
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        {displayFields.map((field) => (
-          <ConfigFieldRow
-            key={field.key}
-            field={field}
-            value={values[field.key] ?? field.default}
-            onChange={(v) => onChange(field.key, v)}
-          />
-        ))}
-        {isSwinir && (
-          <>
-            <CodeRow label="Depths" value={String(values.depths ?? "")} />
-            <CodeRow label="Num Heads" value={derivedHeads ?? ""} />
-          </>
+        <div className="mc-group">
+          <div className="mc-grid" style={{ "--mc-grid-min": "140px", "--mc-grid-max": "260px" } as React.CSSProperties}>
+            {displayFields.map((field) => (
+              <ConfigFieldRow
+                key={field.key}
+                field={field}
+                value={values[field.key] ?? (field as any).default}
+                onChange={(v) => onChange(field.key, v)}
+              />
+            ))}
+          </div>
+        </div>
+        {derivedFields.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {derivedFields.map((field) => (
+              <CodeRow key={field.key} label={field.label} value={String(values[field.key] ?? "")} />
+            ))}
+          </div>
         )}
       </div>
     </Panel>
@@ -105,7 +105,7 @@ function ConfigPanel({ fields, values, onChange, arch }: {
 function YamlPanel({ yaml, copied, onCopy }: { yaml: string; copied: boolean; onCopy: () => void }) {
   return (
     <div style={{
-      background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 6, overflow: "hidden",
+      background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", overflow: "hidden",
     }}>
       <div style={{
         display: "flex", justifyContent: "space-between", alignItems: "center",
@@ -143,43 +143,6 @@ function syntaxHighlight(yaml: string): string {
     .join("\n");
 }
 
-function buildYaml(values: Record<string, unknown>, name: string, arch: Architecture): string {
-  const lines: string[] = [];
-  lines.push(`# ${arch} model configuration`);
-  lines.push(`name: ${name || arch}`);
-  lines.push(`type: ${arch === "rrdb_esrgan" ? "rrdbnet" : arch}`);
-  for (const [key, value] of Object.entries(values)) {
-    if (key === "depths" || key === "num_heads") {
-      const arr = parseCSV(String(value));
-      lines.push(`${key}: [${arr.join(", ")}]`);
-    } else if (key === "rgb_mean" && (value === null || value === "" || value === "null")) {
-      continue;
-    } else if (key === "rgb_mean") {
-      const arr = Array.isArray(value) ? value : parseCSV(String(value));
-      if (arr.length > 0) lines.push(`${key}: [${arr.join(", ")}]`);
-    } else if (typeof value === "number") {
-      lines.push(`${key}: ${value}`);
-    } else {
-      lines.push(`${key}: ${value}`);
-    }
-  }
-  return lines.join("\n");
-}
-
-function serializeConfigValue(key: string, raw: unknown): unknown {
-  if (key === "depths" || key === "num_heads") {
-    const nums = parseCSV(String(raw ?? ""));
-    return nums.length > 0 ? nums : raw;
-  }
-  if (key === "rgb_mean") {
-    const s = String(raw ?? "").trim();
-    if (!s || s.toLowerCase() === "null") return null;
-    const nums = parseCSV(s);
-    return nums.length > 0 ? nums : null;
-  }
-  return raw;
-}
-
 export function ScreenModelCreate() {
   const arch = useModelStore((s) => s.architecture);
   const setArch = useModelStore((s) => s.setArchitecture);
@@ -187,57 +150,47 @@ export function ScreenModelCreate() {
   const { show } = useToast();
 
   const [innerTab, setInnerTab] = useState<"template" | "advanced">("template");
-  const [configValues, setConfigValues] = useState<Record<string, unknown>>(
-    () => ({ ...getTemplateValues(arch, getTemplateDefaultId(arch)), scale: 4 }),
-  );
+  const [configValues, setConfigValues] = useState<Record<string, unknown>>(() => {
+    const def = getArch(arch);
+    const defaultTpl = getDefaultTemplate(def);
+    return { ...getTemplateValues(def, defaultTpl.id), scale: 4 };
+  });
   const [modelNameInput, setModelNameInput] = useState("");
   const [copied, setCopied] = useState(false);
 
-  const def = useMemo(() => ARCH_DEFS.find((d) => d.id === arch) ?? ARCH_DEFS[0], [arch]);
+  const def = useMemo(() => getArch(arch), [arch]);
+  const scaleOptions = useMemo(() => {
+    const sf = def.fields.find((f) => f.key === "scale");
+    return sf?.type === "dropdown" ? (sf.options as number[]) : [1, 2, 4, 8];
+  }, [def]);
 
-  // Derived rather than tracked separately, so the highlighted template card can never
-  // go stale relative to the actual config values (previously, editing a field on the
-  // Advanced tab left the old template shown as "active" even after the config diverged).
-  const selectedTemplate = useMemo(
-    () => doesConfigMatchTemplate(arch, configValues),
-    [arch, configValues],
-  );
-
-  const paramsM = useMemo(() => estimateParams(arch, configValues), [arch, configValues]);
-
+  const selectedTemplate = useMemo(() => matchTemplate(def, configValues), [def, configValues]);
+  const paramsM = useMemo(() => def.estimateParams(configValues), [def, configValues]);
   const weightFp32MB = useMemo(() => formatWeightMB(paramsM), [paramsM]);
   const weightFp16MB = useMemo(() => (parseFloat(weightFp32MB) / 2).toFixed(1), [weightFp32MB]);
-
-  const templates = useMemo(
-    () => (arch === "swinir" ? getSwinirTemplates() : getRrdbTemplates()),
-    [arch],
-  );
-
-  const yaml = useMemo(() => buildYaml(configValues, modelNameInput, arch), [configValues, modelNameInput, arch]);
+  const yaml = useMemo(() => buildYaml(def, configValues, modelNameInput), [def, configValues, modelNameInput]);
 
   const handleArchSelect = useCallback((newArch: Architecture) => {
     setArch(newArch);
-    const vals = getTemplateValues(newArch, getTemplateDefaultId(newArch));
-    setConfigValues({ ...vals, scale: 4 });
+    const newDef = getArch(newArch);
+    const defaultTpl = getDefaultTemplate(newDef);
+    setConfigValues({ ...getTemplateValues(newDef, defaultTpl.id), scale: 4 });
     setInnerTab("template");
   }, [setArch]);
 
-  const handleTemplateSelect = useCallback((id: ModelTemplateId) => {
-    const vals = getTemplateValues(arch, id);
+  const handleTemplateSelect = useCallback((id: string) => {
+    const vals = getTemplateValues(def, id);
     setConfigValues((prev) => ({ ...vals, scale: prev.scale ?? 4 }));
-  }, [arch]);
+  }, [def]);
 
   const handleChange = useCallback((key: string, value: unknown) => {
     setConfigValues((prev) => {
       let next = { ...prev, [key]: value };
-      if (arch === "swinir" && key === "embed_dim") {
-        const heads = getNumHeads(value as number);
-        const depthsCsv = String(prev.depths ?? "6,6,6,6,6,6");
-        next.num_heads = generateNumHeadsCsv(depthsCsv, heads);
-      }
+      const result = def.derive?.(key, value, next);
+      if (result) next = { ...next, ...result };
       return next;
     });
-  }, [arch]);
+  }, [def]);
 
   const handleCopyYaml = useCallback(async () => {
     await navigator.clipboard.writeText(yaml);
@@ -252,7 +205,9 @@ export function ScreenModelCreate() {
     }
     const config: Record<string, unknown> = {};
     for (const f of def.fields) {
-      config[f.key] = serializeConfigValue(f.key, configValues[f.key] ?? f.default);
+      const raw = configValues[f.key] ?? (f as any).default;
+      const val = serializeValue(def, f.key, raw);
+      if (val !== undefined) config[f.key] = val;
     }
     try {
       await createInstance(modelNameInput.trim(), arch, config);
@@ -261,100 +216,106 @@ export function ScreenModelCreate() {
     } catch (e: any) {
       show("error", e?.message ?? "Failed to create model instance");
     }
-  }, [modelNameInput, arch, def.fields, configValues, show, setSubTab]);
-
-  const templateCards = (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 8, paddingTop: 8 }}>
-      {templates.map((tpl) => (
-        <TemplateCard
-          key={tpl.id}
-          tpl={tpl}
-          active={selectedTemplate === tpl.id}
-          recommended={tpl.recommended}
-          onClick={() => handleTemplateSelect(tpl.id)}
-        />
-      ))}
-    </div>
-  );
+  }, [modelNameInput, arch, def, configValues, show, setSubTab]);
 
   return (
-    <div style={{ display: "flex", gap: 16, flex: 1, minHeight: 0, overflow: "hidden" }}>
-      <ArchSelector selected={arch} onSelect={handleArchSelect} />
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, overflow: "hidden" }}>
+    <div className="mc-layout">
+      <div className="mc-main">
+        <Panel title="Architecture" icon={<IconCpu size={13} />}>
+          <ArchSelector selected={arch} onSelect={handleArchSelect} />
+        </Panel>
+
         <div style={{ display: "flex", gap: 6 }}>
           <SubTabPill label="Templates" active={innerTab === "template"} onClick={() => setInnerTab("template")} />
           <SubTabPill label="Advanced" active={innerTab === "advanced"} onClick={() => setInnerTab("advanced")} />
-          {selectedTemplate === "custom" && innerTab === "template" && (
-            <span style={{
-              alignSelf: "center", fontSize: 10, color: "var(--amber)",
-              background: "var(--amber-dim)", border: "1px solid var(--amber)",
-              borderRadius: 8, padding: "2px 8px", fontWeight: 600,
-            }}>
-              Custom config
-            </span>
+          {selectedTemplate === null && innerTab === "template" && (
+            <Tag color="amber">Custom config</Tag>
           )}
         </div>
-        <div style={{ display: "flex", gap: 16, flex: 1, minHeight: 0, overflow: "hidden" }}>
-          <div style={{ flex: 1, overflowY: "auto" }}>
-            {innerTab === "template" ? (
-              <div>
-                <div style={{ marginBottom: 12 }}>
-                  <span style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>Scale Factor</span>
-                  <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
-                    {[1, 2, 4, 8].map((opt) => (
-                      <button
-                        key={opt}
-                        onClick={() => handleChange("scale", opt)}
-                        style={{
-                          background: (configValues.scale as number) === opt ? "var(--green)" : "var(--bg3)",
-                          border: `1px solid ${(configValues.scale as number) === opt ? "var(--green)" : "var(--border)"}`,
-                          color: (configValues.scale as number) === opt ? "#0d0f11" : "var(--muted)",
-                          fontSize: 11, fontWeight: (configValues.scale as number) === opt ? 600 : 400,
-                          padding: "4px 12px", borderRadius: 8,
-                          cursor: "pointer", transition: "var(--transition-fast)",
-                        }}
-                      >
-                        {opt}x
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                {templateCards}
+
+        {innerTab === "template" ? (
+          <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+            <div className="mc-group" style={{ marginBottom: 12 }}>
+              <span style={{ fontSize: 9.5, color: "var(--dim)", textTransform: "uppercase", letterSpacing: "0.08em", fontFamily: "var(--font-sans)", fontWeight: 600 }}>Scale Factor</span>
+              <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
+                {scaleOptions.map((opt) => (
+                  <button
+                    key={opt}
+                    onClick={() => handleChange("scale", opt)}
+                    style={{
+                      background: (configValues.scale as number) === opt ? "var(--green)" : "var(--bg3)",
+                      border: `1px solid ${(configValues.scale as number) === opt ? "var(--green)" : "var(--border)"}`,
+                      color: (configValues.scale as number) === opt ? "#0d0f11" : "var(--muted)",
+                      fontSize: 11, fontWeight: (configValues.scale as number) === opt ? 600 : 400,
+                      padding: "4px 12px", borderRadius: "var(--radius-sm)",
+                      cursor: "pointer", transition: "var(--transition-fast)",
+                    }}
+                  >
+                    {opt}x
+                  </button>
+                ))}
               </div>
-            ) : (
-              <ConfigPanel
-                fields={def.fields}
-                values={configValues}
-                onChange={handleChange}
-                arch={arch}
-              />
-            )}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 8 }}>
+              {def.templates.map((tpl) => (
+                <TemplateCard
+                  key={tpl.id}
+                  tpl={tpl}
+                  active={selectedTemplate === tpl.id}
+                  recommended={tpl.recommended}
+                  onClick={() => handleTemplateSelect(tpl.id)}
+                />
+              ))}
+            </div>
           </div>
-          <div style={{ width: 260, display: "flex", flexDirection: "column", gap: 8, flexShrink: 0, overflow: "hidden" }}>
-            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <span style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>Model Name</span>
+        ) : (
+          <ConfigPanel
+            def={def}
+            values={configValues}
+            onChange={handleChange}
+          />
+        )}
+      </div>
+
+      <div className="mc-sidebar">
+        <Panel title="Model">
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <Field label="Model Name">
               <input
                 type="text"
                 value={modelNameInput}
                 placeholder="my_upscaler_v1"
                 onChange={(e) => setModelNameInput(e.target.value)}
                 style={{
-                  background: "var(--bg2)", border: "1px solid var(--border)",
-                  borderRadius: 6, padding: "6px 10px", fontSize: 13,
+                  background: "var(--bg3)", border: "1px solid var(--border)",
+                  borderRadius: "var(--radius-sm)", padding: "6px 10px", fontSize: 13,
                   color: "var(--text)", outline: "none",
                   fontFamily: "var(--font-mono)",
+                  transition: "border-color 0.15s",
                 }}
+                onFocus={(e) => (e.currentTarget.style.borderColor = "var(--green)")}
+                onBlur={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
               />
-            </label>
-            <Btn variant="solid" onClick={handleCreateInstance} disabled={!modelNameInput.trim()}>Create Instance</Btn>
-            <div style={{ borderTop: "1px solid var(--border)", paddingTop: 6 }}>
-              <InfoRow label="Parameters" value={formatParamCount(paramsM)} mono />
-              <InfoRow label="Weights (f32)" value={`${weightFp32MB} MB`} mono />
-              <InfoRow label="Weights (f16)" value={`${weightFp16MB} MB`} mono />
-            </div>
-            <YamlPanel yaml={yaml} copied={copied} onCopy={handleCopyYaml} />
+            </Field>
+            <Btn
+              variant="solid"
+              full
+              onClick={handleCreateInstance}
+              disabled={!modelNameInput.trim()}
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}
+            >
+              <IconRocket size={13} color="#0d0f11" /> Create Instance
+            </Btn>
           </div>
-        </div>
+        </Panel>
+
+        <Panel title="Estimate">
+          <InfoRow label="Parameters" value={formatParamCount(paramsM)} mono />
+          <InfoRow label="Weights (f32)" value={`${weightFp32MB} MB`} mono />
+          <InfoRow label="Weights (f16)" value={`${weightFp16MB} MB`} mono />
+        </Panel>
+
+        <YamlPanel yaml={yaml} copied={copied} onCopy={handleCopyYaml} />
       </div>
     </div>
   );

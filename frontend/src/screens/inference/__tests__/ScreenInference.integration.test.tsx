@@ -4,6 +4,7 @@ import { resetAllStores } from "../../../test-utils/resetStores";
 import { useInferenceStore } from "../../../store/inferenceStore";
 
 const mockListInstances = vi.fn();
+const mockGetInstanceVersions = vi.fn();
 const mockListRuns = vi.fn();
 const mockListRunCheckpoints = vi.fn();
 const mockStartInference = vi.fn();
@@ -24,6 +25,7 @@ vi.mock("@tauri-apps/api/path", () => ({
 vi.mock("../../../lib/api", () => ({
   getBaseUrl: () => "http://localhost:8765",
   listInstances: (...args: unknown[]) => mockListInstances(...args),
+  getInstanceVersions: (...args: unknown[]) => mockGetInstanceVersions(...args),
   listRuns: (...args: unknown[]) => mockListRuns(...args),
   listRunCheckpoints: (...args: unknown[]) => mockListRunCheckpoints(...args),
   defaultOutputDir: () => Promise.resolve("/home/user/Pictures"),
@@ -68,7 +70,11 @@ describe("ScreenInference (14.x)", () => {
     vi.clearAllMocks();
     FakeEventSource.instances = [];
     vi.stubGlobal("EventSource", FakeEventSource);
-    mockListInstances.mockResolvedValue([{ name: "my-model", path: "/m", architecture: "rrdb_esrgan", scale: 4, checkpoints: [], latest_version: null, config: {} }]);
+    mockListInstances.mockResolvedValue([{ name: "my-model", path: "/m", architecture: "rrdb_esrgan", scale: 4, checkpoints: [], latest_version: "v2", config: {} }]);
+    mockGetInstanceVersions.mockResolvedValue([
+      { tag: "v1", path: "/models/my-model/versions/v1" },
+      { tag: "v2", path: "/models/my-model/versions/v2" },
+    ]);
     mockListRuns.mockResolvedValue([
       {
         name: "my-model", architecture: "rrdb_esrgan", scale: 4,
@@ -217,7 +223,7 @@ describe("ScreenInference (14.x)", () => {
     expect(useInferenceStore.getState().outputDir).toBe("/home/user/Pictures");
   });
 
-  it("walks the Model → Run → Checkpoint cascade and selects the latest checkpoint", async () => {
+  it("walks the Model → Version cascade and auto-selects the latest version", async () => {
     const { ScreenInference } = await import("../ScreenInference");
     render(<ScreenInference />);
     await act(async () => {});
@@ -228,14 +234,52 @@ describe("ScreenInference (14.x)", () => {
     await act(async () => {});
 
     // Open the Model instance dropdown and pick "my-model".
-    fireEvent.click(screen.getByText("Select instance…"));
+    fireEvent.click(screen.getByText("Select model…"));
     fireEvent.click(screen.getByText("my-model"));
     await act(async () => {});
 
-    // Instance selection auto-loads the latest run's checkpoints.
-    expect(mockListRuns).toHaveBeenCalled();
-    expect(mockListRunCheckpoints).toHaveBeenCalledWith("my-model", "run_20260701_080000");
-    // The auto-selected latest checkpoint becomes the model path.
-    expect(useInferenceStore.getState().modelPath).toBe("/runs/my-model/run_x/epoch_5.pt");
+    // Version selection uses getInstanceVersions, not the runs/checkpoints cascade.
+    expect(mockGetInstanceVersions).toHaveBeenCalledWith("my-model");
+    expect(mockListRuns).not.toHaveBeenCalled();
+    expect(mockListRunCheckpoints).not.toHaveBeenCalled();
+    // The latest version is auto-selected and resolves to its model.pt.
+    expect(useInferenceStore.getState().instance).toBe("my-model");
+    expect(useInferenceStore.getState().version).toBe("v2");
+    expect(useInferenceStore.getState().modelPath).toBe("/models/my-model/versions/v2/model.pt");
+
+    // Selecting an earlier version updates the model path.
+    fireEvent.click(screen.getByText("v2"));
+    fireEvent.click(screen.getByText("v1"));
+    await act(async () => {});
+    expect(useInferenceStore.getState().version).toBe("v1");
+    expect(useInferenceStore.getState().modelPath).toBe("/models/my-model/versions/v1/model.pt");
+  });
+
+  it("runs inference by instance+version when a model version is selected", async () => {
+    mockStartInference.mockResolvedValue({ job_id: "infer.1", status: "accepted" });
+    const { ScreenInference } = await import("../ScreenInference");
+    render(<ScreenInference />);
+    await act(async () => {});
+    act(() => {
+      useInferenceStore.getState().setInputPath("/in/foo.png");
+      useInferenceStore.getState().setOutputDir("/out");
+      useInferenceStore.getState().setInstance("my-model");
+      useInferenceStore.getState().setVersion("v2");
+      useInferenceStore.getState().setModelPath("/models/my-model/versions/v2/model.pt");
+    });
+    await act(async () => {});
+    act(() => {
+      screen.getByRole("button", { name: /run inference/i }).click();
+    });
+    await act(async () => {});
+
+    expect(mockStartInference).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instance: "my-model",
+        version: "v2",
+        input: "/in/foo.png",
+        format: "png",
+      }),
+    );
   });
 });
