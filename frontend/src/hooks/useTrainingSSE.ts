@@ -1,11 +1,21 @@
 import { useEffect, useRef } from "react";
-import { useTrainingStore, type HardwareData } from "../store/trainingStore";
+import { useTrainingStore, type HardwareData, type TrainingStage } from "../store/trainingStore";
 import { useUiStore } from "../store/uiStore";
 import { useRunsStore } from "../store/runsStore";
 import { getBaseUrl } from "../lib/api";
 
 const SPEED_WINDOW_MS = 5000;
 const SPEED_EMA_ALPHA = 0.2;
+
+// Backend `phase` events → store stage, shown in the metrics HeaderBand so the
+// user always knows what the GPU subprocess is doing between step reports.
+const STAGE_BY_PHASE: Record<string, TrainingStage> = {
+  preparing: "preparing",
+  warmup: "warmup",
+  training: "training",
+  validating: "validating",
+  saving: "saving",
+};
 
 interface SpeedEntry {
   linear: number;
@@ -49,6 +59,10 @@ export function useTrainingSSE() {
             validationEnabled: ((job.config.validation as Record<string, unknown>)?.enabled as boolean) ?? true,
           });
         }
+        // Reconnect mid-run: show *some* stage until the next phase event.
+        if (job.status === "running" && useTrainingStore.getState().stage === null) {
+          useTrainingStore.getState().setStage("preparing");
+        }
       } catch {
         // local snapshot from handleLaunch is the fallback
       }
@@ -70,6 +84,13 @@ export function useTrainingSSE() {
         switch (type) {
           case "phase": {
             const phase = event.phase as string;
+            const stage = STAGE_BY_PHASE[phase];
+            if (stage) {
+              useTrainingStore.getState().setStage(stage);
+              if (phase !== "preparing") {
+                useTrainingStore.getState().setPreparingProgress(null);
+              }
+            }
             if (phase === "training") {
               useTrainingStore.getState().setStatus("running");
               useTrainingStore.getState().setValidationRunning(false);
@@ -86,8 +107,36 @@ export function useTrainingSSE() {
               useTrainingStore.getState().setStatus("done");
               useTrainingStore.getState().setValidationRunning(false);
               useTrainingStore.getState().setValidationProgress(null);
+              useTrainingStore.getState().setStage(null);
+              useTrainingStore.getState().setPreparingProgress(null);
               useRunsStore.getState().bumpRefresh();
             }
+            break;
+          }
+          case "progress_start": {
+            // Pre-training dataset-integrity scan (see workers.py). The training
+            // epoch loop also emits progress_start/update/end for its per-epoch
+            // progress bar — ignore those so they can't hijack the "training"
+            // stage and freeze the UI on "Preparing · scanning X/Y".
+            const st = useTrainingStore.getState();
+            if (st.stage !== "preparing" && st.stage !== null) return;
+            const total = (event.total as number) ?? 0;
+            useTrainingStore.getState().setPreparingProgress({ done: 0, total });
+            break;
+          }
+          case "progress_update": {
+            const st = useTrainingStore.getState();
+            if (st.preparingProgress) {
+              const n = (event.n as number) ?? 0;
+              st.setPreparingProgress({
+                done: st.preparingProgress.done + n,
+                total: st.preparingProgress.total,
+              });
+            }
+            break;
+          }
+          case "progress_end": {
+            useTrainingStore.getState().setPreparingProgress(null);
             break;
           }
           case "checkpoint_saved": {
@@ -102,6 +151,8 @@ export function useTrainingSSE() {
             const now = performance.now();
 
             useTrainingStore.getState().setValidationRunning(false);
+            useTrainingStore.getState().setStage("training");
+            useTrainingStore.getState().setPreparingProgress(null);
 
             // Sliding-window speed
             const curLinear = linearPos(epoch, batch);
@@ -192,6 +243,8 @@ export function useTrainingSSE() {
             useTrainingStore.getState().setStatus("done");
             useTrainingStore.getState().setValidationRunning(false);
             useTrainingStore.getState().setValidationProgress(null);
+            useTrainingStore.getState().setStage(null);
+            useTrainingStore.getState().setPreparingProgress(null);
             useRunsStore.getState().bumpRefresh();
             break;
           }
@@ -199,6 +252,8 @@ export function useTrainingSSE() {
             const code = (event.code as string) ?? "UNKNOWN_ERROR";
             const msg = (event.message as string) ?? "An unknown training error occurred";
             useTrainingStore.getState().setError(code, msg);
+            useTrainingStore.getState().setStage(null);
+            useTrainingStore.getState().setPreparingProgress(null);
             useRunsStore.getState().bumpRefresh();
             useUiStore.getState().setLastApiError({
               type: "error",

@@ -1,6 +1,9 @@
 import asyncio
 import json
+import logging
 import threading
+
+log = logging.getLogger(__name__)
 
 
 class SSEEventManager:
@@ -23,7 +26,10 @@ class SSEEventManager:
     def publish(self, job_id: str, event: dict) -> None:
         """Push an event to the job's event queue (thread-safe)."""
         q = self._get_or_create(job_id)
-        q.put_nowait(event)
+        try:
+            q.put_nowait(event)
+        except Exception:
+            log.exception("SSEEventManager.publish failed for job %s", job_id)
 
     async def subscribe(self, job_id: str):
         """Async generator yielding SSE-formatted events for *job_id*.

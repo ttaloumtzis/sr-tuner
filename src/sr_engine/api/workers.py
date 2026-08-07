@@ -1,5 +1,6 @@
 import json
 import multiprocessing
+import os
 import shutil
 import threading
 import time
@@ -92,6 +93,7 @@ def _run_training_subprocess(
     _apply_allocator_tuning()
 
     events = QueueEventBus(event_queue)
+    events.publish(job_id, {"type": "phase", "phase": "preparing"})
 
     def _cancel_check() -> bool:
         return cancel_event.is_set()
@@ -151,7 +153,8 @@ def _run_training_subprocess(
                                                "scheduler", "optimizer", "patch_size",
                                                "seed", "weight_decay", "dtype",
                                                "save_per_epoch", "metrics_frequency",
-                                               "warmup_steps", "losses", "validation")},
+                                               "warmup_steps", "benchmark_warmup",
+                                               "losses", "validation")},
                     }, indent=2, default=str) + "\n",
                     encoding="utf-8",
                 )
@@ -280,7 +283,11 @@ def _bridge_loop(
     job_id: str,
     tasks: BackgroundTaskManager,
 ) -> None:
-    """Read events from subprocess queue and publish to SSE + task manager."""
+    """Read events from subprocess queue and publish to SSE + task manager.
+
+    Runs as a daemon thread — must never die silently, otherwise the
+    subprocess keeps training but the frontend stops receiving events.
+    """
     while not bridge_stop.is_set():
         try:
             item = event_queue.get(timeout=1)
@@ -289,7 +296,10 @@ def _bridge_loop(
         if item is None:
             break
         jid, evt = item
-        events.publish(jid, evt)
+        try:
+            events.publish(jid, evt)
+        except Exception:
+            log.exception("_bridge_loop: failed to publish event for job %s", jid)
 
 
 def run_training(
@@ -308,6 +318,10 @@ def run_training(
     if not acquire_training_slot():
         tasks.fail_job(job_id, "Another training is already running")
         return
+
+    # Silence MIOpen's per-kernel autotune chatter (log level 3 = errors only).
+    # Set in the parent so the spawned child inherits it before MIOpen init.
+    os.environ.setdefault("MIOPEN_LOG_LEVEL", "3")
 
     tasks.start_job(job_id)
     structlog.contextvars.bind_contextvars(job_id=job_id)
@@ -350,7 +364,26 @@ def run_training(
         )
         bridge_thread.start()
 
-        proc.join()
+        # Poll instead of blocking on proc.join() so we can detect a dead
+        # bridge loop (which would freeze the frontend even though the GPU
+        # subprocess keeps training). A dead bridge means the subprocess
+        # events never reach SSE.
+        bridge_died_logged = False
+        while proc.is_alive():
+            if not bridge_thread.is_alive() and not bridge_died_logged:
+                bridge_died_logged = True
+                log.error(
+                    "_bridge_loop thread died for job %s — training continues "
+                    "but metrics will not reach the frontend",
+                    job_id,
+                )
+                events.publish(job_id, {
+                    "type": "error",
+                    "code": "BRIDGE_LOOP_DEAD",
+                    "message": "Event bridge loop stopped; live metrics are stalled.",
+                })
+            time.sleep(1)
+
         bridge_stop.set()
 
         if proc.exitcode != 0 and proc.exitcode is not None:
@@ -530,15 +563,23 @@ def run_dataset_build(
 
         degradations = params.get("degradations")
         if degradations:
-            enabled = set(d.strip() for d in degradations.split(","))
             _DEG_MAP = {
                 "blur": "blur", "noise": "noise", "jpeg": "jpeg",
                 "jpeg2000": "jpeg2000", "color-jitter": "color_jitter",
             }
+            enabled = set(d.strip() for d in degradations.split(","))
+            unknown = enabled - set(_DEG_MAP)
+            if unknown:
+                known = ", ".join(sorted(_DEG_MAP))
+                raise ValueError(
+                    f"Unknown degradation(s): {', '.join(sorted(unknown))}. "
+                    f"Known degradations: {known}."
+                )
             deg_cfg = cfg.setdefault("degradation", {})
             for cli_name, cfg_key in _DEG_MAP.items():
-                if cfg_key in deg_cfg:
-                    deg_cfg[cfg_key]["enabled"] = cli_name in enabled
+                section = deg_cfg.get(cfg_key)
+                if isinstance(section, dict):
+                    section["enabled"] = cli_name in enabled
 
         config_overrides = params.get("config_overrides")
         if config_overrides:
@@ -659,13 +700,14 @@ def run_dataset_validate(
         sse = SSEProgressReporter(events, job_id)
         dataset_dir = Path(params["path"])
         report = validate(dataset_dir, reporter=sse)
+        validation = {"valid": report.ok, "problems": report.problems, "num_pairs": report.num_pairs}
 
         events.publish(job_id, {
             "type": "done",
             "elapsed_seconds": time.time() - t0,
-            "validation": {"valid": report.ok, "problems": report.problems, "num_pairs": report.num_pairs},
+            "validation": validation,
         })
-        tasks.complete_job(job_id, {"valid": report.ok, "problems": report.problems})
+        tasks.complete_job(job_id, validation)
 
     except Exception as e:
         log.exception("Dataset validate job %s failed", job_id)
