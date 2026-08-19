@@ -8,6 +8,17 @@ export type TrainingStatus =
   | "failed"
   | "disconnected";
 
+// Current sub-step of an active run, driven by backend `phase` events. Lets the
+// UI show what the GPU subprocess is doing between step reports (e.g. the
+// up-front MIOpen/cuDNN kernel warmup, which emits no step events).
+export type TrainingStage =
+  | "starting"
+  | "preparing"
+  | "warmup"
+  | "training"
+  | "validating"
+  | "saving";
+
 export interface RunHistory {
   gLossHistory: number[];
   dLossHistory: (number | null)[];
@@ -53,6 +64,11 @@ export interface LaunchConfig {
 }
 
 const MAX_VALIDATION_HISTORY = 300;
+// Hardware readings (GPU/VRAM/temp/CPU/RAM) aren't emitted as history arrays
+// by the backend — just live snapshots every ~0.5s. We keep a capped rolling
+// window of them in the store so the metrics sparklines persist across tab
+// switches instead of living (and dying) in component state.
+const MAX_HW_HISTORY = 90;
 
 export interface HardwareData {
   cpu_percent: number | null;
@@ -64,7 +80,7 @@ export interface HardwareData {
   temp_c: number | null;
 }
 
-interface TrainingState {
+export interface TrainingState {
   status: TrainingStatus;
   activeTrainingRunId: string | null;
   activeRunDirId: string | null;
@@ -88,6 +104,11 @@ interface TrainingState {
   ramTotalGb: number | null;
   speed: number | null;
   bestPsnr: number | null;
+  gpuUtilHistory: number[];
+  vramPctHistory: number[];
+  tempHistory: number[];
+  cpuUtilHistory: number[];
+  ramPctHistory: number[];
   lossHistory: number[];
   dLossHistory: (number | null)[];
   totalLossHistory: number[];
@@ -105,6 +126,8 @@ interface TrainingState {
   validationHistory: ValidationHistoryEntry[];
   validationRunning: boolean;
   validationProgress: ValidationProgress | null;
+  stage: TrainingStage | null;
+  preparingProgress: ValidationProgress | null;
   errorCode: string | null;
   errorMessage: string | null;
   launchConfig: LaunchConfig | null;
@@ -117,6 +140,8 @@ interface TrainingState {
   pushValidationFrames: (epoch: number, frames: ValidationFrames, psnr?: number | null, ssim?: number | null, fullPsnr?: number | null, fullSsim?: number | null) => void;
   setValidationRunning: (v: boolean) => void;
   setValidationProgress: (p: ValidationProgress | null) => void;
+  setStage: (stage: TrainingStage | null) => void;
+  setPreparingProgress: (p: ValidationProgress | null) => void;
   updateFromStep: (epoch: number, batch: number, totalBatch: number, speed: number) => void;
   setLiveLoss: (avg: number | null) => void;
   pushEpochLoss: (avgLoss: number) => void;
@@ -151,6 +176,11 @@ export const useTrainingStore = create<TrainingState>((set) => ({
   ramTotalGb: null,
   speed: null,
   bestPsnr: null,
+  gpuUtilHistory: [],
+  vramPctHistory: [],
+  tempHistory: [],
+  cpuUtilHistory: [],
+  ramPctHistory: [],
   lossHistory: [],
   dLossHistory: [],
   totalLossHistory: [],
@@ -168,6 +198,8 @@ export const useTrainingStore = create<TrainingState>((set) => ({
   validationHistory: [],
   validationRunning: false,
   validationProgress: null,
+  stage: null,
+  preparingProgress: null,
   errorCode: null,
   errorMessage: null,
   launchConfig: null,
@@ -178,6 +210,8 @@ export const useTrainingStore = create<TrainingState>((set) => ({
   setActiveRunDir: (runDirId) => set({ activeRunDirId: runDirId }),
   setValidationFrames: (frames) => set({ validationFrames: frames }),
   setLaunchConfig: (config) => set({ launchConfig: config }),
+  setStage: (stage) => set({ stage }),
+  setPreparingProgress: (p) => set({ preparingProgress: p }),
 
   pushValidationFrames: (epoch, frames, psnr = null, ssim = null, fullPsnr = null, fullSsim = null) =>
     set((s) => {
@@ -245,14 +279,25 @@ export const useTrainingStore = create<TrainingState>((set) => ({
     }),
 
   updateFromHardware: (data) =>
-    set({
-      cpuUtil: data.cpu_percent,
-      ramGb: data.ram_used_gb,
-      ramTotalGb: data.ram_total_gb,
-      gpuUtil: data.gpu_util_percent,
-      vram: data.vram_used_gb,
-      vramTotalGb: data.vram_total_gb,
-      temp: data.temp_c,
+    set((s) => {
+      const push = (arr: number[], v: number | null) =>
+        v != null && Number.isFinite(v) ? [...arr, v].slice(-MAX_HW_HISTORY) : arr;
+      const pct = (used: number | null, total: number | null) =>
+        used != null && total != null && total > 0 ? (used / total) * 100 : null;
+      return {
+        cpuUtil: data.cpu_percent,
+        ramGb: data.ram_used_gb,
+        ramTotalGb: data.ram_total_gb,
+        gpuUtil: data.gpu_util_percent,
+        vram: data.vram_used_gb,
+        vramTotalGb: data.vram_total_gb,
+        temp: data.temp_c,
+        gpuUtilHistory: push(s.gpuUtilHistory, data.gpu_util_percent),
+        vramPctHistory: push(s.vramPctHistory, pct(data.vram_used_gb, data.vram_total_gb)),
+        tempHistory: push(s.tempHistory, data.temp_c),
+        cpuUtilHistory: push(s.cpuUtilHistory, data.cpu_percent),
+        ramPctHistory: push(s.ramPctHistory, pct(data.ram_used_gb, data.ram_total_gb)),
+      };
     }),
 
   setFinalEpoch: (finalEpoch) => set({ finalEpoch }),
@@ -281,6 +326,11 @@ export const useTrainingStore = create<TrainingState>((set) => ({
     ramTotalGb: null,
     speed: null,
     bestPsnr: null,
+    gpuUtilHistory: [],
+    vramPctHistory: [],
+    tempHistory: [],
+    cpuUtilHistory: [],
+    ramPctHistory: [],
     lossHistory: [],
     dLossHistory: [],
     totalLossHistory: [],
@@ -298,6 +348,8 @@ export const useTrainingStore = create<TrainingState>((set) => ({
     validationHistory: [],
     validationRunning: false,
     validationProgress: null,
+    stage: null,
+    preparingProgress: null,
     errorCode: null,
     errorMessage: null,
     launchConfig: null,

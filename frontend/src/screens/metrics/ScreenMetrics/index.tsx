@@ -1,8 +1,7 @@
 import { useTrainingStore } from "../../../store/trainingStore";
 import type { RunHistory } from "../../../store/trainingStore";
 import { ValidationPanel } from "../../../components/metrics/ValidationPanel";
-import { TrainingStatusBar } from "./TrainingStatusBar";
-import { ProgressRow } from "./ProgressRow";
+import { HeaderBand } from "./HeaderBand";
 import { MetricCards } from "./MetricCards";
 import { LossCurve } from "./LossCurve";
 import { PsnrSsimChart } from "./PsnrSsimChart";
@@ -49,8 +48,7 @@ export function ScreenMetrics() {
       display: "flex", flexDirection: "column",
       width: "100%", height: "100%", overflow: "hidden", background: "var(--bg0)",
     }}>
-      <TrainingStatusBar />
-      <ProgressRow />
+      <HeaderBand />
 
       {status === "idle" ? (
         <IdleState />

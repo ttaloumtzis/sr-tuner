@@ -15,16 +15,7 @@ import { InlineAlert } from "../../components/ui/InlineAlert";
 import { useInferenceSSE } from "../../hooks/useInferenceSSE";
 import { basename, join } from "../../lib/path";
 import type { ModelVersion } from "../../lib/api-types";
-
-// ── Cross-hatch background ─────────────────────────────────────────────────
-
-const CROSSHATCH_BG: React.CSSProperties = {
-  backgroundImage:
-    "repeating-linear-gradient(45deg, var(--bg2) 0, var(--bg2) 4px, transparent 0, transparent 50%), " +
-    "repeating-linear-gradient(-45deg, var(--bg2) 0, var(--bg2) 4px, transparent 0, transparent 50%)",
-  backgroundSize: "12px 12px",
-  backgroundColor: "var(--bg1)",
-};
+import { CHECKERBOARD_BG } from "../../lib/checkerboardBg";
 
 // ── Drop zone ─────────────────────────────────────────────────────────────
 
@@ -538,14 +529,14 @@ function ComparisonPanel({ splitterPct, onSplitterPctChange }: { splitterPct: nu
     <div
       ref={containerRef}
       onMouseDown={startDrag}
-      style={{ flex: 1, position: "relative", overflow: "hidden", cursor: "ew-resize", userSelect: "none", ...CROSSHATCH_BG }}
+      style={{ flex: 1, position: "relative", overflow: "hidden", cursor: "ew-resize", userSelect: "none", ...CHECKERBOARD_BG }}
     >
       {/* Base layer — SR */}
       <div style={{ ...layerStyle }}>
         {srSrc ? (
           <img src={srSrc} alt="Output (SR)" style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }} draggable={false} />
         ) : (
-          <div style={{ width: "100%", height: "100%", ...CROSSHATCH_BG }} />
+          <div style={{ width: "100%", height: "100%", ...CHECKERBOARD_BG }} />
         )}
       </div>
 
@@ -554,7 +545,7 @@ function ComparisonPanel({ splitterPct, onSplitterPctChange }: { splitterPct: nu
         {lrSrc ? (
           <img src={lrSrc} alt="Input (LR)" style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }} draggable={false} />
         ) : (
-          <div style={{ width: "100%", height: "100%", ...CROSSHATCH_BG }} />
+          <div style={{ width: "100%", height: "100%", ...CHECKERBOARD_BG }} />
         )}
       </div>
 

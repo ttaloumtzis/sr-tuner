@@ -1,6 +1,6 @@
 import { useTrainingStore } from "../../../store/trainingStore";
 import { useModelStore } from "../../../store/modelStore";
-import { fmt, fmtPct, fmtGb, trendOf, GAN_ARCH } from "./chartUtils";
+import { fmt, fmtPct, GAN_ARCH } from "./chartUtils";
 import { useRollingHistory, Sparkline } from "./MetricPrimitives";
 
 interface MetricCardProps {
@@ -8,14 +8,10 @@ interface MetricCardProps {
   value: string;
   sub?: string;
   accent: string;
-  trend?: { dir: "up" | "down" | "flat"; pct: number } | null;
   sparkline?: number[];
 }
 
-function MetricCard({ label, value, sub, accent, trend, sparkline }: MetricCardProps) {
-  const trendColor = trend?.dir === "up" ? "var(--green)" : trend?.dir === "down" ? "var(--red)" : "var(--dim)";
-  const trendArrow = trend?.dir === "up" ? "▲" : trend?.dir === "down" ? "▼" : "";
-
+function MetricCard({ label, value, sub, accent, sparkline }: MetricCardProps) {
   return (
     <div style={{
       flex: "1 1 130px", minWidth: 130,
@@ -42,19 +38,14 @@ function MetricCard({ label, value, sub, accent, trend, sparkline }: MetricCardP
           }}>
             {value}
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 3, minHeight: 12 }}>
-            {sub && (
-              <span style={{ fontSize: 9.5, color: "var(--dim)", fontFamily: "var(--font-mono)" }}>{sub}</span>
-            )}
-            {trend && trend.dir !== "flat" && (
-              <span style={{ fontSize: 9.5, color: trendColor, fontFamily: "var(--font-mono)" }}>
-                {trendArrow} {trend.pct.toFixed(1)}%
-              </span>
-            )}
-          </div>
+          {sub && (
+            <div style={{ fontSize: 9.5, color: "var(--dim)", fontFamily: "var(--font-mono)", marginTop: 3, whiteSpace: "nowrap" }}>
+              {sub}
+            </div>
+          )}
         </div>
         {sparkline && sparkline.length >= 2 && (
-          <Sparkline values={sparkline} color={accent} />
+          <Sparkline values={sparkline} color={accent} width={150} height={30} padding={3} points={60} />
         )}
       </div>
     </div>
@@ -68,48 +59,36 @@ export function MetricCards() {
   const ssim    = useTrainingStore((s) => s.ssim);
   const fullPsnr = useTrainingStore((s) => s.fullPsnr);
   const fullSsim = useTrainingStore((s) => s.fullSsim);
-  const cpuUtil = useTrainingStore((s) => s.cpuUtil);
-  const ramGb   = useTrainingStore((s) => s.ramGb);
-  const epoch   = useTrainingStore((s) => s.epoch);
-  const speed   = useTrainingStore((s) => s.speed);
+  const fullEpoch = useTrainingStore((s) => s.fullEpoch);
   const gpuUtil = useTrainingStore((s) => s.gpuUtil);
+  const vram    = useTrainingStore((s) => s.vram);
+  const temp    = useTrainingStore((s) => s.temp);
   const lossHistory = useTrainingStore((s) => s.lossHistory);
   const psnrHistory = useTrainingStore((s) => s.psnrHistory);
   const ssimHistory = useTrainingStore((s) => s.ssimHistory);
-  const fullPsnrHistory = useTrainingStore((s) => s.fullPsnrHistory);
-  const fullSsimHistory = useTrainingStore((s) => s.fullSsimHistory);
-  const fullEpoch = useTrainingStore((s) => s.fullEpoch);
   const arch    = useModelStore((s) => s.architecture);
   const isGan   = arch === GAN_ARCH;
 
-  const gpuHistory   = useRollingHistory(gpuUtil);
-  const cpuHistory   = useRollingHistory(cpuUtil);
-  const ramHistory   = useRollingHistory(ramGb);
-  const speedHistory = useRollingHistory(speed);
+  const hasGpu = gpuUtil != null || vram != null || temp != null;
+  const gpuHistory = useRollingHistory((s) => s.gpuUtilHistory);
+
+  const fullEpochLabel = fullEpoch != null ? ` @ e${fullEpoch}` : "";
 
   return (
     <div style={{ display: "flex", gap: 8, padding: "10px 16px", flexShrink: 0, flexWrap: "wrap" }}>
       <MetricCard label="G LOSS" value={fmt(gLoss)} sub={isGan ? `disc ${fmt(dLoss)}` : "no disc"}
-        accent="var(--green)" trend={trendOf(lossHistory, true)} sparkline={lossHistory} />
-      <MetricCard label="PSNR (dB)" value={fmt(psnr, 2)} accent="var(--blue)"
-        trend={trendOf(psnrHistory)} sparkline={psnrHistory} />
-      <MetricCard label="SSIM" value={fmt(ssim)} accent="var(--cyan)"
-        trend={trendOf(ssimHistory)} sparkline={ssimHistory} />
-      <MetricCard label="FULL PSNR" value={fmt(fullPsnr, 2)} accent="var(--green)"
-        sub={fullEpoch != null ? `val @ epoch ${fullEpoch}` : undefined}
-        trend={trendOf(fullPsnrHistory)} sparkline={fullPsnrHistory} />
-      <MetricCard label="FULL SSIM" value={fmt(fullSsim)} accent="var(--teal)"
-        sub={fullEpoch != null ? `val @ epoch ${fullEpoch}` : undefined}
-        trend={trendOf(fullSsimHistory)} sparkline={fullSsimHistory} />
-      <MetricCard label="GPU" value={fmtPct(gpuUtil)} accent="var(--amber)"
-        trend={trendOf(gpuHistory)} sparkline={gpuHistory} />
-      <MetricCard label="EPOCH" value={String(epoch)} accent="var(--purple)" />
-      <MetricCard label="SPEED" value={`${fmt(speed, 2)} it/s`} accent="var(--muted)"
-        trend={trendOf(speedHistory)} sparkline={speedHistory} />
-      <MetricCard label="CPU" value={fmtPct(cpuUtil)} accent="var(--teal)"
-        trend={trendOf(cpuHistory)} sparkline={cpuHistory} />
-      <MetricCard label="RAM" value={fmtGb(ramGb)} accent="var(--pink)"
-        trend={trendOf(ramHistory)} sparkline={ramHistory} />
+        accent="var(--green)" sparkline={lossHistory} />
+      <MetricCard label="PSNR (dB)" value={fmt(psnr, 2)}
+        sub={fullPsnr != null ? `full ${fmt(fullPsnr, 2)}${fullEpochLabel}` : undefined}
+        accent="var(--green)" sparkline={psnrHistory} />
+      <MetricCard label="SSIM" value={fmt(ssim)}
+        sub={fullSsim != null ? `full ${fmt(fullSsim)}${fullEpochLabel}` : undefined}
+        accent="var(--blue)" sparkline={ssimHistory} />
+      {hasGpu && (
+        <MetricCard label="GPU" value={fmtPct(gpuUtil)}
+          sub={temp != null ? `${Math.round(temp)}°C` : undefined}
+          accent="var(--amber)" sparkline={gpuHistory} />
+      )}
     </div>
   );
 }

@@ -83,3 +83,87 @@ class TestValidate:
         report = validate(tmp_path)
         assert report.ok is False
         assert any("manifest" in p.lower() for p in report.problems)
+
+    def test_validate_dimension_mismatch(self, tmp_path):
+        """HR dims not exactly scale * LR dims should be flagged."""
+        from conftest import _make_image
+
+        _make_image(tmp_path / "HR" / "a.png", w=63, h=63)
+        _make_image(tmp_path / "LR" / "a.png", w=16, h=16)
+        manifest = {
+            "config": {"scale": 4},
+            "pairs": [{"hr": "HR/a.png", "lr": "LR/a.png"}],
+        }
+        (tmp_path / "manifest.json").write_text(json.dumps(manifest))
+
+        report = validate(tmp_path)
+        assert report.ok is False
+        assert any("Dimension mismatch" in p for p in report.problems)
+
+    def test_validate_garbage_header_flagged(self, tmp_path):
+        """A manifest entry pointing at non-image bytes should be flagged."""
+        from conftest import _make_corrupt_image, _make_image
+
+        _make_corrupt_image(tmp_path / "HR" / "a.png")
+        _make_image(tmp_path / "LR" / "a.png", w=16, h=16)
+        manifest = {
+            "config": {"scale": 4},
+            "pairs": [{"hr": "HR/a.png", "lr": "LR/a.png"}],
+        }
+        (tmp_path / "manifest.json").write_text(json.dumps(manifest))
+
+        report = validate(tmp_path)
+        assert report.ok is False
+        assert any("unreadable or malformed" in p for p in report.problems)
+
+    def test_validate_duplicate_pairs_counted_once(self, tmp_path):
+        """Duplicate manifest entries should not inflate num_pairs."""
+        from conftest import _make_image
+
+        _make_image(tmp_path / "HR" / "a.png", w=64, h=64)
+        _make_image(tmp_path / "LR" / "a.png", w=16, h=16)
+        manifest = {
+            "config": {"scale": 4},
+            "pairs": [
+                {"hr": "HR/a.png", "lr": "LR/a.png"},
+                {"hr": "HR/a.png", "lr": "LR/a.png"},
+            ],
+        }
+        (tmp_path / "manifest.json").write_text(json.dumps(manifest))
+
+        report = validate(tmp_path)
+        assert report.ok is True
+        assert report.num_pairs == 1
+
+    def test_validate_normalizes_dot_paths(self, tmp_path):
+        """Manifest keys like 'HR/./a.png' should match the same disk file."""
+        from conftest import _make_image
+
+        _make_image(tmp_path / "HR" / "a.png", w=64, h=64)
+        _make_image(tmp_path / "LR" / "a.png", w=16, h=16)
+        manifest = {
+            "config": {"scale": 4},
+            "pairs": [{"hr": "HR/./a.png", "lr": "LR/./a.png"}],
+        }
+        (tmp_path / "manifest.json").write_text(json.dumps(manifest))
+
+        report = validate(tmp_path)
+        assert report.ok is True
+        assert report.num_pairs == 1
+
+    def test_validate_nested_path_falls_back_to_disk(self, tmp_path):
+        """A manifest key pointing into a subdirectory resolves via disk probe."""
+        from conftest import _make_image
+
+        _make_image(tmp_path / "HR" / "sub" / "a.png", w=64, h=64)
+        _make_image(tmp_path / "LR" / "sub" / "a.png", w=16, h=16)
+        manifest = {
+            "config": {"scale": 4},
+            "pairs": [{"hr": "HR/sub/a.png", "lr": "LR/sub/a.png"}],
+        }
+        (tmp_path / "manifest.json").write_text(json.dumps(manifest))
+
+        report = validate(tmp_path)
+        assert report.ok is True
+        assert report.num_pairs == 1
+        assert not any("Orphaned" in p for p in report.problems)

@@ -208,23 +208,24 @@ def _degrade_image(
             img = _apply_motion_blur(img, motion_cfg.get("max_kernel_size", 31))
 
     # Antialias pre-filter before downsampling
-    if resize_antialias and resize_method != "area":
-        sigma = 0.5
-        k_size = max(3, int(2 * int(3 * sigma)) + 1)
-        img = cv2.GaussianBlur(img, (k_size, k_size), sigmaX=sigma, sigmaY=sigma)
+    if scale > 1:
+        if resize_antialias and resize_method != "area":
+            sigma = 0.5
+            k_size = max(3, int(2 * int(3 * sigma)) + 1)
+            img = cv2.GaussianBlur(img, (k_size, k_size), sigmaX=sigma, sigmaY=sigma)
 
-    interp_map = {
-        "bilinear": cv2.INTER_LINEAR,
-        "lanczos": cv2.INTER_LANCZOS4,
-        "bicubic": cv2.INTER_CUBIC,
-        "area": cv2.INTER_AREA,
-        "nearest": cv2.INTER_NEAREST,
-    }
-    interpolation = interp_map.get(resize_method.lower(), cv2.INTER_AREA)
+        interp_map = {
+            "bilinear": cv2.INTER_LINEAR,
+            "lanczos": cv2.INTER_LANCZOS4,
+            "bicubic": cv2.INTER_CUBIC,
+            "area": cv2.INTER_AREA,
+            "nearest": cv2.INTER_NEAREST,
+        }
+        interpolation = interp_map.get(resize_method.lower(), cv2.INTER_AREA)
 
-    lr_width = width // scale
-    lr_height = height // scale
-    img = cv2.resize(img, (lr_width, lr_height), interpolation=interpolation)
+        lr_width = width // scale
+        lr_height = height // scale
+        img = cv2.resize(img, (lr_width, lr_height), interpolation=interpolation)
 
     # Noise stage — gaussian, poisson, salt & pepper (mutually exclusive)
     if noise_kwargs and noise_kwargs.get("enabled", True):
@@ -344,3 +345,4 @@ def batch_degrade(
 
     pairs.sort(key=lambda pair: pair[0])
     return pairs
+

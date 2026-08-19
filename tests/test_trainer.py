@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 import torch
 
-from sr_engine.engine.trainer import Trainer, TrainerCallback, TrainingCancelled, _TransformSubset
+from sr_engine.engine.trainer import Trainer, TrainerCallback, TrainingCancelled, _TransformSubset, _warmup_shapes
 from sr_engine.engine.inference import CancellationRequested, _super_resolve_tensor
 from sr_engine.models.registry import build_model
 
@@ -411,6 +411,38 @@ class TestTrainRunStep:
         assert "total" in losses
         assert losses["pixel"] > 0.0
         assert losses["total"] > 0.0
+
+    def test_run_step_can_skip_scheduler_step(self, model_cfg, train_cfg, tmp_path):
+        """``scheduler_step=False`` (used by the kernel warmup) must not move LR."""
+        d = _create_dataset_dir(tmp_path, num_pairs=5)
+        trainer = Trainer(
+            model_cfg=model_cfg,
+            train_cfg=train_cfg,
+            dataset_dir=d,
+            device="cpu",
+            validation_enabled=False,
+        )
+        lr_before = trainer.optimizer.param_groups[0]["lr"]
+        trainer._run_step(
+            torch.randn(2, 3, 16, 16),
+            torch.randn(2, 3, 64, 64),
+            scheduler_step=False,
+        )
+        assert trainer.optimizer.param_groups[0]["lr"] == lr_before
+
+
+class TestWarmupShapes:
+    """Tests for the pre-training benchmark warmup shape helper."""
+
+    def test_shapes_scale_patch_by_scale(self):
+        lr, hr = _warmup_shapes(batch_size=4, patch_size=64, scale=4, num_in_ch=3, num_out_ch=3)
+        assert lr == (4, 3, 64, 64)
+        assert hr == (4, 3, 256, 256)
+
+    def test_shapes_respect_channels_and_odd_scale(self):
+        lr, hr = _warmup_shapes(batch_size=2, patch_size=128, scale=2, num_in_ch=1, num_out_ch=4)
+        assert lr == (2, 1, 128, 128)
+        assert hr == (2, 4, 256, 256)
 
 
 class TestOptimizerConfig:

@@ -5,6 +5,7 @@ on which image formats are supported and how HR/LR pairs are matched. This
 module is the single source of truth for both concerns.
 """
 
+import os
 import re
 from pathlib import Path
 
@@ -49,6 +50,24 @@ def list_images(directory: Path) -> list[Path]:
         (p for p in directory.iterdir() if p.is_file() and is_supported_image(p)),
         key=natural_key,
     )
+
+
+def scan_image_paths(directory: Path) -> list[Path]:
+    """Return all supported image files in *directory*, naturally sorted.
+
+    Same result as :func:`list_images` but powered by ``os.scandir``, which
+    reads the directory entry type directly and avoids a ``stat`` syscall per
+    file — cheaper for the large directory listings used during validation.
+    """
+    if not directory.is_dir():
+        return []
+    found: list[Path] = []
+    with os.scandir(directory) as entries:
+        for entry in entries:
+            if entry.is_file() and is_supported_image(Path(entry.name)):
+                found.append(directory / entry.name)
+    found.sort(key=natural_key)
+    return found
 
 
 def _stem(path: Path) -> str:

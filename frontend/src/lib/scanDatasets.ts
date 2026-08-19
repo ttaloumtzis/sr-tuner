@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { DatasetManifest } from "./api-types";
+import type { DatasetManifest, ImagePairInfo } from "./api-types";
 import { basename, join } from "./path";
+import { preloadPair } from "./imageUtils";
 
 let _tauriAvailable: boolean | null = null;
 
@@ -137,4 +138,42 @@ export async function getDatasetPairUrls(
     hr: getDatasetImageUrl(datasetName, "hr", i),
     lr: getDatasetImageUrl(datasetName, "lr", i),
   }));
+}
+
+/**
+ * Resolve image URLs and preload natural dimensions for every pair.
+ *
+ * Tauri-mode only; falls back to plain URLs without dimensions in the
+ * browser (where the API fallback cannot preload efficiently).
+ *
+ * Returns an array of ``ImagePairInfo`` with dimensions, or ``null``
+ * if the dataset path is a browser-mode fallback.
+ */
+export async function getDatasetPairInfo(
+  datasetPath: string,
+  signal?: AbortSignal,
+): Promise<ImagePairInfo[] | null> {
+  if (!(await isTauriAvailable())) {
+    return null;
+  }
+  try {
+    const pairs = await listDatasetPairs(datasetPath);
+    const { convertFileSrc } = await import("@tauri-apps/api/core");
+    const results: ImagePairInfo[] = [];
+    for (const p of pairs) {
+      if (signal?.aborted) return null;
+      const hrUrl = convertFileSrc(p.hr);
+      const lrUrl = convertFileSrc(p.lr);
+      try {
+        const preloaded = await preloadPair(hrUrl, lrUrl, signal);
+        results.push(preloaded);
+      } catch {
+        // If preload fails for one pair, continue with zero dimensions
+        results.push({ hr: { url: hrUrl, w: 0, h: 0 }, lr: { url: lrUrl, w: 0, h: 0 } });
+      }
+    }
+    return results;
+  } catch {
+    return null;
+  }
 }

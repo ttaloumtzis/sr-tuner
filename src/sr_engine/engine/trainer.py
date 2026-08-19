@@ -28,6 +28,24 @@ log = get_logger(__name__)
 DEFAULT_SPLIT_SEED = 1234
 
 
+def _warmup_shapes(
+    batch_size: int,
+    patch_size: int,
+    scale: int,
+    num_in_ch: int,
+    num_out_ch: int,
+) -> tuple[tuple[int, int, int, int], tuple[int, int, int, int]]:
+    """Compute the LR/HR tensor shapes used by the benchmark warmup pass.
+
+    Matches the shapes produced by the training dataloader (RandomCrop of
+    *patch_size* on the LR side, HR scaled by *scale*), so the MIOpen/cuDNN
+    autotune search keys on the exact descriptors the real loop will hit.
+    """
+    lr = (batch_size, num_in_ch, patch_size, patch_size)
+    hr = (batch_size, num_out_ch, patch_size * scale, patch_size * scale)
+    return lr, hr
+
+
 def _seed_worker(seed: int, worker_id: int) -> None:
     """Seed Python's random module for a DataLoader worker.
 
@@ -450,12 +468,16 @@ class Trainer:
             ssim=self.last_val_metrics.get("ssim") if self.last_val_metrics else None,
         )
 
-    def _run_step(self, lr: torch.Tensor, hr: torch.Tensor) -> dict[str, float]:
+    def _run_step(self, lr: torch.Tensor, hr: torch.Tensor,
+                  scheduler_step: bool = True) -> dict[str, float]:
         """Execute one training step: forward, loss, backward, optimiser step.
 
         Args:
             lr: Low-resolution input batch ``(B, C, H, W)``.
             hr: High-resolution target batch ``(B, C, H*scale, W*scale)``.
+            scheduler_step: Whether to advance the LR scheduler. Disabled
+                for the benchmark warmup pass so it does not perturb the
+                schedule.
 
         Returns:
             Dict of loss components and current learning rate.
@@ -488,7 +510,8 @@ class Trainer:
             loss.backward()
             self.optimizer.step()
 
-        self.scheduler.step()
+        if scheduler_step:
+            self.scheduler.step()
         components["total"] = loss.item()
         components["lr"] = self.optimizer.param_groups[0]["lr"]
         return components
@@ -654,9 +677,59 @@ class Trainer:
             "val_loss": avg_val_loss, "frames": frames,
         }
 
+    def _warmup(self) -> None:
+        """Run one synthetic training step + one batch-1 val forward up-front.
+
+        Pays the one-time MIOpen/cuDNN kernel autotune search cost before the
+        timed epoch loop instead of stalling the first epoch's batches. The
+        chosen kernels are then reused for the entire run, and the results are
+        cached in MIOpen's find-db for subsequent runs.
+
+        Runs a full forward + loss + backward + optimiser step on synthetic
+        tensors that match the real training shapes (so the conv backward and
+        loss-side kernels are autotuned too), plus a batch-1 forward at
+        *patch_size* to pre-tune the tiled full-image validation pass
+        (``_super_resolve_tensor`` feeds batch-1 tiles).
+
+        Enabled by ``benchmark_warmup`` (default True) on CUDA/ROCm devices.
+        """
+        if self.device.type != "cuda":
+            return
+        if str(self.train_cfg.get("benchmark_warmup", "true")).lower() not in ("true", "1", "yes"):
+            log.info("benchmark_warmup disabled — skipping kernel warmup")
+            return
+
+        try:
+            torch.backends.cudnn.benchmark = True
+        except Exception:
+            pass
+
+        self._emit("phase", phase="warmup")
+        log.info("Warming up MIOpen/cuDNN kernels (benchmark_warmup)…")
+
+        scale = getattr(self.model, "scale", int(self.model_cfg.get("scale", 4)))
+        num_in_ch = int(self.model_cfg.get("num_in_ch", 3))
+        num_out_ch = int(self.model_cfg.get("num_out_ch", 3))
+        batch_size = int(self.train_cfg.get("batch_size", 32))
+        patch_size = int(self.train_cfg.get("patch_size", 128))
+
+        lr_shape, hr_shape = _warmup_shapes(batch_size, patch_size, scale, num_in_ch, num_out_ch)
+        lr = torch.rand(lr_shape, device=self.device)
+        hr = torch.rand(hr_shape, device=self.device)
+        self._run_step(lr, hr, scheduler_step=False)
+
+        if self.val_dataset is not None:
+            val_lr = torch.rand(1, num_in_ch, patch_size, patch_size, device=self.device)
+            with torch.no_grad():
+                self.model(val_lr)
+
+        torch.cuda.empty_cache()
+        log.info("Kernel warmup complete")
+
     def train(self) -> None:
         """Run the training loop per epoch."""
         self.model.train()
+        self._warmup()
         start_time = time.time()
 
         self._emit("phase", phase="training", max_epochs=self.max_epochs)

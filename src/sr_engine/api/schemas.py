@@ -102,6 +102,7 @@ class DatasetInspectParams(BaseModel):
 class DatasetFinalizeParams(BaseModel):
     path: str
     scale: float
+    config_overrides: dict | None = None
 
 class DatasetValidateParams(BaseModel):
     path: str
@@ -150,6 +151,7 @@ class TrainParams(BaseModel):
     metrics_frequency: int | None = None
     perceptual_weight: float | None = None
     warmup_steps: int | None = None
+    benchmark_warmup: bool | None = None
     write_metrics_file: bool = True
     losses: dict[str, Any] | None = None
     gradient_checkpointing: str | None = None
@@ -216,6 +218,8 @@ class TrainParams(BaseModel):
             d["gradient_checkpointing"] = self.gradient_checkpointing
         if self.loss_bf16 is not None:
             d["loss_bf16"] = self.loss_bf16
+        if self.benchmark_warmup is not None:
+            d["benchmark_warmup"] = self.benchmark_warmup
         return d
 
 # ── Inference ───────────────────────────────────────────────────────────

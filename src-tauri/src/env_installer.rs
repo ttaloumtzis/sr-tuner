@@ -354,7 +354,7 @@ fn torch_index_url(backend: &str) -> Option<&'static str> {
 // ── Bundled resource resolution ───────────────────────────────────────
 
 fn find_bundled_wheel(app: &AppHandle) -> Option<PathBuf> {
-    // Glob for any wheel matching sr_engine-*.whl in the resource dir.
+    // Tier 1: bundled in the app's resource directory (release AppImage / .deb / .rpm)
     if let Ok(dir) = app.path().resource_dir() {
         if let Ok(entries) = std::fs::read_dir(&dir) {
             for entry in entries.flatten() {
@@ -365,10 +365,9 @@ fn find_bundled_wheel(app: &AppHandle) -> Option<PathBuf> {
             }
         }
     }
-    #[cfg(debug_assertions)]
-    {
-        let project = Path::new(env!("CARGO_MANIFEST_DIR")).parent()?;
-        let dist = project.join("dist");
+    // Tier 2: project's dist/ directory (dev mode, or when linuxdeploy bundling failed)
+    if let Some(root) = project_root() {
+        let dist = root.join("dist");
         if let Ok(entries) = std::fs::read_dir(&dist) {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
@@ -664,16 +663,32 @@ fn project_root() -> Option<PathBuf> {
 
 /// Decide how to install the sr_engine package into the venv.
 ///
-/// - **Dev mode** (pyproject.toml exists): `uv pip install -e .` — reads
-///   pyproject.toml, installs the project in editable mode plus all deps
-///   (except torch which comes in a separate step).
-/// - **Release mode** (no pyproject.toml): `uv pip install <bundled-wheel>`
-///   — the wheel carries the same dependency metadata.
+/// - **Release mode** (preferred): `uv pip install <bundled-wheel>`
+///   — the wheel carries the same dependency metadata and is always built
+///   alongside the Tauri app by `build.rs`.
+/// - **Dev mode** (fallback, pyproject.toml exists): `uv pip install -e .` —
+///   reads pyproject.toml, installs the project in editable mode plus all
+///   deps (except torch which comes in a separate step).
 fn install_sr_package(
     app: &AppHandle,
     istate: &InstallState,
     python_bin: &Path,
 ) -> Result<(), String> {
+    if let Some(wheel) = find_bundled_wheel(app) {
+        return run_step(
+            app,
+            istate,
+            Command::new("uv").args([
+                "pip",
+                "install",
+                "--python",
+                &python_bin.to_string_lossy(),
+                &wheel.to_string_lossy(),
+            ]),
+            "Installing SR Engine package",
+        );
+    }
+
     let project = project_root();
     let pyproject = project.as_ref().map(|p| p.join("pyproject.toml"));
 
@@ -697,20 +712,7 @@ fn install_sr_package(
         }
     }
 
-    let wheel = find_bundled_wheel(app)
-        .ok_or_else(|| "Bundled sr_engine wheel not found (dist/sr_engine.whl missing)".to_string())?;
-    run_step(
-        app,
-        istate,
-        Command::new("uv").args([
-            "pip",
-            "install",
-            "--python",
-            &python_bin.to_string_lossy(),
-            &wheel.to_string_lossy(),
-        ]),
-        "Installing SR Engine package",
-    )
+    Err("Bundled sr_engine wheel not found and pyproject.toml is not available".into())
 }
 
 // ── ROCm install for Windows (user pre-created venv via AMD Adrenalin) ──

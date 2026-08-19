@@ -87,6 +87,8 @@ HR → Crop to scale-multiple
     → JPEG2000              (optional, disabled by default)
 ```
 
+At `scale: 1` the Downsample block (and its antialias pre-filter) is skipped entirely — the remaining stages operate on the full-resolution frame.
+
 ### 1. Color Jitter (optional)
 
 Shifts hue, saturation, and value in HSV space — simulates color gamut variations across different cameras.

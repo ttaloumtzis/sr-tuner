@@ -121,7 +121,11 @@ function PreExistingMode() {
       let result;
       try {
         // canImport guarantees detectedScale is non-null here (scale detected & exact)
-        result = await finalizeDataset({ path: dst, scale: detectedScale! });
+        const finalizeParams: { path: string; scale: number; config_overrides?: Record<string, unknown> } = {
+          path: dst,
+          scale: detectedScale!,
+        };
+        result = await finalizeDataset(finalizeParams);
       } catch (err) {
         await invoke("delete_directory", { path: dst }).catch(() => {});
         throw err;

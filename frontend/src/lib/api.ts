@@ -1,4 +1,4 @@
-import type { DatasetInfo, DatasetInspectInfo, HealthReport, JobAccepted, JobStatus, WorkspaceInfo, TrainParams, TrainLossConfig, InferParams, EnvInfo, VramProbeResult, DatasetBuildParams, DatasetValidateParams, DatasetHealthParams, DatasetMergeParams, ExportParams, ModelInstance, ModelVersion, ModelRuns, CheckpointEntry } from "./api-types";
+import type { DatasetInfo, DatasetInspectInfo, DatasetFinalizeParams, HealthReport, JobAccepted, JobStatus, WorkspaceInfo, TrainParams, TrainLossConfig, InferParams, EnvInfo, VramProbeResult, DatasetBuildParams, DatasetValidateParams, DatasetHealthParams, DatasetMergeParams, ExportParams, ModelInstance, ModelVersion, ModelRuns, CheckpointEntry } from "./api-types";
 
 let BASE_URL = "http://localhost:8765";
 
@@ -113,7 +113,7 @@ export async function defaultOutputDir(): Promise<string> {
 
 export const buildDataset = (params: DatasetBuildParams) => request<JobAccepted>("POST", "/api/datasets/build", params);
 export const inspectDataset = (params: { path: string }) => request<DatasetInspectInfo>("POST", "/api/datasets/inspect", params);
-export const finalizeDataset = (params: { path: string; scale: number }) =>
+export const finalizeDataset = (params: DatasetFinalizeParams) =>
   request<{ path: string; scale: number; num_pairs: number }>("POST", "/api/datasets/finalize", params);
 export const validateDatasetPath = (params: DatasetValidateParams) => request<{ valid: boolean; problems: string[]; num_pairs: number }>("POST", "/api/datasets/validate", params);
 export const startValidateDataset = (params: DatasetValidateParams) => request<JobAccepted>("POST", "/api/datasets/validate-async", params);

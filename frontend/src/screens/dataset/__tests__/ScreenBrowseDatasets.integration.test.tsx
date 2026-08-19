@@ -23,6 +23,7 @@ vi.mock("../../../lib/scanDatasets", () => ({
   getDatasetPairUrls: vi.fn().mockResolvedValue(
     Array.from({ length: 10 }, (_, i) => ({ hr: `hr${i}.png`, lr: `lr${i}.png` })),
   ),
+  getDatasetPairInfo: vi.fn().mockResolvedValue(null),
 }));
 
 async function renderBrowse() {
@@ -43,12 +44,17 @@ describe("ScreenBrowseDatasets", () => {
       { name: "beta", path: "/data/beta", scale: 2, num_pairs: 5 },
     ]);
     mockGetDatasetHealth.mockResolvedValue({
-      total_images: 10,
+      total_pairs: 10,
+      total_hr_images: 10,
+      total_lr_images: 10,
       resolutions: { "1024x1024": 10 },
       aspect_ratios: { "1.0": 10 },
       channels: { "RGB (3 channels)": 10 },
       computed_threshold: 18,
       black_frames: ["000001.png", "000002.png"],
+      suspicious_frames: [],
+      scale_mismatches: [],
+      frame_means: {},
       unreadable: [],
     });
     mockStartValidate.mockResolvedValue({ job_id: "dataset.validate_1", status: "accepted" });

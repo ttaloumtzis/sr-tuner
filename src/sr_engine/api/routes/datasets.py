@@ -35,7 +35,10 @@ async def inspect_dataset(params: DatasetInspectParams):
 
 @router.post("/finalize")
 async def finalize_dataset(params: DatasetFinalizeParams, ws: Workspace = Depends(get_workspace)):
-    """Write ``manifest.json`` for a pre-extracted dataset inside the workspace."""
+    """Write ``manifest.json`` for a pre-extracted dataset inside the workspace.
+
+    The source directory is never modified.
+    """
     path = Path(params.path).resolve()
     if not str(path).startswith(str(ws.path)):
         raise HTTPException(403, "Path is outside the workspace")

@@ -152,11 +152,22 @@ MAX_THRESHOLD: float = 25.0
 from exceeding 25.0 even if the detected gap is very large, avoiding
 false positives on legitimately dark-but-valid content."""
 
-STD_THRESHOLD: float = 5.0
+STD_THRESHOLD: float = 3.0
 """Minimum pixel-value standard deviation required to consider an image
 as containing visible content. Images below this threshold are
 featureless (true black frames). Prevents low-mean but high-variance
 dark scenes from being incorrectly flagged as black frames."""
+
+SUSPICIOUS_STD_THRESHOLD: float = 8.0
+"""Standard deviation threshold for the ``suspicious_frames`` list.
+Images with mean below the adaptive threshold but std between
+``STD_THRESHOLD`` and this value are flagged as suspicious (they may be
+very dark content rather than true black frames)."""
+
+MAX_PIXEL_BLACK_THRESHOLD: int = 20
+"""Maximum pixel intensity anywhere in the image for the secondary
+absolute-near-black check. If ``max_pixel < this`` even when std is
+above ``STD_THRESHOLD``, the frame is still flagged as black."""
 
 FULL_RANGE_FALLBACK: float = 3.5
 """Fallback threshold used when Otsu finds no frames below its threshold
@@ -254,79 +265,155 @@ def check_dataset_health(dataset_dir: Path,
                          ) -> dict:
     """Analyze dataset spatial properties, color channels, and detect black frames.
 
-    Examines all images in the ``HR/`` subdirectory, collecting resolution
-    and aspect-ratio distributions, channel counts, and mean pixel
-    brightness. Uses an adaptive thresholding algorithm to identify
-    completely black or near-black frames.
+    Examines all images in both ``HR/`` and ``LR/`` subdirectories,
+    collecting resolution and aspect-ratio distributions, channel counts,
+    and mean pixel brightness. Uses an adaptive thresholding algorithm
+    to identify completely black or near-black frames. Also validates
+    LR dimensions against the expected scale factor from the manifest.
 
     Args:
-        dataset_dir: Path to the dataset directory containing an ``HR/`` folder.
+        dataset_dir: Path to the dataset directory.
         reporter: Optional progress reporter.
 
     Returns:
         A dict with keys:
-        ``total_images``, ``resolutions``, ``aspect_ratios``, ``channels``,
-        ``computed_threshold``, ``black_frames``, ``unreadable``. On error,
+        ``total_pairs``, ``total_hr_images``, ``total_lr_images``,
+        ``resolutions``, ``aspect_ratios``, ``channels``,
+        ``computed_threshold``, ``black_frames``, ``suspicious_frames``,
+        ``scale_mismatches``, ``unreadable``, ``frame_means``. On error,
         returns ``{"error": <message>}``.
     """
     hr_dir = dataset_dir / "HR"
+    lr_dir = dataset_dir / "LR"
     if not hr_dir.is_dir():
         return {"error": "HR directory not found. Run validation/build first."}
 
     hr_files = list_images(hr_dir)
-    total_files = len(hr_files)
+    lr_files = list_images(lr_dir) if lr_dir.is_dir() else []
 
-    if total_files == 0:
+    total_hr = len(hr_files)
+    total_lr = len(lr_files)
+
+    total_pairs = min(total_hr, total_lr) if total_lr > 0 else total_hr
+
+    if total_hr == 0:
         return {"error": "No images found in HR directory to analyze."}
 
     resolutions = Counter()
     aspect_ratios = Counter()
     channels_summary = Counter()
 
-    image_means = []
-    file_metadata = []
+    hr_image_means: list[float] = []
+    hr_file_metadata: list[tuple[str, float, float, float]] = []
 
     reporter = reporter or ProgressReporter()
-    reporter.start(total=len(hr_files), desc="Analyzing Dataset Metrics")
 
-    # 1. Gather file dimensions and color mean footprints
+    # Phase 1: Analyze HR files
+    reporter.start(total=total_hr, desc="Analyzing HR Images")
     for path in hr_files:
         img = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
         if img is None:
             continue
 
         h, w = img.shape[:2]
-        resolutions[f"{w}x{h}"] += 1
-        aspect_ratios[round(w / h, 2)] += 1
+        resolutions[f"HR:{w}x{h}"] += 1
+        aspect_ratios[f"HR:{round(w / h, 2)}"] += 1
 
         color_data = _extract_color_data(img, channels_summary)
         img_mean = float(np.mean(color_data))
         img_std = float(np.std(color_data))
+        img_max = float(np.max(color_data))
 
-        image_means.append(img_mean)
-        file_metadata.append((path.name, img_mean, img_std))
+        hr_image_means.append(img_mean)
+        hr_file_metadata.append((f"HR/{path.name}", img_mean, img_std, img_max))
         reporter.update(1)
-
     reporter.finish()
 
-    # 2. Compute the ideal dynamic threshold slice for this exact asset pool
-    threshold = _compute_adaptive_threshold(image_means)
+    # Phase 2: Analyze LR files (means only, no resolution/channel tracking)
+    lr_file_metadata: list[tuple[str, float, float, float]] = []
+    lr_dims: dict[str, tuple[int, int]] = {}
+    if total_lr > 0:
+        reporter.start(total=total_lr, desc="Analyzing LR Images")
+        for path in lr_files:
+            img = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+            if img is None:
+                continue
 
-    # 3. Separate near-black dead frames using the custom threshold profile.
-    #    Require both low mean AND low variance — a dark scene with visible
-    #    content has high pixel std even when the average is low.
-    black_filenames = [
-        filename for filename, img_mean, img_std in file_metadata
-        if img_mean < threshold and img_std < STD_THRESHOLD
-    ]
+            h, w = img.shape[:2]
+            lr_dims[path.name] = (w, h)
+
+            color_data = _extract_color_data(img, channels_summary)
+            img_mean = float(np.mean(color_data))
+            img_std = float(np.std(color_data))
+            img_max = float(np.max(color_data))
+
+            lr_file_metadata.append((f"LR/{path.name}", img_mean, img_std, img_max))
+            reporter.update(1)
+        reporter.finish()
+
+    # Phase 3: Compute adaptive threshold from HR distribution
+    threshold = _compute_adaptive_threshold(hr_image_means)
+
+    # Phase 4: Flag black and suspicious frames (both HR and LR)
+    all_metadata = hr_file_metadata + lr_file_metadata
+    black_frames: list[str] = []
+    suspicious_frames: list[str] = []
+    frame_means: dict[str, float] = {}
+
+    for rel_path, img_mean, img_std, img_max in all_metadata:
+        frame_means[rel_path] = round(img_mean, 2)
+        is_below_threshold = img_mean < threshold
+        is_featureless = img_std < STD_THRESHOLD
+        is_absolutely_dark = img_max < MAX_PIXEL_BLACK_THRESHOLD
+
+        if is_below_threshold and (is_featureless or is_absolutely_dark):
+            black_frames.append(rel_path)
+        elif is_below_threshold and img_std < SUSPICIOUS_STD_THRESHOLD:
+            suspicious_frames.append(rel_path)
+
+    # Phase 5: Scale validation
+    manifest_path = dataset_dir / "manifest.json"
+    scale = 4
+    scale_mismatches: list[str] = []
+    if manifest_path.is_file():
+        try:
+            manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+            scale = int(manifest_data.get("config", {}).get("scale", 4))
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    if total_hr > 0 and total_lr > 0 and scale > 1:
+        hr_dims_map: dict[str, tuple[int, int]] = {}
+        for path in hr_files:
+            img = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+            if img is not None:
+                h, w = img.shape[:2]
+                hr_dims_map[path.name] = (w, h)
+
+        for name, (lr_w, lr_h) in lr_dims.items():
+            if name not in hr_dims_map:
+                continue
+            hr_w, hr_h = hr_dims_map[name]
+            expected_lr_w = round(hr_w / scale)
+            expected_lr_h = round(hr_h / scale)
+            if abs(lr_w - expected_lr_w) > 1 or abs(lr_h - expected_lr_h) > 1:
+                scale_mismatches.append(
+                    f"LR/{name}: expected {expected_lr_w}x{expected_lr_h}, "
+                    f"got {lr_w}x{lr_h} (HR is {hr_w}x{hr_h}, scale={scale})"
+                )
 
     return {
-        "total_images": total_files,
+        "total_pairs": total_pairs,
+        "total_hr_images": total_hr,
+        "total_lr_images": total_lr,
         "resolutions": dict(resolutions),
         "aspect_ratios": dict(aspect_ratios),
         "channels": dict(channels_summary),
         "computed_threshold": round(threshold, 2),
-        "black_frames": black_filenames,
+        "black_frames": black_frames,
+        "suspicious_frames": suspicious_frames,
+        "scale_mismatches": scale_mismatches,
+        "frame_means": frame_means,
         "unreadable": find_unreadable_images(dataset_dir, reporter=reporter),
     }
 
@@ -445,16 +532,22 @@ def prune_black_frames(dataset_dir: Path, black_filenames: list[str],
                        reporter: Optional[ProgressReporter] = None) -> None:
     """Delete black frame pairs from disk and update the dataset manifest.
 
-    Convenience wrapper around :func:`prune_pairs` that maps HR-side
-    basenames to relative paths.
+    Accepts either bare filenames (e.g. ``"f0001.png"``) or prefixed relative
+    paths (e.g. ``"HR/f0001.png"``, ``"LR/f0001.png"``). Both forms resolve
+    to the full HR/LR pair via :func:`prune_pairs`.
 
     Args:
         dataset_dir: Path to the dataset directory.
-        black_filenames: List of filenames (not full paths) to remove.
+        black_filenames: List of filenames or relative paths to remove.
         reporter: Optional progress reporter.
 
     Raises:
         RuntimeError: If any files could not be deleted.
     """
-    rel_paths = [f"HR/{name}" for name in black_filenames]
+    rel_paths: list[str] = []
+    for name in black_filenames:
+        if name.startswith("HR/") or name.startswith("LR/"):
+            rel_paths.append(name)
+        else:
+            rel_paths.append(f"HR/{name}")
     prune_pairs(dataset_dir, rel_paths, reporter=reporter)

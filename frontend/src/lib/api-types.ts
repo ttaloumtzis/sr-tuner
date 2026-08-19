@@ -42,12 +42,17 @@ export interface DatasetInspectInfo {
 }
 
 export interface HealthReport {
-  total_images: number;
+  total_pairs: number;
+  total_hr_images: number;
+  total_lr_images: number;
   resolutions: Record<string, number>;
   aspect_ratios: Record<string, number>;
   channels: Record<string, number>;
   computed_threshold: number;
   black_frames: string[];
+  suspicious_frames: string[];
+  scale_mismatches: string[];
+  frame_means: Record<string, number>;
   unreadable: string[];
 }
 
@@ -106,6 +111,7 @@ export interface TrainParams {
   metrics_frequency?: number;
   perceptual_weight?: number;
   warmup_steps?: number;
+  benchmark_warmup?: boolean;
   write_metrics_file?: boolean;
   losses?: TrainLossConfig;
   gradient_checkpointing?: string;
@@ -197,6 +203,12 @@ export interface DatasetValidateParams {
   path: string;
 }
 
+export interface DatasetFinalizeParams {
+  path: string;
+  scale: number;
+  config_overrides?: Record<string, unknown>;
+}
+
 export interface DatasetHealthParams {
   path: string;
   yes?: boolean;
@@ -208,6 +220,11 @@ export interface DatasetMergeParams {
   name?: string;
   keep_sources?: boolean;
   input_datasets?: string[];
+}
+
+export interface ImagePairInfo {
+  hr: { url: string; w: number; h: number };
+  lr: { url: string; w: number; h: number };
 }
 
 export interface DatasetManifest {

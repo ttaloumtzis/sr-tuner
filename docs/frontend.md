@@ -352,6 +352,8 @@ startInference(params)→ POST /api/infer/start
 
 // Datasets
 listDatasets(scale?)  → GET /api/datasets
+inspectDataset(params) → POST /api/datasets/inspect
+finalizeDataset(params)→ POST /api/datasets/finalize
 buildDataset(params)  → POST /api/datasets/build
 validateDataset(params)→ POST /api/datasets/validate
 validateDatasetAsync(params)→ POST /api/datasets/validate-async

@@ -62,6 +62,31 @@ class TestDatasetBuildDefault:
         cfg = yaml.safe_load(r.output)
         assert "degradation" in cfg
 
+    def test_degradations_jpeg_toggles_section(self, cli_invoker, tmp_path):
+        """``--degradations jpeg`` should enable only the JPEG section."""
+        r = cli_invoker([
+            "dataset", "build", "--dump-config",
+            "--degradations", "jpeg",
+            "--input", str(tmp_path),
+        ])
+        assert r.exit_code == 0, r.output
+        import yaml
+        cfg = yaml.safe_load(r.output)
+        deg = cfg["degradation"]
+        assert deg["jpeg"]["enabled"] is True
+        assert deg["blur"]["enabled"] is False
+        assert deg["noise"]["enabled"] is False
+
+    def test_degradations_unknown_name_rejected(self, cli_invoker, tmp_path):
+        """An unknown degradation name should be a usage error."""
+        r = cli_invoker([
+            "dataset", "build", "--dump-config",
+            "--degradations", "sepia",
+            "--input", str(tmp_path),
+        ])
+        assert r.exit_code != 0
+        assert "Unknown degradation" in r.output
+
 
 class TestDatasetValidate:
     """Tests for dataset validation."""

@@ -335,3 +335,52 @@ class TestPipelineOrder:
             jpeg2000_kwargs={"enabled": False},
         )
         assert result.shape == (16, 16, 3)
+
+
+class TestScaleOneShortCircuit:
+    """Scale 1 must skip the downsample machinery entirely."""
+
+    def _degrade_scale1(self, method: str = "bicubic", antialias: bool = True) -> np.ndarray:
+        img = np.random.randint(0, 256, (64, 64, 3), dtype=np.uint8)
+        return _degrade_image(
+            img, scale=1,
+            blur_kwargs={"enabled": False},
+            noise_kwargs={"enabled": False},
+            jpeg_kwargs={"enabled": False},
+            jpeg2000_kwargs={"enabled": False},
+            color_jitter_kwargs={"enabled": False},
+            resize_method=method,
+            resize_antialias=antialias,
+        )
+
+    def test_scale1_keeps_dimensions(self):
+        result = self._degrade_scale1()
+        assert result.shape == (64, 64, 3)
+
+    def test_scale1_no_antialias_blur(self):
+        """Bicubic + antialias must not blur the image when scale == 1."""
+        img = np.random.randint(0, 256, (64, 64, 3), dtype=np.uint8)
+        result = _degrade_image(
+            img, scale=1,
+            blur_kwargs={"enabled": False},
+            noise_kwargs={"enabled": False},
+            jpeg_kwargs={"enabled": False},
+            jpeg2000_kwargs={"enabled": False},
+            color_jitter_kwargs={"enabled": False},
+            resize_method="bicubic",
+            resize_antialias=True,
+        )
+        assert np.array_equal(img, result)
+
+    def test_scale1_nearest_identity(self):
+        img = np.random.randint(0, 256, (64, 64, 3), dtype=np.uint8)
+        result = _degrade_image(
+            img, scale=1,
+            blur_kwargs={"enabled": False},
+            noise_kwargs={"enabled": False},
+            jpeg_kwargs={"enabled": False},
+            jpeg2000_kwargs={"enabled": False},
+            color_jitter_kwargs={"enabled": False},
+            resize_method="nearest",
+        )
+        assert np.array_equal(img, result)

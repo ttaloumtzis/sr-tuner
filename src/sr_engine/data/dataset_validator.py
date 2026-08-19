@@ -1,13 +1,15 @@
 """Dataset validator — checks an existing HR/LR folder matches the manifest.json."""
 
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
-import cv2
+
+from PIL import Image
 
 from sr_engine.utils.progress import ProgressReporter
-from sr_engine.data.image_files import list_images
+from sr_engine.data.image_files import scan_image_paths
 
 
 @dataclass
@@ -16,6 +18,33 @@ class ValidationReport:
     ok: bool
     num_pairs: int = 0
     problems: list[str] = field(default_factory=list)
+
+
+def _normalize_key(key: str) -> str:
+    """Normalize a manifest/disk key so matching is platform independent.
+
+    Converts to a forward-slash relative path and folds case so that Windows
+    backslash keys (``HR\\foo.png``) and case-insensitive filesystems compare
+    equal to the posix keys emitted by the dataset builders.
+    """
+    return os.path.normcase(Path(key).as_posix())
+
+
+def _image_size(path: Path) -> Optional[tuple[int, int]]:
+    """Return ``(width, height)`` from the image header without decoding pixels.
+
+    ``PIL.Image.open`` only parses the file header; pixel data is never
+    decoded. Returns ``None`` when the file is not header-parseable.
+    """
+    max_pixels = Image.MAX_IMAGE_PIXELS
+    Image.MAX_IMAGE_PIXELS = None  # header-only read; ignore decompression bombs
+    try:
+        with Image.open(path) as img:
+            return img.size
+    except Exception:
+        return None
+    finally:
+        Image.MAX_IMAGE_PIXELS = max_pixels
 
 
 def validate(dataset_dir: Path,
@@ -27,9 +56,12 @@ def validate(dataset_dir: Path,
         - HR/ and LR/ subdirectories exist.
         - manifest.json exists and is parseable.
         - Every image pair cataloged in the manifest exists physically on disk.
-        - All referenced files are valid PNG images.
+        - All referenced files are header-parseable images.
         - HR image dimensions are exactly *scale* times LR dimensions.
         - No orphan files exist on disk that are missing from the manifest tracking log.
+
+    Integrity is verified at the file-header level. Deep corruption detection
+    (black frames, truncated pixel data) lives in ``dataset_health``.
 
     Returns a ValidationReport with the result.
     """
@@ -61,87 +93,91 @@ def validate(dataset_dir: Path,
         problems.append(f"Failed to parse manifest.json: {e}")
         return ValidationReport(ok=False, problems=problems)
 
+    # 3. Single-pass directory scan — one listing per side, no per-file stat.
+    hr_on_disk = {_normalize_key(str(p.relative_to(dataset_dir))) for p in scan_image_paths(hr_dir)}
+    lr_on_disk = {_normalize_key(str(p.relative_to(dataset_dir))) for p in scan_image_paths(lr_dir)}
+
     # 2b. Minimal manifest (empty pairs) — validate via directory scan
     if not manifest_pairs:
-        hr_files = list_images(hr_dir)
-        lr_files = list_images(lr_dir)
-
-        if not hr_files:
+        if not hr_on_disk:
             problems.append("HR/ directory contains no images.")
-        if not lr_files:
+        if not lr_on_disk:
             problems.append("LR/ directory contains no images.")
-        if hr_files and lr_files and len(hr_files) != len(lr_files):
+        if hr_on_disk and lr_on_disk and len(hr_on_disk) != len(lr_on_disk):
             problems.append(
-                f"HR/ has {len(hr_files)} file(s) but LR/ has {len(lr_files)}."
+                f"HR/ has {len(hr_on_disk)} file(s) but LR/ has {len(lr_on_disk)}."
             )
 
-        num_pairs = min(len(hr_files), len(lr_files)) if hr_files and lr_files else 0
+        num_pairs = min(len(hr_on_disk), len(lr_on_disk)) if hr_on_disk and lr_on_disk else 0
         is_ok = len(problems) == 0 and num_pairs > 0
         return ValidationReport(ok=is_ok, num_pairs=num_pairs, problems=problems)
 
-    # Build tracking sets of expected files from the manifest
-    expected_hr = set()
-    expected_lr = set()
-
+    # 4. Integrity and Dimensional Scale Checks via Manifest Records.
+    #    Pre-pass: split out malformed entries and dedupe complete pairs so
+    #    the progress total and num_pairs count each unique pair once.
+    malformed_entries: list[dict] = []
+    checkable: list[tuple[str, str, str, str]] = []  # (raw_hr, raw_lr, hr_key, lr_key)
+    seen: set[tuple[str, str]] = set()
     for pair in manifest_pairs:
-        hr_key = pair.get("hr") or pair.get("HR")
-        lr_key = pair.get("lr") or pair.get("LR")
-        if hr_key:
-            expected_hr.add(Path(hr_key).name)
-        if lr_key:
-            expected_lr.add(Path(lr_key).name)
+        raw_hr = pair.get("hr") or pair.get("HR")
+        raw_lr = pair.get("lr") or pair.get("LR")
+        if not raw_hr or not raw_lr:
+            malformed_entries.append(pair)
+            continue
+        hr_key = _normalize_key(raw_hr)
+        lr_key = _normalize_key(raw_lr)
+        dedup_key = (hr_key, lr_key)
+        if dedup_key in seen:
+            continue
+        seen.add(dedup_key)
+        checkable.append((raw_hr, raw_lr, hr_key, lr_key))
 
-    # 3. Integrity and Dimensional Scale Checks via Manifest Records
+    for pair in malformed_entries:
+        problems.append(f"Malformed manifest track entry: missing path mappings in entry: {pair}")
+
     num_pairs = 0
 
     reporter = reporter or ProgressReporter()
-    reporter.start(total=len(manifest_pairs), desc="Checking Manifest Alignment & Integrity")
+    reporter.start(total=len(checkable), desc="Checking Manifest Alignment & Integrity")
 
-    for pair in manifest_pairs:
-        hr_rel = pair.get("hr") or pair.get("HR")
-        lr_rel = pair.get("lr") or pair.get("LR")
+    for raw_hr, raw_lr, hr_key, lr_key in checkable:
+        # A. Check for missing disk files registered in the manifest.
+        #    Disk sets are keyed by normalized relative path; fall back to a
+        #    direct probe to stay tolerant of absolute / dotted / nested keys
+        #    in hand-edited manifests.
+        if hr_key not in hr_on_disk:
+            hr_abs = dataset_dir / hr_key
+            if hr_abs.is_file():
+                hr_on_disk.add(hr_key)
+            else:
+                problems.append(f"Manifest alignment failure: File '{raw_hr}' is logged in manifest.json but missing from disk.")
+                continue
+        if lr_key not in lr_on_disk:
+            lr_abs = dataset_dir / lr_key
+            if lr_abs.is_file():
+                lr_on_disk.add(lr_key)
+            else:
+                problems.append(f"Manifest alignment failure: File '{raw_lr}' is logged in manifest.json but missing from disk.")
+                continue
 
-        if not hr_rel or not lr_rel:
-            problems.append(f"Malformed manifest track entry: missing path mappings in entry: {pair}")
+        # B. Read image headers to verify parseability and dimensions.
+        hr_size = _image_size(dataset_dir / hr_key)
+        lr_size = _image_size(dataset_dir / lr_key)
+
+        if hr_size is None:
+            problems.append(f"Corrupted Image: HR file '{raw_hr}' is unreadable or malformed.")
+            continue
+        if lr_size is None:
+            problems.append(f"Corrupted Image: LR file '{raw_lr}' is unreadable or malformed.")
             continue
 
-        hr_img_path = dataset_dir / hr_rel
-        lr_img_path = dataset_dir / lr_rel
+        hr_w, hr_h = hr_size
+        lr_w, lr_h = lr_size
 
-        # A. Check for missing disk files registered in manifest
-        if not hr_img_path.is_file():
-            problems.append(f"Manifest alignment failure: File '{hr_rel}' is logged in manifest.json but missing from disk.")
-            continue
-        if not lr_img_path.is_file():
-            problems.append(f"Manifest alignment failure: File '{lr_rel}' is logged in manifest.json but missing from disk.")
-            continue
-
-        # B. Read files using OpenCV to verify stability
-        hr_img = cv2.imread(str(hr_img_path))
-        lr_img = cv2.imread(str(lr_img_path))
-
-        if hr_img is None:
-            problems.append(f"Corrupted Image: HR file '{hr_rel}' is unreadable or malformed.")
-            continue
-        if lr_img is None:
-            problems.append(f"Corrupted Image: LR file '{lr_rel}' is unreadable or malformed.")
-            continue
-
-        # C. Check for zero-dimension images
-        hr_h, hr_w = hr_img.shape[:2]
-        lr_h, lr_w = lr_img.shape[:2]
-
-        if hr_h == 0 or hr_w == 0 or lr_h == 0 or lr_w == 0:
-            problems.append(
-                f"Zero-dimension image pair: '{Path(hr_rel).name}' "
-                f"HR ({hr_w}x{hr_h}), LR ({lr_w}x{lr_h})."
-            )
-            continue
-
-        # D. Check scale metrics strictly
+        # C. Check scale metrics strictly
         if hr_h != lr_h * scale or hr_w != lr_w * scale:
             problems.append(
-                f"Dimension mismatch on '{Path(hr_rel).name}': HR dimensions ({hr_w}x{hr_h}) "
+                f"Dimension mismatch on '{Path(hr_key).name}': HR dimensions ({hr_w}x{hr_h}) "
                 f"are not exactly {scale}x scale multiplier of LR dimensions ({lr_w}x{lr_h})."
             )
             continue
@@ -151,22 +187,26 @@ def validate(dataset_dir: Path,
 
     reporter.finish()
 
-    # 4. Check for Orphaned Files (Files on disk that aren't in the manifest)
-    disk_hr_files = {p.name for p in list_images(hr_dir)}
-    disk_lr_files = {p.name for p in list_images(lr_dir)}
+    # 5. Check for Orphaned Files (Files on disk that aren't in the manifest).
+    #    Basename keys mirror the original tracker semantics and stay correct
+    #    for datasets whose manifest entries use absolute or nested paths.
+    def _basenames(rel_keys: set[str]) -> set[str]:
+        return {os.path.normcase(Path(k).name) for k in rel_keys}
 
-    orphaned_hr = disk_hr_files - expected_hr
-    orphaned_lr = disk_lr_files - expected_lr
+    disk_hr_names = _basenames(hr_on_disk)
+    disk_lr_names = _basenames(lr_on_disk)
+    manifest_hr_names = {os.path.normcase(Path(p.get("hr") or p.get("HR") or "").name) for p in manifest_pairs}
+    manifest_lr_names = {os.path.normcase(Path(p.get("lr") or p.get("LR") or "").name) for p in manifest_pairs}
 
-    for filename in orphaned_hr:
+    for filename in sorted(disk_hr_names - manifest_hr_names):
         problems.append(f"Orphaned asset: '{filename}' exists in HR/ directory but is missing from manifest.json.")
-    for filename in orphaned_lr:
+    for filename in sorted(disk_lr_names - manifest_lr_names):
         problems.append(f"Orphaned asset: '{filename}' exists in LR/ directory but is missing from manifest.json.")
 
-    # 5. Final decision matrix evaluation
+    # 6. Final decision matrix evaluation
     is_ok = len(problems) == 0 and num_pairs > 0
     if num_pairs == 0 and len(problems) == 0:
         problems.append("Dataset manifest is completely empty (0 registered frame tracking structures).")
         is_ok = False
 
-    return ValidationReport(ok=is_ok, num_pairs=num_pairs, problems=problems)
+    return ValidationReport(ok=is_ok, num_pairs=num_pairs, problems=sorted(problems))

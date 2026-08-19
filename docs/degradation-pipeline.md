@@ -68,7 +68,7 @@ The degradation pipeline exists to bridge the gap between synthetic training dat
 
 This document covers:
 
-- The six-stage degradation pipeline and each stage's mathematical/algorithmic implementation
+- The seven-stage degradation pipeline and each stage's mathematical/algorithmic implementation
 - The orchestrator (`batch_degrade`) and its parallel execution model
 - The upstream video extraction system
 - The downstream dataset builder, validator, and health checker
@@ -1229,7 +1229,7 @@ Main Process
 
 Each worker process:
 1. Reads HR image from disk
-2. Calls `_degrade_image()` (all six stages)
+2. Calls `_degrade_image()` (all seven stages)
 3. Writes LR image to disk
 4. Returns `(hr_path, lr_path)` or `(hr_path, None)` on failure
 

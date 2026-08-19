@@ -2677,6 +2677,7 @@ validation:
 lr_scheduler: cosine
 warmup_steps: 2000
 min_lr: 1e-7
+benchmark_warmup: true  # pre-tune MIOpen/cuDNN kernels with one dummy step before the epoch loop
 dtype: float32
 losses:
   perceptual_weight: 0.1

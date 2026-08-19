@@ -24,6 +24,27 @@ _DEGRADATION_SECTIONS = {
 """Mapping from CLI hyphen names to config section names for ``--degradations``."""
 
 
+def _apply_degradation_flags(cfg: dict, degradations: str) -> None:
+    """Toggle the ``enabled`` flag of each degradation section in *cfg*.
+
+    Raises:
+        click.BadParameter: If a degradation name is unknown.
+    """
+    enabled = set(d.strip() for d in degradations.split(","))
+    unknown = enabled - set(_DEGRADATION_SECTIONS)
+    if unknown:
+        known = ", ".join(sorted(_DEGRADATION_SECTIONS))
+        raise click.BadParameter(
+            f"Unknown degradation(s): {', '.join(sorted(unknown))}. "
+            f"Known degradations: {known}."
+        )
+    deg_cfg = cfg.setdefault("degradation", {})
+    for cli_name, cfg_key in _DEGRADATION_SECTIONS.items():
+        section = deg_cfg.get(cfg_key)
+        if isinstance(section, dict):
+            section["enabled"] = cli_name in enabled
+
+
 @click.group()
 def dataset() -> None:
     """Dataset creation and validation commands."""
@@ -37,7 +58,8 @@ def dataset() -> None:
 @click.option("--out", "-o", required=False, type=click.Path(path_type=Path),
               help="Output dataset directory. Required if input is a video file.")
 @click.option("--degradations", "-d", default=None,
-              help="Comma-separated enabled degradations: blur,noise,jpeg,jpeg2000,color-jitter. "
+              help="Comma-separated enabled degradations: "
+                   "blur,noise,jpeg,jpeg2000,color-jitter. "
                    "Omit to use per-section 'enabled' fields from config.")
 @click.option("--resize-method", default=None,
               type=click.Choice(["area", "bicubic", "bilinear", "lanczos", "nearest"]),
@@ -58,11 +80,7 @@ def build(ctx, input: Path, config: Path | None, out: Path | None,
         cfg = cfg_loader.get_dataset_config()
 
     if degradations is not None:
-        enabled = set(d.strip() for d in degradations.split(","))
-        deg_cfg = cfg.setdefault("degradation", {})
-        for cli_name, cfg_key in _DEGRADATION_SECTIONS.items():
-            if cfg_key in deg_cfg:
-                deg_cfg[cfg_key]["enabled"] = cli_name in enabled
+        _apply_degradation_flags(cfg, degradations)
 
     if resize_method is not None:
         deg_cfg = cfg.setdefault("degradation", {})
@@ -138,7 +156,8 @@ def health_cmd(path: Path, yes: bool) -> None:
         raise click.Abort()
 
     click.echo(f"\n{'='*40}\nDATASET HEALTH PROFILE\n{'='*40}")
-    click.echo(f"Total Logged Frames: {report['total_images']}")
+    click.echo(f"Total Pairs: {report['total_pairs']}")
+    click.echo(f"HR Images: {report['total_hr_images']} | LR Images: {report['total_lr_images']}")
 
     click.echo("\nResolution Breakdown:")
     for res, count in report['resolutions'].items():

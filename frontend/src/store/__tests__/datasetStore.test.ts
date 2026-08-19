@@ -69,12 +69,17 @@ describe("datasetStore", () => {
 
   it("setJobHealthReport stores the health report from the done event", () => {
     const report = {
-      total_images: 10,
+      total_pairs: 10,
+      total_hr_images: 10,
+      total_lr_images: 10,
       resolutions: { "1920x1080": 10 },
       aspect_ratios: { "1.78": 10 },
       channels: { "RGB (3 channels)": 10 },
       computed_threshold: 18.5,
       black_frames: ["a.png"],
+      suspicious_frames: [],
+      scale_mismatches: [],
+      frame_means: {},
       unreadable: [],
     };
     useDatasetStore.getState().setJobHealthReport(report);
@@ -97,12 +102,17 @@ describe("datasetStore", () => {
     useDatasetStore.getState().setJobId("dataset.health_123");
     useDatasetStore.getState().setJobDatasetPath("/data/ds");
     useDatasetStore.getState().setJobHealthReport({
-      total_images: 1,
+      total_pairs: 1,
+      total_hr_images: 1,
+      total_lr_images: 1,
       resolutions: {},
       aspect_ratios: {},
       channels: {},
       computed_threshold: 1,
       black_frames: [],
+      suspicious_frames: [],
+      scale_mismatches: [],
+      frame_means: {},
       unreadable: [],
     });
     useDatasetStore.getState().clearJob();

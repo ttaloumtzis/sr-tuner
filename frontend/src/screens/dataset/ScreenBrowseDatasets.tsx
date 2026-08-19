@@ -18,8 +18,8 @@ import {
 } from "lucide-react";
 import "./ScreenBrowseDatasets.css";
 import { listDatasets, startValidateDataset, healthCheck, getDatasetHealth, deleteDataset, pruneDatasetFiles } from "../../lib/api";
-import type { DatasetInfo, HealthReport } from "../../lib/api-types";
-import { getDatasetPairUrls } from "../../lib/scanDatasets";
+import type { DatasetInfo, HealthReport, ImagePairInfo } from "../../lib/api-types";
+import { getDatasetPairUrls, getDatasetPairInfo } from "../../lib/scanDatasets";
 import { useToast } from "../../components/shell/ToastProvider";
 import { useDatasetStore } from "../../store/datasetStore";
 import { PBar } from "../../components/ui/PBar";
@@ -45,8 +45,11 @@ export const ScreenBrowseDatasets: React.FC = () => {
   const [zoomLevel, setZoomLevel] = useState(1);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [pairUrls, setPairUrls] = useState<{ hr: string; lr: string }[]>([]);
+  const [pairInfo, setPairInfo] = useState<ImagePairInfo[]>([]);
+  const [pairLoading, setPairLoading] = useState(false);
   const isPanningRef = useRef(false);
   const panStartRef = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
+  const pairPreloadRef = useRef(0);
 
   const sliderContainerRef = useRef<HTMLDivElement>(null);
   const thumbScrollRef = useRef<HTMLDivElement>(null);
@@ -61,6 +64,7 @@ export const ScreenBrowseDatasets: React.FC = () => {
   const setJobStatus = useDatasetStore((s) => s.setJobStatus);
   const setJobType = useDatasetStore((s) => s.setJobType);
   const setJobDatasetPath = useDatasetStore((s) => s.setJobDatasetPath);
+  const setValidationResult = useDatasetStore((s) => s.setValidationResult);
 
   const [healthForPath, setHealthForPath] = useState<string | null>(null);
   const [healthReport, setHealthReport] = useState<HealthReport | null>(null);
@@ -126,7 +130,10 @@ export const ScreenBrowseDatasets: React.FC = () => {
     if (validationResult.valid) {
       toast("success", `Dataset validated — ${validationResult.num_pairs} pairs, no problems`);
     } else {
-      toast("warning", `Validation found ${validationResult.problems.length} problem(s): ${validationResult.problems.join(", ")}`);
+      const problems = validationResult.problems;
+      const shown = problems.slice(0, 8).join(", ");
+      const tail = problems.length > 8 ? ` (+${problems.length - 8} more)` : "";
+      toast("warning", `Validation found ${problems.length} problem(s): ${shown}${tail}`);
     }
   }, [validationResult, toast]);
 
@@ -176,9 +183,12 @@ export const ScreenBrowseDatasets: React.FC = () => {
   const handlePrune = useCallback(async () => {
     if (!currentDataset || selectedBlackFrames.size === 0) return;
     try {
+      const files = Array.from(selectedBlackFrames).map((name) =>
+        name.startsWith("HR/") || name.startsWith("LR/") ? name : `HR/${name}`,
+      );
       const result = await pruneDatasetFiles({
         path: currentDataset.path,
-        files: Array.from(selectedBlackFrames).map((name) => `HR/${name}`),
+        files,
       });
       setJobId(result.job_id);
       setJobDatasetPath(currentDataset.path);
@@ -287,16 +297,23 @@ export const ScreenBrowseDatasets: React.FC = () => {
     if (!currentDataset) return;
     setSelectedBlackFrames(new Set());
     setSelectedUnreadable(new Set());
+    setValidationResult(null);
     loadHealth(currentDataset.path);
-  }, [currentDataset?.path, loadHealth]);
+  }, [currentDataset?.path, loadHealth, setValidationResult]);
 
   useEffect(() => {
     if (!currentDataset) {
       setPairUrls([]);
+      setPairInfo([]);
       return;
     }
     let cancelled = false;
+    const reqId = ++pairPreloadRef.current;
+    const abort = new AbortController();
     setPairUrls([]);
+    setPairInfo([]);
+    setPairLoading(true);
+
     getDatasetPairUrls(currentDataset.path, currentDataset.name, currentDataset.num_pairs)
       .then((urls) => {
         if (!cancelled) setPairUrls(urls);
@@ -304,7 +321,22 @@ export const ScreenBrowseDatasets: React.FC = () => {
       .catch(() => {
         if (!cancelled) setPairUrls([]);
       });
-    return () => { cancelled = true; };
+
+    getDatasetPairInfo(currentDataset.path, abort.signal)
+      .then((info) => {
+        if (!cancelled && reqId === pairPreloadRef.current) {
+          setPairInfo(info ?? []);
+        }
+        if (!cancelled) setPairLoading(false);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPairInfo([]);
+          setPairLoading(false);
+        }
+      });
+
+    return () => { cancelled = true; abort.abort(); };
   }, [currentDataset?.path, currentDataset?.name, currentDataset?.num_pairs]);
 
   useEffect(() => {
@@ -335,20 +367,20 @@ export const ScreenBrowseDatasets: React.FC = () => {
     return matchesSearch && matchesScale;
   });
 
-  const imgTransform = useCallback(
-    (includePan = true): React.CSSProperties => ({
-      width: "100%",
-      height: "100%",
-      transform: `scale(${zoomLevel})${includePan ? ` translate(${panOffset.x}px, ${panOffset.y}px)` : ""}`,
-      maxWidth: zoomLevel > 1 ? "none" : "100%",
-      maxHeight: zoomLevel > 1 ? "none" : "100%",
-      objectFit: "contain",
-    }),
-    [zoomLevel, panOffset],
-  );
+  const currentPair = pairInfo[currentPairIndex - 1];
+  const hrUrl = currentPair?.hr.url ?? pairUrls[currentPairIndex - 1]?.hr ?? "";
+  const lrUrl = currentPair?.lr.url ?? pairUrls[currentPairIndex - 1]?.lr ?? "";
 
-  const currentHrUrl = pairUrls[currentPairIndex - 1]?.hr ?? "";
-  const currentLrUrl = pairUrls[currentPairIndex - 1]?.lr ?? "";
+  const alignStyle: React.CSSProperties = {
+    width: "100%",
+    height: "100%",
+    objectFit: "contain",
+  };
+
+  const imgZoomStyle: React.CSSProperties = {
+    ...alignStyle,
+    transform: `scale(${zoomLevel}) translate(${panOffset.x}px, ${panOffset.y}px)`,
+  };
 
   const startThumb = Math.max(1, currentPairIndex - FILMSTRIP_WINDOW);
   const endThumb = Math.min(pairsCount, currentPairIndex + FILMSTRIP_WINDOW);
@@ -538,16 +570,19 @@ export const ScreenBrowseDatasets: React.FC = () => {
                 {pairsCount.toLocaleString()} pairs
               </span>
               <span className="meta-badge manifest">Manifest OK</span>
-              {showHealthLoading
-  ? <span className="meta-badge health unverified">Health: Checking…</span>
-  : jobStatus === "running" && isHealthJobOnCurrent
-    ? <span className="meta-badge health unverified">Health: Running…</span>
-    : showHealthReport === null
-      ? <span className="meta-badge health unverified">Health: Unchecked</span>
-      : showHealthReport.black_frames.length === 0 && (showHealthReport.unreadable?.length ?? 0) === 0
-        ? <span className="meta-badge health healthy">Health: OK</span>
-        : <span className="meta-badge health warning">Health: {(showHealthReport.black_frames.length + (showHealthReport.unreadable?.length ?? 0))} issue{(showHealthReport.black_frames.length + (showHealthReport.unreadable?.length ?? 0)) !== 1 ? "s" : ""}</span>
-}
+              {showHealthLoading ? (
+                <span className="meta-badge health unverified">Health: Checking…</span>
+              ) : jobStatus === "running" && isHealthJobOnCurrent ? (
+                <span className="meta-badge health unverified">Health: Running…</span>
+              ) : showHealthReport === null ? (
+                <span className="meta-badge health unverified">Health: Unchecked</span>
+              ) : showHealthReport.black_frames.length === 0 && (showHealthReport.unreadable?.length ?? 0) === 0 && (showHealthReport.suspicious_frames?.length ?? 0) === 0 && (showHealthReport.scale_mismatches?.length ?? 0) === 0 ? (
+                <span className="meta-badge health healthy">Health: OK</span>
+              ) : (
+                <span className="meta-badge health warning">{
+                  "Health: " + (showHealthReport.black_frames.length + (showHealthReport.unreadable?.length ?? 0) + (showHealthReport.suspicious_frames?.length ?? 0) + (showHealthReport.scale_mismatches?.length ?? 0) === 1 ? "1 issue" : (showHealthReport.black_frames.length + (showHealthReport.unreadable?.length ?? 0) + (showHealthReport.suspicious_frames?.length ?? 0) + (showHealthReport.scale_mismatches?.length ?? 0)) + " issues")
+                }</span>
+              )}
             </div>
           </div>
 
@@ -635,8 +670,17 @@ export const ScreenBrowseDatasets: React.FC = () => {
           </div>
         </div>
 
-        {viewMode === "slider" && (
-          <div className="canvas-wrapper" onMouseDown={onCanvasMouseDown} onMouseMove={onCanvasMouseMove} onMouseUp={stopPan} onMouseLeave={stopPan}>
+        {pairLoading && !hrUrl && !lrUrl && (
+          <div className="canvas-wrapper">
+            <div className="loading-spinner">
+              <Loader2 size={18} className="spin" />
+              Loading preview…
+            </div>
+          </div>
+        )}
+
+        {(!pairLoading || hrUrl || lrUrl) && viewMode === "slider" && (
+          <div className="canvas-wrapper">
             <div
               className="comparison-slider-container"
               ref={sliderContainerRef}
@@ -644,9 +688,9 @@ export const ScreenBrowseDatasets: React.FC = () => {
             >
               <div className="image-layer hr-layer">
                 <img
-                  src={currentHrUrl}
+                  src={hrUrl}
                   alt="HR Ground Truth"
-                  style={imgTransform(true)}
+                  style={alignStyle}
                   onError={(e) => {
                     (e.currentTarget as HTMLImageElement).src = FALLBACK_IMG;
                   }}
@@ -661,9 +705,9 @@ export const ScreenBrowseDatasets: React.FC = () => {
                 }}
               >
                 <img
-                  src={currentLrUrl}
+                  src={lrUrl}
                   alt="LR Degradation"
-                  style={imgTransform(true)}
+                  style={alignStyle}
                   onError={(e) => {
                     (e.currentTarget as HTMLImageElement).src = FALLBACK_IMG;
                   }}
@@ -680,15 +724,15 @@ export const ScreenBrowseDatasets: React.FC = () => {
           </div>
         )}
 
-        {viewMode === "split" && (
+        {(!pairLoading || hrUrl || lrUrl) && viewMode === "split" && (
           <div className="canvas-wrapper" onMouseDown={onCanvasMouseDown} onMouseMove={onCanvasMouseMove} onMouseUp={stopPan} onMouseLeave={stopPan}>
             <div className="side-by-side-container">
               <div className="split-pane">
                 <span className="badge-tag tag-lr">LR (Degraded)</span>
                 <img
-                  src={currentLrUrl}
+                  src={lrUrl}
                   alt="LR Degraded"
-                  style={imgTransform(true)}
+                  style={imgZoomStyle}
                   onError={(e) => {
                     (e.currentTarget as HTMLImageElement).src = FALLBACK_IMG;
                   }}
@@ -697,9 +741,9 @@ export const ScreenBrowseDatasets: React.FC = () => {
               <div className="split-pane">
                 <span className="badge-tag tag-hr">HR (Ground Truth)</span>
                 <img
-                  src={currentHrUrl}
+                  src={hrUrl}
                   alt="HR Ground Truth"
-                  style={imgTransform(true)}
+                  style={imgZoomStyle}
                   onError={(e) => {
                     (e.currentTarget as HTMLImageElement).src = FALLBACK_IMG;
                   }}
@@ -721,12 +765,17 @@ export const ScreenBrowseDatasets: React.FC = () => {
               {!showHealthLoading && showHealthReport === null && (
                 <span className="health-report-status unchecked">No report</span>
               )}
-              {!showHealthLoading && showHealthReport !== null && showHealthReport.black_frames.length === 0 && (showHealthReport.unreadable?.length ?? 0) === 0 && (
+              {!showHealthLoading && showHealthReport !== null && showHealthReport.black_frames.length === 0 && (showHealthReport.unreadable?.length ?? 0) === 0 && (showHealthReport.suspicious_frames?.length ?? 0) === 0 && (showHealthReport.scale_mismatches?.length ?? 0) === 0 && (
                 <span className="health-report-status ok">OK</span>
               )}
-              {!showHealthLoading && showHealthReport !== null && (showHealthReport.black_frames.length > 0 || (showHealthReport.unreadable?.length ?? 0) > 0) && (
+              {!showHealthLoading && showHealthReport !== null && (showHealthReport.black_frames.length > 0 || (showHealthReport.unreadable?.length ?? 0) > 0 || (showHealthReport.suspicious_frames?.length ?? 0) > 0 || (showHealthReport.scale_mismatches?.length ?? 0) > 0) && (
                 <span className="health-report-status issues">
-                  {(showHealthReport.black_frames.length + (showHealthReport.unreadable?.length ?? 0))} issue{(showHealthReport.black_frames.length + (showHealthReport.unreadable?.length ?? 0)) !== 1 ? "s" : ""}
+                  {[
+                    showHealthReport.black_frames.length > 0 && `${showHealthReport.black_frames.length} black`,
+                    (showHealthReport.suspicious_frames?.length ?? 0) > 0 && `${showHealthReport.suspicious_frames.length} suspect`,
+                    (showHealthReport.scale_mismatches?.length ?? 0) > 0 && `${showHealthReport.scale_mismatches.length} scale`,
+                    (showHealthReport.unreadable?.length ?? 0) > 0 && `${showHealthReport.unreadable.length} corrupt`,
+                  ].filter(Boolean).join(", ")}
                 </span>
               )}
               <button className="health-report-run-btn" onClick={handleHealthReport} disabled={isJobOnCurrent}>
@@ -751,13 +800,58 @@ export const ScreenBrowseDatasets: React.FC = () => {
             {showHealthReport !== null && !showHealthLoading && (
               <div className="health-report-body">
                 <div className="health-report-summary">
-                  <span>Total images: {showHealthReport.total_images.toLocaleString()}</span>
+                  <span>Pairs: {(showHealthReport.total_pairs ?? showHealthReport.total_hr_images ?? 0).toLocaleString()}</span>
+                  <span>HR: {showHealthReport.total_hr_images?.toLocaleString() ?? "—"}</span>
+                  <span>LR: {showHealthReport.total_lr_images?.toLocaleString() ?? "—"}</span>
                   <span>Threshold: {showHealthReport.computed_threshold}</span>
-                  <span>Black frames: {showHealthReport.black_frames.length}</span>
+                  <span>Black: {showHealthReport.black_frames.length}</span>
+                  {(showHealthReport.suspicious_frames?.length ?? 0) > 0 && (
+                    <span className="health-report-summary-unreadable">Suspicious: {showHealthReport.suspicious_frames.length}</span>
+                  )}
+                  {(showHealthReport.scale_mismatches?.length ?? 0) > 0 && (
+                    <span className="health-report-summary-unreadable">Scale mismatches: {showHealthReport.scale_mismatches.length}</span>
+                  )}
                   {(showHealthReport.unreadable?.length ?? 0) > 0 && (
                     <span className="health-report-summary-unreadable">Unreadable: {showHealthReport.unreadable.length}</span>
                   )}
                 </div>
+                {showHealthReport.suspicious_frames?.length > 0 && (
+                  <div className="health-report-blackframes">
+                    <div className="health-report-blackframes-toolbar">
+                      <span className="health-report-blackframes-label">
+                        {showHealthReport.suspicious_frames.length} suspicious {"("}borderline low brightness{")"}
+                      </span>
+                    </div>
+                    <div className="health-report-blackframes-list">
+                      {showHealthReport.suspicious_frames.map((rel) => {
+                        const mean = showHealthReport.frame_means?.[rel];
+                        return (
+                          <div key={rel} className="health-report-blackframe-item" style={{ cursor: "default", opacity: 0.75 }}>
+                            <span className="health-report-blackframe-name">
+                              {rel}{mean != null ? ` (mean=${mean})` : ""}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+                {showHealthReport.scale_mismatches?.length > 0 && (
+                  <div className="health-report-blackframes">
+                    <div className="health-report-blackframes-toolbar">
+                      <span className="health-report-blackframes-label">
+                        {showHealthReport.scale_mismatches.length} scale mismatch(es)
+                      </span>
+                    </div>
+                    <div className="health-report-blackframes-list">
+                      {showHealthReport.scale_mismatches.map((msg) => (
+                        <div key={msg} className="health-report-blackframe-item" style={{ cursor: "default", color: "var(--red)" }}>
+                          <span className="health-report-blackframe-name">{msg}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {(showHealthReport.unreadable?.length ?? 0) > 0 && (
                   <div className="health-report-blackframes">
                     <div className="health-report-blackframes-toolbar">
@@ -810,16 +904,21 @@ export const ScreenBrowseDatasets: React.FC = () => {
                       </div>
                     </div>
                     <div className="health-report-blackframes-list">
-                      {showHealthReport.black_frames.map((filename) => (
-                        <label key={filename} className="health-report-blackframe-item">
-                          <input
-                            type="checkbox"
-                            checked={selectedBlackFrames.has(filename)}
-                            onChange={() => toggleBlackFrame(filename)}
-                          />
-                          <span className="health-report-blackframe-name">{filename}</span>
-                        </label>
-                      ))}
+                      {showHealthReport.black_frames.map((filename) => {
+                        const mean = showHealthReport.frame_means?.[filename];
+                        return (
+                          <label key={filename} className="health-report-blackframe-item">
+                            <input
+                              type="checkbox"
+                              checked={selectedBlackFrames.has(filename)}
+                              onChange={() => toggleBlackFrame(filename)}
+                            />
+                            <span className="health-report-blackframe-name">
+                              {filename}{mean != null ? ` (mean=${mean})` : ""}
+                            </span>
+                          </label>
+                        );
+                      })}
                     </div>
                   </div>
                 )}

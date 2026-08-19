@@ -142,12 +142,13 @@ def _validate_scale(scale: float) -> int:
 
 def _write_manifest(dataset_dir: Path, pairs: list[dict], scale: int) -> Path:
     """Write ``manifest.json`` in the canonical dataset_builder format."""
+    config_block = {
+        "scale": scale,
+        "frame_rate": None,
+        "video_source": "preprocessed_folder",
+    }
     manifest_data = {
-        "config": {
-            "scale": scale,
-            "frame_rate": None,
-            "video_source": "preprocessed_folder",
-        },
+        "config": config_block,
         "pairs": pairs,
     }
     manifest_path = dataset_dir / "manifest.json"
@@ -199,6 +200,7 @@ def build_manifest(dataset_dir: Path, scale: float) -> dict:
 
     _write_manifest(dataset_dir, pairs, scale_int)
     return {"path": str(dataset_dir), "scale": scale_int, "num_pairs": len(pairs)}
+
 
 def build_from_video(
         video_path: Path,

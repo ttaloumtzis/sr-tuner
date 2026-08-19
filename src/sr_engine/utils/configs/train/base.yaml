@@ -35,6 +35,13 @@ lr_scheduler: cosine
 warmup_steps: 2000
 min_lr: 1e-7
 
+# Run one synthetic forward+backward before the epoch loop so the one-time
+# MIOpen/cuDNN kernel autotune search happens up-front instead of stalling the
+# first epoch's batches. Chosen kernels are reused for the whole run and cached
+# in MIOpen's find-db for subsequent runs. Disable for very short runs where
+# the warmup cost outweighs the per-step speedup.
+benchmark_warmup: true
+
 # --- Mixed precision ---
 dtype: float32  # "bf16" enables bfloat16, "float16" enables fp16 + GradScaler
 

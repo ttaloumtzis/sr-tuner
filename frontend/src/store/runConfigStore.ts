@@ -48,6 +48,7 @@ interface RunConfigState {
   numWorkers: number;
   metricsFrequency: number;
   writeMetricsFile: boolean;
+  benchmarkWarmup: boolean;
   validationEnabled: boolean;
   validationSplit: number;
   validationSplitSeed: number;
@@ -83,6 +84,7 @@ interface RunConfigState {
   setNumWorkers: (v: number) => void;
   setMetricsFrequency: (v: number) => void;
   setWriteMetricsFile: (v: boolean) => void;
+  setBenchmarkWarmup: (v: boolean) => void;
   setValidationEnabled: (v: boolean) => void;
   setValidationSplit: (v: number) => void;
   setValidationSplitSeed: (v: number) => void;
@@ -149,6 +151,7 @@ export const useRunConfigStore = create<RunConfigState>()(
       numWorkers: 4,
       metricsFrequency: 1,
       writeMetricsFile: true,
+      benchmarkWarmup: true,
       validationEnabled: true,
       validationSplit: 0.1,
       validationSplitSeed: 1234,
@@ -184,6 +187,7 @@ export const useRunConfigStore = create<RunConfigState>()(
       setNumWorkers: (v) => set({ numWorkers: v }),
       setMetricsFrequency: (v) => set({ metricsFrequency: v }),
       setWriteMetricsFile: (v) => set({ writeMetricsFile: v }),
+      setBenchmarkWarmup: (v) => set({ benchmarkWarmup: v }),
       setValidationEnabled: (v) => set({ validationEnabled: v }),
       setValidationSplit: (v) => set({ validationSplit: v }),
       setValidationSplitSeed: (v) => set({ validationSplitSeed: v }),

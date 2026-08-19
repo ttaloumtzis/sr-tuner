@@ -18,16 +18,20 @@ function HardwareTile({ children, color, history }: {
   const trend = trendOf(history);
   return (
     <div style={{
-      display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
+      display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
       background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)",
-      padding: "18px 20px 14px", minWidth: 130,
+      padding: "14px 16px 11px", minWidth: 104,
     }}>
       {children}
-      <div style={{ display: "flex", alignItems: "center", gap: 6, minHeight: 20 }}>
-        <Sparkline values={history} color={color} width={54} height={20} padding={2.5} />
-        {trend && trend.dir !== "flat" && (
+      <div style={{ display: "flex", alignItems: "center", gap: 6, minHeight: 18 }}>
+        <Sparkline values={history} color={color} width={43} height={16} padding={2} />
+        {!trend || trend.dir === "flat" ? (
+          <span style={{ fontSize: 8, fontFamily: "var(--font-mono)", color: "var(--dim)" }}>
+            - 0.0%
+          </span>
+        ) : (
           <span style={{
-            fontSize: 9.5, fontFamily: "var(--font-mono)",
+            fontSize: 8, fontFamily: "var(--font-mono)",
             color: trend.dir === "up" ? "var(--green)" : "var(--red)",
           }}>
             {trend.dir === "up" ? "▲" : "▼"} {trend.pct.toFixed(1)}%
@@ -59,12 +63,12 @@ export function HardwarePanel() {
     : fmtGb(ramGb);
 
   // Rolling windows drive the trend arrow + sparkline under each gauge —
-  // these readings aren't stored as history arrays, just live snapshots.
-  const gpuHistory  = useRollingHistory(gpuUtil);
-  const vramHistory = useRollingHistory(vramPct);
-  const tempHistory = useRollingHistory(temp);
-  const cpuHistory  = useRollingHistory(cpuUtil);
-  const ramHistory  = useRollingHistory(ramPct);
+  // these live in the store so they persist across tab switches.
+  const gpuHistory  = useRollingHistory((s) => s.gpuUtilHistory);
+  const vramHistory = useRollingHistory((s) => s.vramPctHistory);
+  const tempHistory = useRollingHistory((s) => s.tempHistory);
+  const cpuHistory  = useRollingHistory((s) => s.cpuUtilHistory);
+  const ramHistory  = useRollingHistory((s) => s.ramPctHistory);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
@@ -85,30 +89,30 @@ export function HardwarePanel() {
         )
       } />
       <div style={{
-        padding: "10px 28px 20px", display: "flex", flexWrap: "wrap", gap: 14,
+        padding: "8px 22px 16px", display: "flex", flexWrap: "wrap", gap: 11,
         flex: 1, justifyContent: "center", alignContent: "center",
       }}>
         {hasGpu && (
           <HardwareTile color="var(--red)" history={gpuHistory}>
-            <RadialGauge size={104} label="GPU" value={fmtPct(gpuUtil)} pct={gpuUtil} color={hwColor(gpuUtil, 80, 95)} />
+            <RadialGauge size={83} label="GPU" value={fmtPct(gpuUtil)} pct={gpuUtil} color={hwColor(gpuUtil, 80, 95)} />
           </HardwareTile>
         )}
         {hasGpu && (
           <HardwareTile color="var(--blue)" history={vramHistory}>
-            <RadialGauge size={104} label="VRAM" value={vramPct != null ? `${Math.round(vramPct)}%` : "—"}
+            <RadialGauge size={83} label="VRAM" value={vramPct != null ? `${Math.round(vramPct)}%` : "—"}
               pct={vramPct} color="var(--blue)" sub={vramLabel} />
           </HardwareTile>
         )}
         {hasGpu && (
           <HardwareTile color="var(--green)" history={tempHistory}>
-            <TempBadge size={104} temp={temp} />
+            <TempBadge size={83} temp={temp} />
           </HardwareTile>
         )}
         <HardwareTile color="var(--amber)" history={cpuHistory}>
-          <RadialGauge size={104} label="CPU" value={fmtPct(cpuUtil)} pct={cpuUtil} color={hwColor(cpuUtil, 80, 95)} />
+          <RadialGauge size={83} label="CPU" value={fmtPct(cpuUtil)} pct={cpuUtil} color={hwColor(cpuUtil, 80, 95)} />
         </HardwareTile>
         <HardwareTile color="var(--pink)" history={ramHistory}>
-          <RadialGauge size={104} label="RAM" value={ramPct != null ? `${Math.round(ramPct)}%` : "—"}
+          <RadialGauge size={83} label="RAM" value={ramPct != null ? `${Math.round(ramPct)}%` : "—"}
             pct={ramPct} color="var(--pink)" sub={ramLabel} />
         </HardwareTile>
       </div>

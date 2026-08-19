@@ -610,6 +610,7 @@ export function ScreenTrainingSetup() {
         validation_dataset: s.selectedValidationDataset ?? undefined,
         metrics_frequency: s.metricsFrequency,
         write_metrics_file: s.writeMetricsFile,
+        benchmark_warmup: s.benchmarkWarmup,
         perceptual_weight: undefined,
         losses: s.lossConfig,
         warmup_steps: s.schedule.warmupSteps,
@@ -620,6 +621,7 @@ export function ScreenTrainingSetup() {
       useTrainingStore.getState().setActiveRun(res.job_id);
       useTrainingStore.getState().setActiveRunDir(res.run_id ?? null);
       useTrainingStore.getState().setStatus("running");
+      useTrainingStore.getState().setStage("starting");
       useTrainingStore.getState().setLaunchConfig({
         totalEpochs: s.schedule.totalEpochs,
         batchSize: s.batchSize,
@@ -1065,6 +1067,12 @@ export function ScreenTrainingSetup() {
               <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 10 }}>
                 <Toggle on={s.writeMetricsFile} onChange={() => s.setWriteMetricsFile(!s.writeMetricsFile)} />
                 <span style={{ fontSize: 11, color: "var(--muted)" }}>Write metrics.jsonl file</span>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
+                <Toggle on={s.benchmarkWarmup} onChange={() => s.setBenchmarkWarmup(!s.benchmarkWarmup)} />
+                <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                  Pre-warm GPU kernels before training
+                </span>
               </div>
             </div>
           </div>

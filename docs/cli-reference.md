@@ -91,7 +91,7 @@ The pipeline reads the dataset config YAML and applies the selected degradation 
 | `--input PATH` | required | Input video file or preprocessed dataset directory |
 | `--output PATH` | auto | Output dataset directory |
 | `--config PATH` | built-in | Dataset config YAML path |
-| `--degradations TEXT` | config | Comma-separated enabled degradations: `blur,noise,jpeg,jpeg2000,color-jitter`. Overrides per-section `enabled` fields from config |
+| `--degradations TEXT` | config | Comma-separated enabled degradations: `blur,noise,jpeg,jpeg2000,color-jitter`. Overrides per-section `enabled` fields from config. Unknown names are rejected |
 | `--resize-method TEXT` | config | Downsampling method: `area`, `bicubic`, `bilinear`, `lanczos`, `nearest` (default: `area`). Overrides config |
 | `--dump-config` | false | Print final merged config and exit |
 

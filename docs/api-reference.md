@@ -37,6 +37,8 @@ The API is organized into route groups (`/api/workspace`, `/api/models`, `/api/t
 | POST | `/api/infer/start` | Start inference job | Async |
 | **Datasets** |||
 | GET | `/api/datasets` | List datasets | Sync |
+| POST | `/api/datasets/inspect` | Inspect pre-extracted folder | Sync |
+| POST | `/api/datasets/finalize` | Write manifest | Sync |
 | POST | `/api/datasets/build` | Build dataset | Async |
 | POST | `/api/datasets/validate` | Validate dataset (sync) | Sync |
 | POST | `/api/datasets/validate-async` | Validate dataset (async) | Async |
@@ -635,16 +637,40 @@ Build a dataset from a video file or preprocessed directory.
 | `input` | string | Yes | — | Video file or preprocessed directory |
 | `out` | string\|null | No | Auto | Output dataset directory |
 | `config` | string\|null | No | Built-in | Dataset config YAML path |
-| `degradations` | string\|null | No | Config | Comma-separated: `blur,noise,jpeg,jpeg2000,color-jitter` |
+| `degradations` | string\|null | No | Config | Comma-separated: `blur,noise,jpeg,jpeg2000,color-jitter`. Unknown names are rejected |
 | `config_overrides` | dict\|null | No | — | Deep-merged overrides for degradation config |
 
 **Input type behaviour:**
 - Video file: extracts frames, applies degradation, writes HR/LR pairs
-- Directory: re-validates and rebuilds manifest
+- Directory: re-validates and rebuilds the manifest (the source folder is never modified)
 
 **Response:**
 ```json
 {"job_id": "dataset_build_1728000000_abc12345", "status": "accepted"}
+```
+
+---
+
+### POST /api/datasets/finalize
+
+Write `manifest.json` for a pre-extracted dataset inside the workspace.
+
+**Request Body:**
+```json
+{
+  "path": "/home/user/workspace/datasets/imported_set",
+  "scale": 4
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `path` | string | Yes | Dataset directory path (must be inside the workspace) |
+| `scale` | number | Yes | Super-resolution scale (must be near-integer) |
+
+**Response:**
+```json
+{"path": "/home/user/workspace/datasets/imported_set", "scale": 4, "num_pairs": 1200}
 ```
 
 ---

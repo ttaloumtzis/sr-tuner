@@ -3,6 +3,8 @@
 import json
 import struct
 
+import cv2
+import numpy as np
 import pytest
 
 from sr_engine.data.dataset_health import (
@@ -24,6 +26,22 @@ def _make_truncated_png(path, declared_w=2592, declared_h=1536):
     partial_idat = b"IDAT" + b"\x78\x9c" + b"\x00" * 4096
     idat_chunk = struct.pack(">I", 4098) + partial_idat
     path.write_bytes(sig + ihdr_chunk + idat_chunk)
+
+
+def _make_black_image(path, w=64, h=64):
+    """Write a black (all zeros) RGB image to *path*."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    img = np.zeros((h, w, 3), dtype=np.uint8)
+    cv2.imwrite(str(path), img)
+
+
+def _make_near_black_image(path, w=64, h=64, mean_val=2.0):
+    """Write a near-black image with low pixel variation."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    img = np.full((h, w, 3), int(mean_val), dtype=np.uint8)
+    noise = np.random.default_rng(42).integers(-2, 3, (h, w, 3), dtype=np.int8)
+    img = np.clip(img.astype(np.int16) + noise, 0, 255).astype(np.uint8)
+    cv2.imwrite(str(path), img)
 
 
 class TestFindUnreadableImages:
@@ -130,6 +148,12 @@ class TestCheckDatasetHealth:
         report = check_dataset_health(tmp_path)
         assert report is not None
         assert report["unreadable"] == []
+        assert report["total_pairs"] == 2
+        assert report["total_hr_images"] == 2
+        assert report["total_lr_images"] == 2
+        assert report["black_frames"] == []
+        assert report["suspicious_frames"] == []
+        assert report["scale_mismatches"] == []
 
     def test_single_image(self, tmp_path):
         """A directory with a single pair should work."""
@@ -173,10 +197,16 @@ class TestCheckDatasetHealth:
             def update(self, n=1):
                 self.updates += n
 
+            def finish(self):
+                pass
+
         d = _create_dataset_with_manifest(tmp_path, num_pairs=2)
         reporter = RecordingReporter()
         check_dataset_health(d, reporter=reporter)
-        assert reporter.updates == 2 + 4  # 2 metric frames + 2 HR + 2 LR integrity files
+        # 2 HR metrics + 2 LR metrics + 4 integrity files = 8 updates
+        assert reporter.updates == 8, f"Expected 8 updates, got {reporter.updates}"
+        assert any(desc == "Analyzing HR Images" for _, desc in reporter.starts)
+        assert any(desc == "Analyzing LR Images" for _, desc in reporter.starts)
         assert any(desc == "Checking Image Integrity" for _, desc in reporter.starts)
 
     def test_old_report_normalized_on_load(self, tmp_path):
@@ -194,6 +224,88 @@ class TestCheckDatasetHealth:
         loaded = load_health_report(tmp_path)
         assert loaded is not None
         assert loaded["unreadable"] == []
+
+    def test_black_frames_in_lr_detected(self, tmp_path):
+        """Black frames in LR must be flagged even when HR is fine."""
+        from conftest import _make_image
+        hr = tmp_path / "HR"
+        lr = tmp_path / "LR"
+        hr.mkdir(parents=True)
+        lr.mkdir(parents=True)
+        _make_image(hr / "f0000.png", 256, 256)
+        _make_image(lr / "f0000.png", 64, 64)
+        _make_image(hr / "f0001.png", 256, 256)
+        _make_black_image(lr / "f0001.png", 64, 64)
+        report = check_dataset_health(tmp_path)
+        assert report is not None
+        assert "LR/f0001.png" in report["black_frames"], (
+            f"Expected LR/f0001.png in black_frames, got: {report['black_frames']}"
+        )
+        assert "HR/f0001.png" not in report["black_frames"]
+
+    def test_black_frames_in_hr_detected(self, tmp_path):
+        """Black frames in HR must be flagged (both sides checked)."""
+        from conftest import _make_image
+        hr = tmp_path / "HR"
+        lr = tmp_path / "LR"
+        hr.mkdir(parents=True)
+        lr.mkdir(parents=True)
+        _make_image(hr / "f0000.png", 256, 256)
+        _make_image(lr / "f0000.png", 64, 64)
+        _make_black_image(hr / "f0001.png", 256, 256)
+        _make_image(lr / "f0001.png", 64, 64)
+        report = check_dataset_health(tmp_path)
+        assert "HR/f0001.png" in report["black_frames"], (
+            f"Expected HR/f0001.png in black_frames, got: {report['black_frames']}"
+        )
+
+    def test_suspicious_frames_listed(self, tmp_path):
+        """Borderline low-brightness frames go to suspicious_frames."""
+        from conftest import _make_image
+        hr = tmp_path / "HR"
+        lr = tmp_path / "LR"
+        hr.mkdir(parents=True)
+        lr.mkdir(parents=True)
+        _make_image(hr / "f0000.png", 256, 256)
+        _make_image(lr / "f0000.png", 64, 64)
+        _make_near_black_image(hr / "f0001.png", 256, 256, mean_val=3.0)
+        _make_image(lr / "f0001.png", 64, 64)
+        report = check_dataset_health(tmp_path)
+        assert "HR/f0001.png" in report.get("suspicious_frames", []) or \
+               "HR/f0001.png" in report.get("black_frames", []), (
+            f"Expected HR/f0001.png in black or suspicious, got black={report['black_frames']} "
+            f"suspicious={report['suspicious_frames']}"
+        )
+
+    def test_scale_mismatch_detected(self, tmp_path):
+        """LR with wrong dimensions is reported as a scale mismatch."""
+        from conftest import _make_image, _create_manifest
+        hr = tmp_path / "HR"
+        lr = tmp_path / "LR"
+        hr.mkdir(parents=True)
+        lr.mkdir(parents=True)
+        _make_image(hr / "f0000.png", 256, 256)
+        _make_image(lr / "f0000.png", 64, 64)
+        _create_manifest(tmp_path, scale=4)
+        report = check_dataset_health(tmp_path)
+        assert report is not None
+        assert report["scale_mismatches"] == []
+
+    def test_scale_mismatch_detected_wrong_size(self, tmp_path):
+        """LR with wrong dimensions is reported as a scale mismatch."""
+        from conftest import _make_image, _create_manifest
+        hr = tmp_path / "HR"
+        lr = tmp_path / "LR"
+        hr.mkdir(parents=True)
+        lr.mkdir(parents=True)
+        _make_image(hr / "f0000.png", 256, 256)
+        _make_image(lr / "f0000.png", 128, 128)  # wrong: should be 64x64 for scale=4
+        _create_manifest(tmp_path, scale=4)
+        report = check_dataset_health(tmp_path)
+        assert len(report["scale_mismatches"]) == 1, (
+            f"Expected 1 scale mismatch, got: {report['scale_mismatches']}"
+        )
+        assert "LR/f0000.png" in report["scale_mismatches"][0]
 
 
 class TestPrunePairs:
