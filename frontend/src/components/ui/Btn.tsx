@@ -1,4 +1,4 @@
-import { useState, CSSProperties } from "react";
+import { CSSProperties } from "react";
 
 interface BtnProps {
   children: React.ReactNode;
@@ -7,6 +7,7 @@ interface BtnProps {
   onClick?: () => void;
   small?: boolean;
   full?: boolean;
+  centered?: boolean;
   disabled?: boolean;
   title?: string;
   style?: CSSProperties;
@@ -20,42 +21,21 @@ export function Btn({
   onClick,
   small,
   full,
+  centered,
   disabled,
   title,
   style,
   type = "button",
 }: BtnProps) {
-  const [hovered, setHovered] = useState(false);
-
-  const solidColor = color ?? "var(--green)";
-  const bg =
-    variant === "solid"
-      ? disabled
-        ? "var(--bg2)"
-        : hovered
-        ? `color-mix(in srgb, ${solidColor} 87%, transparent)`
-        : solidColor
-      : disabled
-      ? "var(--bg2)"
-      : hovered
-      ? "var(--bg2)"
-      : "var(--bg3)";
-
-  const border =
-    variant === "solid"
-      ? "transparent"
-      : color
-      ? color + "66"
-      : "var(--border)";
-
-  const textColor =
-    disabled
-      ? "var(--dim)"
-      : variant === "solid"
-      ? "#0d0f11"
-      : hovered
-      ? color ?? "var(--text)"
-      : color ?? "var(--muted)";
+  const cls = [
+    "btn",
+    variant === "solid" ? "btn-solid" : color ? "btn-colored" : null,
+    small && "btn-small",
+    full && "btn-full",
+    centered && "btn-center",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <button
@@ -63,25 +43,13 @@ export function Btn({
       onClick={onClick}
       disabled={disabled}
       title={title}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{
-        background: bg,
-        border: `1px solid ${disabled ? "var(--border)" : border}`,
-        color: textColor,
-        fontSize: small ? 10 : 12,
-        fontWeight: variant === "solid" ? 600 : 400,
-        padding: small ? "3px 8px" : full ? "7px" : "4px 12px",
-        borderRadius: "var(--radius-sm)",
-        cursor: disabled ? "default" : "pointer",
-        fontFamily: "var(--font-sans)",
-        width: full ? "100%" : undefined,
-        whiteSpace: "nowrap",
-        opacity: disabled ? 0.5 : 1,
-        transition: "var(--transition-fast)",
-        flexShrink: 0,
-        ...style,
-      }}
+      className={cls}
+      style={
+        {
+          "--btn-color": color ?? "var(--green)",
+          ...style,
+        } as CSSProperties
+      }
     >
       {children}
     </button>

@@ -2,33 +2,12 @@
 // Columns: run name, status, total epochs, best PSNR, best loss, duration.
 // Displays "—" for any run with no recorded history.
 
-import type { SRProjRun, RunStatus } from "../../lib/srproj";
+import type { SRProjRun } from "../../lib/srproj";
+import { STATUS_COLOR } from "../../lib/runStatus";
+import { fmt, fmtDuration } from "../../lib/format";
 
 interface Props {
   runs: SRProjRun[];
-}
-
-const STATUS_COLOR: Record<RunStatus, string> = {
-  running:     "var(--green)",
-  finished:    "var(--green)",
-  failed:      "var(--red)",
-  stopped:     "var(--amber)",
-  interrupted: "var(--dim)",
-};
-
-function fmt(n: number | null, decimals = 2): string {
-  return n != null ? n.toFixed(decimals) : "—";
-}
-
-function fmtDuration(run: SRProjRun): string {
-  if (!run.started_at) return "—";
-  const endMs = run.completed_at
-    ? new Date(run.completed_at).getTime()
-    : Date.now();
-  const sec = Math.floor((endMs - new Date(run.started_at).getTime()) / 1000);
-  if (sec < 60) return `${sec}s`;
-  if (sec < 3600) return `${Math.floor(sec / 60)}m`;
-  return `${(sec / 3600).toFixed(1)}h`;
 }
 
 const TH_STYLE: React.CSSProperties = {

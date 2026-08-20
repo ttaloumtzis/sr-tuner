@@ -25,37 +25,19 @@ export function CollapsibleSection({
   const [open, setOpen] = useState(defaultOpen);
 
   return (
-    <div
-      style={{
-        background: "var(--bg1)",
-        border: "1px solid var(--border)",
-        borderRadius: "var(--radius-md)",
-        overflow: "hidden",
-        ...style,
-      }}
-    >
+    <div className="collapsible" style={style}>
       <button
         onClick={() => setOpen((o) => !o)}
-        style={{
-          all: "unset",
-          boxSizing: "border-box",
-          width: "100%",
-          padding: "7px 10px",
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          cursor: "pointer",
-          borderBottom: open ? "1px solid var(--border)" : "none",
-        }}
+        className={`collapsible-header${open ? " collapsible-header-open" : ""}`}
       >
         {icon && (
-          <span style={{ color: "var(--muted)", display: "flex", flexShrink: 0 }}>{icon}</span>
+          <span className="collapsible-icon">{icon}</span>
         )}
-        <span style={{ fontSize: 11, color: "var(--text)", fontWeight: 500 }}>{title}</span>
+        <span className="collapsible-title">{title}</span>
         {subtitle && (
-          <span style={{ fontSize: 10, color: "var(--dim)" }}>{subtitle}</span>
+          <span className="collapsible-subtitle">{subtitle}</span>
         )}
-        <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+        <span className="collapsible-right">
           {badge}
           <IconChevron
             size={11}
@@ -64,7 +46,7 @@ export function CollapsibleSection({
           />
         </span>
       </button>
-      {open && <div style={{ padding: 10, ...contentStyle }}>{children}</div>}
+      {open && <div className="collapsible-body" style={contentStyle}>{children}</div>}
     </div>
   );
 }

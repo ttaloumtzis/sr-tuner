@@ -14,18 +14,13 @@ export function StackedBar({ segments, height = 8 }: StackedBarProps) {
   const total = segments.reduce((sum, s) => sum + s.value, 0);
   if (total <= 0) {
     return (
-      <div style={{ height, borderRadius: height / 2, background: "var(--bg3)" }} />
+      <div className="stacked-bar" style={{ height, borderRadius: height / 2 }} />
     );
   }
   return (
     <div
-      style={{
-        display: "flex",
-        height,
-        borderRadius: height / 2,
-        overflow: "hidden",
-        background: "var(--bg3)",
-      }}
+      className="stacked-bar"
+      style={{ height, borderRadius: height / 2 }}
     >
       {segments.map((s, i) => {
         const pct = (s.value / total) * 100;
@@ -34,10 +29,10 @@ export function StackedBar({ segments, height = 8 }: StackedBarProps) {
           <div
             key={i}
             title={`${s.label}: ${s.value.toFixed(2)} GB`}
+            className="stacked-bar-seg"
             style={{
               width: `${pct}%`,
               background: s.color,
-              transition: "width 0.3s ease",
             }}
           />
         );

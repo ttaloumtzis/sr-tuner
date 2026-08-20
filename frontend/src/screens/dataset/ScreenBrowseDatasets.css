@@ -858,6 +858,16 @@
   flex-shrink: 0;
 }
 
+.health-report-blackframe-item.readonly {
+  cursor: default;
+  opacity: 0.75;
+}
+
+.health-report-blackframe-item.issue {
+  cursor: default;
+  color: var(--red);
+}
+
 .health-report-blackframe-name {
   overflow: hidden;
   text-overflow: ellipsis;

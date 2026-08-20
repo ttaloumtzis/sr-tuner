@@ -87,28 +87,11 @@ export function TabBar() {
   const isTraining = trainingStatus === "running" || trainingStatus === "paused";
 
   return (
-    <>
-      <style>{`
-        @keyframes tabbar-pulse {
-          0%, 100% { opacity: 1; transform: scale(1); }
-          50%       { opacity: 0.4; transform: scale(0.7); }
-        }
-      `}</style>
-      <div
-        role="tablist"
-        style={{
-          height: "var(--tabbar-h)",
-          display: "flex",
-          alignItems: "stretch",
-          background: "var(--bg1)",
-          borderBottom: "1px solid var(--border)",
-          padding: "0 8px",
-          gap: 2,
-          flexShrink: 0,
-          overflowX: "auto",
-        }}
-      >
-        {TABS.map((tab) => (
+    <div
+      role="tablist"
+      className="bar bar-stretch tabbar"
+    >
+      {TABS.map((tab) => (
           <TabButton
             key={tab.id}
             tab={tab}
@@ -117,7 +100,6 @@ export function TabBar() {
             onClick={() => setActiveTab(tab.id)}
           />
         ))}
-      </div>
-    </>
+    </div>
   );
 }

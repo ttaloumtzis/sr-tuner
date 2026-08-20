@@ -23,16 +23,10 @@ export function InlineAlert({ tone = "amber", icon = true, children }: InlineAle
   const c = TONE_MAP[tone];
   return (
     <div
+      className="inline-alert"
       style={{
-        display: "flex",
-        alignItems: "flex-start",
-        gap: 6,
-        padding: "6px 8px",
         background: c.bg,
         border: `1px solid ${c.border}`,
-        borderRadius: "var(--radius-sm)",
-        fontSize: 10,
-        lineHeight: 1.4,
         color: c.fg,
       }}
     >
@@ -41,7 +35,7 @@ export function InlineAlert({ tone = "amber", icon = true, children }: InlineAle
           ? <IconCheck size={12} color={c.fg} strokeWidth={3} style={{ flexShrink: 0, marginTop: 1 }} />
           : <IconAlert size={12} color={c.fg} style={{ flexShrink: 0, marginTop: 1 }} />
       )}
-      <div style={{ minWidth: 0 }}>{children}</div>
+      <div className="inline-alert-body">{children}</div>
     </div>
   );
 }

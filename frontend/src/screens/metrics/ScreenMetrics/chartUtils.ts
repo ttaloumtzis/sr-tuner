@@ -3,27 +3,7 @@ export const GAN_ARCH = "rrdb_esrgan";
 
 // ── Formatting ────────────────────────────────────────────────────────────
 
-export function fmt(n: number | null, decimals = 4): string {
-  if (n == null) return "—";
-  return n.toFixed(decimals);
-}
-
-export function fmtPct(n: number | null): string {
-  if (n == null) return "—";
-  return `${n.toFixed(1)}%`;
-}
-
-export function fmtGb(n: number | null): string {
-  if (n == null) return "—";
-  return `${n.toFixed(1)} GB`;
-}
-
-export function formatEta(sec: number | null): string {
-  if (sec == null || sec <= 0) return "";
-  if (sec < 60) return `ETA ${Math.round(sec)}s`;
-  if (sec < 3600) return `ETA ${Math.round(sec / 60)}m`;
-  return `ETA ${(sec / 3600).toFixed(1)}h`;
-}
+export { fmt, fmtPct, fmtGb, formatEta } from "../../../lib/format";
 
 export function computeEtaSec(
   batch: number,

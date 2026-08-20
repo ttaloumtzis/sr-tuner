@@ -18,6 +18,8 @@ experiments/
 .tokensave/
 .claude/
 /checkpoints/
+node_modules/
+openspec/
 frontend/node_modules/
 src-tauri/target/
 src-tauri/binaries/*

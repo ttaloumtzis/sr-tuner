@@ -34,22 +34,13 @@ export function PathInput({
   };
 
   return (
-    <div style={{ display: "flex", gap: 6, minWidth: 0 }}>
+    <div className="path-input">
       <div
+        className={`path-input-field${value ? "" : " path-input-field-empty"}`}
         style={{
-          background: "var(--bg3)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--radius-sm)",
           padding: compact ? "4px 8px" : "6px 10px",
           fontSize: compact ? 10 : 12,
-          color: value ? "var(--text)" : "var(--dim)",
-          flex: 1,
-          minWidth: 0,
           fontFamily: mono ? "var(--font-mono)" : "var(--font-sans)",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-          outline: "none",
         }}
       >
         {value || placeholder}

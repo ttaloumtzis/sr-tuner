@@ -302,7 +302,8 @@ export function ScreenModelCreate() {
               full
               onClick={handleCreateInstance}
               disabled={!modelNameInput.trim()}
-              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}
+              centered
+              style={{ gap: 7 }}
             >
               <IconRocket size={13} color="#0d0f11" /> Create Instance
             </Btn>
@@ -310,9 +311,9 @@ export function ScreenModelCreate() {
         </Panel>
 
         <Panel title="Estimate">
-          <InfoRow label="Parameters" value={formatParamCount(paramsM)} mono />
-          <InfoRow label="Weights (f32)" value={`${weightFp32MB} MB`} mono />
-          <InfoRow label="Weights (f16)" value={`${weightFp16MB} MB`} mono />
+          <InfoRow label="Parameters" value={formatParamCount(paramsM)} mono labelSize={11} />
+          <InfoRow label="Weights (f32)" value={`${weightFp32MB} MB`} mono labelSize={11} />
+          <InfoRow label="Weights (f16)" value={`${weightFp16MB} MB`} mono labelSize={11} />
         </Panel>
 
         <YamlPanel yaml={yaml} copied={copied} onCopy={handleCopyYaml} />

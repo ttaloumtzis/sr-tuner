@@ -122,9 +122,9 @@ export function SubChart({ uid, chartKey, series, color, seriesEpochs, fullSerie
         const fullEpochAtHover = hoverFullIdx != null ? fullEpochs?.[hoverFullIdx] ?? null : null;
         const lines = [
           { text: epochAtHover != null ? `epoch ${epochAtHover}` : "—", col: "var(--muted)" },
-          { text: `patch ${fmt(series[hoverIdx])}`, col: color },
+          { text: `patch ${fmt(series[hoverIdx], 4)}`, col: color },
           ...(hoverFullVal != null
-            ? [{ text: `full ${fullEpochAtHover != null ? `e${fullEpochAtHover} ` : ""}${fmt(hoverFullVal)}`, col: fullCol }]
+            ? [{ text: `full ${fullEpochAtHover != null ? `e${fullEpochAtHover} ` : ""}${fmt(hoverFullVal, 4)}`, col: fullCol }]
             : []),
         ];
         const boxW = 90;

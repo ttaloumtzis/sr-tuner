@@ -34,28 +34,18 @@ export function Tooltip({ text, children }: TooltipProps) {
       ref={ref}
       onMouseEnter={show}
       onMouseLeave={() => setOpen(false)}
-      style={{ display: "inline-flex", alignItems: "center", cursor: "help", color: "var(--dim)" }}
+      className="tooltip-trigger"
     >
       {children ?? <IconInfo size={11} />}
       {open &&
         ReactDOM.createPortal(
           <div
+            className="tooltip-bubble"
             style={{
-              position: "fixed",
               top: pos.top,
               left: pos.left,
               transform: "translate(-50%, -100%)",
-              background: "var(--bg2)",
-              border: "1px solid var(--border2)",
-              borderRadius: "var(--radius-sm)",
-              padding: "6px 9px",
-              fontSize: 10.5,
-              lineHeight: 1.5,
-              color: "var(--muted)",
               maxWidth: TOOLTIP_WIDTH,
-              boxShadow: "0 8px 20px rgba(0,0,0,0.45)",
-              zIndex: 3000,
-              pointerEvents: "none",
             }}
           >
             {text}

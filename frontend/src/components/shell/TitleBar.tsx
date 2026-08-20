@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useSaveTrigger } from "../../lib/useSaveTrigger";
 import { useProjectStore } from "../../store/projectStore";
@@ -8,40 +8,27 @@ import { SettingsModal } from "./SettingsModal";
 function TrafficLights() {
   const win = getCurrentWindow();
   return (
-    <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}>
+    <div className="traffic-light">
       <button
         onClick={() => win.close()}
-        style={dot("#e05c5c")}
+        style={{ background: "#e05c5c" }}
         title="Close"
         aria-label="Close window"
       />
       <button
         onClick={() => win.minimize()}
-        style={dot("#f5a623")}
+        style={{ background: "#f5a623" }}
         title="Minimize"
         aria-label="Minimize window"
       />
       <button
         onClick={() => win.toggleMaximize()}
-        style={dot("#4dba7f")}
+        style={{ background: "#4dba7f" }}
         title="Maximize"
         aria-label="Maximize window"
       />
     </div>
   );
-}
-
-function dot(color: string): React.CSSProperties {
-  return {
-    width: 12,
-    height: 12,
-    borderRadius: "50%",
-    background: color,
-    border: "none",
-    cursor: "pointer",
-    padding: 0,
-    flexShrink: 0,
-  };
 }
 
 export function TitleBar() {
@@ -54,60 +41,18 @@ export function TitleBar() {
   const parentDir = filePath ? parentFromProjFile(filePath) : "";
 
   return (
-    <div
-      style={{
-        height: "var(--titlebar-h)",
-        display: "flex",
-        alignItems: "center",
-        background: "var(--bg1)",
-        borderBottom: "1px solid var(--border)",
-        padding: "0 12px",
-        userSelect: "none",
-        flexShrink: 0,
-        position: "relative",
-        zIndex: 10001,
-      }}
-    >
+    <div className="bar titlebar">
       <TrafficLights />
 
       <div
         data-tauri-drag-region
-        style={{
-          flex: 1,
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          gap: 6,
-          minWidth: 0,
-          height: "100%",
-        }}
+        className="titlebar-center"
       >
-        <span
-          style={{
-            color: "var(--text)",
-            fontSize: 12,
-            fontFamily: "var(--font-mono)",
-            fontWeight: 600,
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            maxWidth: 240,
-          }}
-        >
+        <span className="titlebar-title">
           {name}
         </span>
         {parentDir && (
-          <span
-            style={{
-              color: "var(--muted)",
-              fontSize: 11,
-              fontFamily: "var(--font-mono)",
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              maxWidth: 320,
-            }}
-          >
+          <span className="titlebar-subtitle">
             {parentDir}
           </span>
         )}
@@ -115,17 +60,7 @@ export function TitleBar() {
 
       <button
         onClick={() => setSettingsOpen(true)}
-        style={{
-          background: "none",
-          border: "none",
-          color: "var(--muted)",
-          fontSize: 14,
-          cursor: "pointer",
-          padding: "2px 6px",
-          marginRight: 4,
-          flexShrink: 0,
-          lineHeight: 1,
-        }}
+        className="titlebar-icon-btn"
         title="Settings"
         aria-label="Open settings"
       >
@@ -134,19 +69,7 @@ export function TitleBar() {
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <button
         onClick={triggerSave}
-        style={{
-          background: saving ? "var(--green-dim)" : "var(--bg3)",
-          border: `1px solid ${saving ? "var(--green)" : "var(--border)"}`,
-          color: saving ? "var(--green)" : "var(--muted)",
-          fontSize: 11,
-          fontFamily: "var(--font-sans)",
-          padding: "3px 10px",
-          borderRadius: "var(--radius-sm)",
-          cursor: "pointer",
-          transition: "var(--transition-fast)",
-          flexShrink: 0,
-          fontWeight: saving ? 600 : 400,
-        }}
+        className={`titlebar-save titlebar-save-${saving ? "on" : "off"}`}
         title="Save project (Ctrl+S)"
       >
         {saving ? "Saved" : "Save"}

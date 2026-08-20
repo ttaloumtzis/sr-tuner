@@ -76,13 +76,13 @@ export function MetricCards() {
 
   return (
     <div style={{ display: "flex", gap: 8, padding: "10px 16px", flexShrink: 0, flexWrap: "wrap" }}>
-      <MetricCard label="G LOSS" value={fmt(gLoss)} sub={isGan ? `disc ${fmt(dLoss)}` : "no disc"}
+      <MetricCard label="G LOSS" value={fmt(gLoss, 4)} sub={isGan ? `disc ${fmt(dLoss, 4)}` : "no disc"}
         accent="var(--green)" sparkline={lossHistory} />
       <MetricCard label="PSNR (dB)" value={fmt(psnr, 2)}
         sub={fullPsnr != null ? `full ${fmt(fullPsnr, 2)}${fullEpochLabel}` : undefined}
         accent="var(--green)" sparkline={psnrHistory} />
-      <MetricCard label="SSIM" value={fmt(ssim)}
-        sub={fullSsim != null ? `full ${fmt(fullSsim)}${fullEpochLabel}` : undefined}
+      <MetricCard label="SSIM" value={fmt(ssim, 4)}
+        sub={fullSsim != null ? `full ${fmt(fullSsim, 4)}${fullEpochLabel}` : undefined}
         accent="var(--blue)" sparkline={ssimHistory} />
       {hasGpu && (
         <MetricCard label="GPU" value={fmtPct(gpuUtil)}

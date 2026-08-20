@@ -78,50 +78,19 @@ export function Dropdown({
     onChange?.(v);
   };
 
-  const inputBase: React.CSSProperties = {
-    background: "var(--bg3)",
-    border: `1px solid ${open ? "var(--green)" : "var(--border)"}`,
-    borderRadius: "var(--radius-sm)",
-    padding: "5px 8px",
-    fontSize: 12,
-    color: selected ? "var(--text)" : "var(--dim)",
-    width: "100%",
-    outline: "none",
-    transition: "border-color 0.15s",
-    fontFamily: mono ? "var(--font-mono)" : "var(--font-sans)",
-    cursor: "pointer",
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    userSelect: "none",
-  };
-
   const menu = open
     ? ReactDOM.createPortal(
-        <div
-          style={{
-            ...menuStyle,
-            background: "var(--bg2)",
-            border: "1px solid var(--border2)",
-            borderRadius: "var(--radius-sm)",
-            boxShadow: "0 8px 28px rgba(0,0,0,0.5)",
-            maxHeight: 200,
-            overflowY: "auto",
-          }}
-        >
+        <div className="dropdown-menu" style={menuStyle}>
           {resolved.map((opt) => {
             const active = opt.value === value;
             return (
               <div
                 key={opt.value}
                 onClick={() => select(opt.value)}
+                className={
+                  active ? "dropdown-option dropdown-option-active" : "dropdown-option"
+                }
                 style={{
-                  padding: "6px 9px",
-                  fontSize: 12,
-                  cursor: "pointer",
-                  color: active ? "var(--green)" : "var(--text)",
-                  background: active ? "var(--green-dim)" : "transparent",
-                  transition: "background 0.1s",
                   fontFamily: mono ? "var(--font-mono)" : "var(--font-sans)",
                 }}
                 onMouseEnter={(e) => {
@@ -136,7 +105,7 @@ export function Dropdown({
                 }}
               >
                 {active && (
-                  <span style={{ marginRight: 6, fontSize: 10 }}>✓</span>
+                  <span className="dropdown-check">✓</span>
                 )}
                 {opt.label}
               </div>
@@ -149,27 +118,21 @@ export function Dropdown({
 
   return (
     <>
-      <div ref={triggerRef} style={inputBase} onClick={handleOpen}>
-        <span
-          style={{
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            flex: 1,
-          }}
-        >
+      <div
+        ref={triggerRef}
+        className={`dropdown${open ? " dropdown-open" : ""}`}
+        onClick={handleOpen}
+        style={{
+          fontFamily: mono ? "var(--font-mono)" : "var(--font-sans)",
+          color: selected ? "var(--text)" : "var(--dim)",
+        }}
+      >
+        <span className="dropdown-value">
           {selected?.label ?? placeholder}
         </span>
         <span
-          style={{
-            color: "var(--muted)",
-            marginLeft: 8,
-            flexShrink: 0,
-            display: "inline-block",
-            transition: "transform 0.15s",
-            transform: open ? "rotate(180deg)" : "none",
-            fontSize: 12,
-          }}
+          className="dropdown-caret"
+          style={{ transform: open ? "rotate(180deg)" : "none" }}
         >
           ▾
         </span>

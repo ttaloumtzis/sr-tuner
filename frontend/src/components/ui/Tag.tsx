@@ -18,15 +18,11 @@ export function Tag({ color = "green", children }: TagProps) {
   const c = COLOR_MAP[color] ?? COLOR_MAP.green;
   return (
     <span
+      className="tag"
       style={{
         background: c + "22",
         color: c,
         border: `1px solid ${c}44`,
-        borderRadius: "var(--radius-sm)",
-        padding: "1px 6px",
-        fontFamily: "var(--font-mono)",
-        fontSize: 10,
-        whiteSpace: "nowrap",
       }}
     >
       {children}

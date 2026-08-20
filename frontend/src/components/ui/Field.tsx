@@ -8,27 +8,13 @@ interface FieldProps {
 
 export function Field({ label, hint, children }: FieldProps) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-        <label
-          style={{
-            fontSize: 9.5,
-            color: "var(--muted)",
-            textTransform: "uppercase",
-            letterSpacing: "0.06em",
-            fontFamily: "var(--font-sans)",
-          }}
-        >
+    <div className="field">
+      <div className="field-label">
+        <label className="field-label-text">
           {label}
         </label>
         {hint && (
-          <span
-            style={{
-              fontSize: 10,
-              color: "var(--dim)",
-              fontStyle: "italic",
-            }}
-          >
+          <span className="field-hint">
             {hint}
           </span>
         )}

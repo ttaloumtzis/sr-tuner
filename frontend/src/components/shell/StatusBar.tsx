@@ -29,18 +29,7 @@ export function StatusBar() {
 
   return (
     <div
-      style={{
-        height: "var(--statusbar-h)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        background: "var(--bg1)",
-        borderTop: "1px solid var(--border)",
-        padding: "0 12px",
-        flexShrink: 0,
-        fontSize: 11,
-        fontFamily: "var(--font-mono)",
-      }}
+      className="bar bar-top statusbar"
     >
       <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
         {project && (
