@@ -282,4 +282,128 @@ describe("ScreenInference (14.x)", () => {
       }),
     );
   });
+
+  it("submits a checkpoint payload (model + instance, no version) when a run checkpoint is selected", async () => {
+    mockStartInference.mockResolvedValue({ job_id: "infer.1", status: "accepted" });
+    const { ScreenInference } = await import("../ScreenInference");
+    render(<ScreenInference />);
+    await act(async () => {});
+    act(() => {
+      const s = useInferenceStore.getState();
+      s.setInputPath("/in/foo.png");
+      s.setOutputDir("/out");
+      s.setModelPath("/runs/my-model/run_x/epoch_5.pt");
+      s.setInstance("my-model");
+    });
+    await act(async () => {});
+    act(() => {
+      screen.getByRole("button", { name: /run inference/i }).click();
+    });
+    await act(async () => {});
+
+    expect(mockStartInference).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "/runs/my-model/run_x/epoch_5.pt",
+        instance: "my-model",
+      }),
+    );
+    const args = mockStartInference.mock.calls[0][0] as Record<string, unknown>;
+    expect(args).not.toHaveProperty("version");
+  });
+
+  it("walks the instance → run → epoch cascade for a run checkpoint", async () => {
+    const { ScreenInference } = await import("../ScreenInference");
+    render(<ScreenInference />);
+    await act(async () => {});
+    act(() => {
+      useInferenceStore.getState().setInputPath("/in/foo.png");
+    });
+    await act(async () => {});
+
+    fireEvent.click(screen.getByText("Run checkpoint"));
+    await act(async () => {});
+
+    fireEvent.click(screen.getByText("Select instance…"));
+    fireEvent.click(screen.getByText("my-model"));
+    await act(async () => {});
+    expect(mockListRuns).toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText("Select run…"));
+    fireEvent.click(screen.getByText("run_001"));
+    await act(async () => {});
+    expect(mockListRunCheckpoints).toHaveBeenCalledWith("my-model", "run_20260701_080000");
+
+    fireEvent.click(screen.getByText("Select checkpoint…"));
+    fireEvent.click(screen.getByText(/epoch_5\.pt/));
+    await act(async () => {});
+
+    const s = useInferenceStore.getState();
+    expect(s.modelPath).toBe("/runs/my-model/run_x/epoch_5.pt");
+    expect(s.instance).toBe("my-model");
+    expect(s.version).toBeNull();
+    expect(s.checkpointRunId).toBe("run_20260701_080000");
+  });
+
+  it("shows empty states for an instance without runs and a run without checkpoints", async () => {
+    mockListInstances.mockResolvedValue([
+      { name: "my-model", path: "/m", architecture: "rrdb_esrgan", scale: 4, checkpoints: [], latest_version: "v2", config: {} },
+      { name: "empty-model", path: "/e", architecture: "rrdb_esrgan", scale: 4, checkpoints: [], latest_version: null, config: {} },
+    ]);
+    const { ScreenInference } = await import("../ScreenInference");
+    render(<ScreenInference />);
+    await act(async () => {});
+    act(() => {
+      useInferenceStore.getState().setInputPath("/in/foo.png");
+    });
+    await act(async () => {});
+
+    fireEvent.click(screen.getByText("Run checkpoint"));
+    await act(async () => {});
+
+    // Instance without runs → run dropdown shows an empty state.
+    fireEvent.click(screen.getByText("Select instance…"));
+    fireEvent.click(screen.getByText("empty-model"));
+    await act(async () => {});
+    expect(screen.getByText("No runs yet — start training")).toBeTruthy();
+
+    // Instance with a run but no checkpoints → epoch dropdown shows an empty state.
+    mockListRunCheckpoints.mockResolvedValue([]);
+    fireEvent.click(screen.getByText("empty-model"));
+    fireEvent.click(screen.getByText("my-model"));
+    await act(async () => {});
+    fireEvent.click(screen.getByText("Select run…"));
+    fireEvent.click(screen.getByText("run_001"));
+    await act(async () => {});
+    expect(screen.getByText("No checkpoints saved yet")).toBeTruthy();
+  });
+
+  it("clears a stale instance/version selection when a run checkpoint is preselected with its instance", async () => {
+    const { ScreenInference } = await import("../ScreenInference");
+    render(<ScreenInference />);
+    await act(async () => {});
+    act(() => {
+      const s = useInferenceStore.getState();
+      s.setInstance("my-model");
+      s.setVersion("v2");
+      s.setModelPath("/models/my-model/versions/v2/model.pt");
+    });
+    await act(async () => {});
+    act(() => {
+      const s = useInferenceStore.getState();
+      s.setPreselectedInstance("my-model");
+      s.setPreselectedCheckpointPath("/runs/my-model/run_x/epoch_5.pt");
+      s.setCheckpointContext("run_20260701_080000", "run_001");
+    });
+    await act(async () => {});
+
+    const s = useInferenceStore.getState();
+    expect(s.instance).toBe("my-model");
+    expect(s.version).toBeNull();
+    expect(s.modelPath).toBe("/runs/my-model/run_x/epoch_5.pt");
+    expect(s.preselectedCheckpointPath).toBeNull();
+    expect(s.preselectedInstance).toBeNull();
+    // The version dropdown must not render alongside the checkpoint file.
+    expect(screen.queryByText("Version")).toBeNull();
+    expect(screen.getByText(/epoch_5\.pt/)).toBeTruthy();
+  });
 });

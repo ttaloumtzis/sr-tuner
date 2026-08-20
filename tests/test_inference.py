@@ -432,3 +432,164 @@ class TestRunInferenceWorkerInstance:
         rec = tasks.list_jobs()[0]
         assert rec.status == "failed"
         assert "architecture" in (rec.error or "")
+
+
+class TestRunInferenceWorkerRunCheckpoint:
+    """``run_inference`` with a run checkpoint (``model``) + owning ``instance``.
+
+    Mid-run checkpoints store a config that omits architecture params; the
+    architecture must be reconstructed from the owning instance's config.yaml.
+    """
+
+    def _make_custom_arch_instance(self, tmp_path):
+        from sr_engine.workspace import Workspace
+        ws = Workspace(tmp_path / "ws")
+        ws.init()
+        ws.create_model_instance("my-model", {
+            "architecture": "rrdb_esrgan",
+            "num_feat": 32,
+            "num_block": 8,
+            "num_grow_ch": 16,
+            "num_in_ch": 3,
+            "num_out_ch": 3,
+            "scale": 4,
+        })
+        return ws
+
+    def _make_run_checkpoint(self, tmp_path, *, num_feat=32, num_block=8):
+        """Save a mid-run checkpoint whose config omits architecture params."""
+        from sr_engine.models.archs.rrdbnet import RRDBNet
+        from sr_engine.models.checkpoint import save_checkpoint
+        model = RRDBNet(
+            num_feat=num_feat, num_block=num_block, num_grow_ch=16,
+            num_in_ch=3, num_out_ch=3, scale=4,
+        )
+        ckpt = tmp_path / "runs" / "run_001" / "epoch_001.pt"
+        save_checkpoint(
+            path=ckpt,
+            state_dict=model.state_dict(),
+            step=1,
+            config={
+                "name": "rrdb_esrgan",
+                "scale": 4,
+                "model_format": "torch",
+                "training_dtype": "float32",
+            },
+        )
+        return ckpt
+
+    def _run(self, tmp_path, params, ws):
+        from sr_engine.api.task_manager import BackgroundTaskManager
+        from sr_engine.api.workers import run_inference
+        tasks = BackgroundTaskManager()
+        job_id = tasks.create_job("infer")
+        events = []
+        class FakeEvents:
+            def publish(self, jid, event):
+                events.append((jid, event))
+        run_inference(job_id, params, ws, tasks, FakeEvents())
+        return tasks, events
+
+    def test_custom_architecture_run_checkpoint_loads(self, tmp_path, sample_image):
+        """A run checkpoint (config without arch params) + owning instance works."""
+        ws = self._make_custom_arch_instance(tmp_path)
+        ckpt = self._make_run_checkpoint(tmp_path)
+        out = tmp_path / "out.png"
+        tasks, _ = self._run(tmp_path, {
+            "model": str(ckpt),
+            "instance": "my-model",
+            "input": str(sample_image),
+            "output": str(out),
+            "format": "png",
+            "tile": 0,
+            "overlap": 0,
+            "device": "cpu",
+        }, ws)
+        rec = tasks.list_jobs()[0]
+        assert rec.status == "completed", rec.error
+        assert rec.result["success"] is True
+        assert rec.result["output"] == str(out)
+        assert out.exists()
+
+    def test_weight_mismatch_fails_with_clear_error(self, tmp_path, sample_image):
+        """Weights from a different architecture than the instance fail clearly."""
+        ws = self._make_custom_arch_instance(tmp_path)
+        ckpt = self._make_run_checkpoint(tmp_path, num_feat=64, num_block=23)
+        out = tmp_path / "out.png"
+        tasks, events = self._run(tmp_path, {
+            "model": str(ckpt),
+            "instance": "my-model",
+            "input": str(sample_image),
+            "output": str(out),
+            "format": "png",
+            "tile": 0,
+            "overlap": 0,
+            "device": "cpu",
+        }, ws)
+        rec = tasks.list_jobs()[0]
+        assert rec.status == "failed"
+        assert "my-model" in (rec.error or "")
+        assert any(e.get("type") == "error" for _, e in events if isinstance(e, dict))
+
+
+class TestRunInferenceUniquePreviews:
+    """Preview filenames derive from the output stem — unique per run."""
+
+    def _make_rrdb_checkpoint(self, tmp_path):
+        from sr_engine.models.archs.rrdbnet import RRDBNet
+        model = RRDBNet(num_in_ch=3, num_out_ch=3, scale=4)
+        ckpt = tmp_path / "model.pt"
+        torch.save({
+            "state_dict": model.state_dict(),
+            "config": {"name": "rrdb_esrgan", "scale": 4, "num_in_ch": 3, "num_out_ch": 3},
+        }, ckpt)
+        return ckpt
+
+    def _make_image(self, path):
+        import cv2
+        import numpy as np
+        cv2.imwrite(str(path), np.random.randint(0, 256, (64, 64, 3), dtype=np.uint8))
+
+    def _run(self, tmp_path, params):
+        from sr_engine.api.task_manager import BackgroundTaskManager
+        from sr_engine.api.workers import run_inference
+        tasks = BackgroundTaskManager()
+        job_id = tasks.create_job("infer")
+        events = []
+        class FakeEvents:
+            def publish(self, jid, event):
+                events.append((jid, event))
+        run_inference(job_id, params, None, tasks, FakeEvents())
+        rec = tasks.list_jobs()[0]
+        assert rec.status == "completed", rec.error
+        return rec.result
+
+    def test_consecutive_runs_produce_distinct_previews(self, tmp_path):
+        """Two runs into the same output dir yield distinct preview paths."""
+        ckpt = self._make_rrdb_checkpoint(tmp_path)
+        img_a = tmp_path / "a.png"
+        img_b = tmp_path / "b.png"
+        self._make_image(img_a)
+        self._make_image(img_b)
+
+        results = []
+        for i, img in enumerate((img_a, img_b)):
+            results.append(self._run(tmp_path, {
+                "model": str(ckpt),
+                "input": str(img),
+                "output": str(tmp_path / "outdir" / f"result_{i}.png"),
+                "format": "png",
+                "tile": 0,
+                "overlap": 0,
+                "device": "cpu",
+            }))
+
+        assert results[0]["preview_input_path"] != results[1]["preview_input_path"]
+        assert results[0]["preview_output_path"] != results[1]["preview_output_path"]
+        assert "result_0" in results[0]["preview_input_path"]
+        assert "result_1" in results[1]["preview_input_path"]
+        assert "result_0" in results[0]["preview_output_path"]
+        assert "result_1" in results[1]["preview_output_path"]
+        for r in results:
+            assert Path(r["preview_input_path"]).exists()
+            assert Path(r["preview_output_path"]).exists()

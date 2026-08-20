@@ -8,11 +8,15 @@ interface InferenceState {
   inputPath: string | null;
   gtPath: string | null;
 
-  // Model (either a model instance + version, or a raw checkpoint path)
+  // Model (either a model instance + version, a run checkpoint, or a raw path)
   preselectedCheckpointPath: string | null; // §13.9b — set by Checkpoints tab
+  preselectedInstance: string | null; // owning instance carried with a preselected checkpoint
   instance: string | null;
   version: string | null;
   modelPath: string | null;
+  // Frontend-only context for a run-checkpoint selection (display only).
+  checkpointRunId: string | null;
+  checkpointRunLabel: string | null;
 
   // Output
   outputDir: string;
@@ -37,9 +41,11 @@ interface InferenceState {
   setInputPath: (path: string | null) => void;
   setGtPath: (path: string | null) => void;
   setPreselectedCheckpointPath: (path: string | null) => void;
+  setPreselectedInstance: (name: string | null) => void;
   setInstance: (name: string | null) => void;
   setVersion: (version: string | null) => void;
   setModelPath: (path: string | null) => void;
+  setCheckpointContext: (runId: string | null, runLabel: string | null) => void;
   setOutputDir: (dir: string) => void;
   setOutputFormat: (fmt: "png" | "jpeg" | "webp" | "tiff") => void;
   setTileSize: (size: number) => void;
@@ -57,9 +63,12 @@ export const useInferenceStore = create<InferenceState>((set) => ({
   inputPath: null,
   gtPath: null,
   preselectedCheckpointPath: null,
+  preselectedInstance: null,
   instance: null,
   version: null,
   modelPath: null,
+  checkpointRunId: null,
+  checkpointRunLabel: null,
   outputDir: "",
   outputFormat: "png",
   tileSize: 0,
@@ -75,9 +84,11 @@ export const useInferenceStore = create<InferenceState>((set) => ({
   setInputPath: (inputPath) => set({ inputPath }),
   setGtPath: (gtPath) => set({ gtPath }),
   setPreselectedCheckpointPath: (path) => set({ preselectedCheckpointPath: path }),
+  setPreselectedInstance: (name) => set({ preselectedInstance: name }),
   setInstance: (instance) => set({ instance, version: null }),
   setVersion: (version) => set({ version }),
   setModelPath: (modelPath) => set({ modelPath }),
+  setCheckpointContext: (checkpointRunId, checkpointRunLabel) => set({ checkpointRunId, checkpointRunLabel }),
   setOutputDir: (outputDir) => set({ outputDir }),
   setOutputFormat: (outputFormat) => set({ outputFormat }),
   setTileSize: (tileSize) => set({ tileSize }),

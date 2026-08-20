@@ -910,7 +910,14 @@ export function ScreenCheckpoints() {
         onResume={handleResume}
         onRunInference={() => {
           if (selectedCheckpointPath) {
-            useInferenceStore.getState().setPreselectedCheckpointPath(selectedCheckpointPath);
+            const inf = useInferenceStore.getState();
+            inf.setPreselectedInstance(selectedInstance);
+            inf.setPreselectedCheckpointPath(selectedCheckpointPath);
+            if (selectedRunId) {
+              const inst = models.find((m) => m.name === selectedInstance);
+              const displays = inst ? buildRunDisplays(inst.runs) : new Map();
+              inf.setCheckpointContext(selectedRunId, displays.get(selectedRunId)?.label ?? shortRunId(selectedRunId));
+            }
           }
           setActiveTab("inference");
         }}

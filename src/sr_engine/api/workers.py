@@ -32,6 +32,7 @@ from sr_engine.engine.inference import (
 )
 from sr_engine.engine.metrics_stream import MetricsStream
 from sr_engine.engine.trainer import Trainer, TrainingCancelled
+from sr_engine.models.checkpoint import load_checkpoint
 from sr_engine.models.registry import build_model
 from sr_engine.utils.config import DefaultConfigs, load_config, merge_overrides
 from sr_engine.utils.logging import get_logger
@@ -454,12 +455,25 @@ def run_inference(
                     f"Instance '{instance}' config.yaml has neither "
                     "'architecture' nor 'name' — cannot reconstruct the model."
                 )
-            v_path = ws.resolve_version(instance, version)
-            if not v_path:
-                raise FileNotFoundError(f"No version found for instance '{instance}'")
-            state_dict = torch.load(v_path, weights_only=True, map_location="cpu")
-            loaded_model = build_model(arch, inst_cfg)
-            loaded_model.load_state_dict(state_dict)
+            if model:
+                # Run-checkpoint path: architecture from the owning instance's
+                # config.yaml, weights from the checkpoint file.
+                ckpt = load_checkpoint(Path(model), map_location="cpu")
+                loaded_model = build_model(arch, inst_cfg)
+                try:
+                    loaded_model.load_state_dict(ckpt["state_dict"])
+                except RuntimeError as e:
+                    raise ValueError(
+                        f"Checkpoint '{model}' weights do not match instance "
+                        f"'{instance}' architecture ({arch}): {e}"
+                    ) from e
+            else:
+                v_path = ws.resolve_version(instance, version)
+                if not v_path:
+                    raise FileNotFoundError(f"No version found for instance '{instance}'")
+                state_dict = torch.load(v_path, weights_only=True, map_location="cpu")
+                loaded_model = build_model(arch, inst_cfg)
+                loaded_model.load_state_dict(state_dict)
             loaded_model = loaded_model.to(device).eval()
             model_scale = int(inst_cfg.get("scale", 4))
         elif model:
@@ -509,9 +523,12 @@ def run_inference(
             output_res = image_size(result)
 
             # Cached downscaled previews for the frontend comparison slider.
+            # Names derive from the output stem so consecutive runs into the
+            # same directory produce distinct paths/URLs (no stale-cache shows).
             preview_dir = result.parent / ".sr-preview"
-            preview_lr = write_preview(input_path, preview_dir / "input_preview.png")
-            preview_sr = write_preview(result, preview_dir / "output_preview.png")
+            preview_stem = result.stem
+            preview_lr = write_preview(input_path, preview_dir / f"{preview_stem}_input_preview.png")
+            preview_sr = write_preview(result, preview_dir / f"{preview_stem}_output_preview.png")
 
             metrics = None
             if gt_path is not None and gt_path.exists():

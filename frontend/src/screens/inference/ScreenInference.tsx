@@ -14,7 +14,9 @@ import { PBar } from "../../components/ui/PBar";
 import { InlineAlert } from "../../components/ui/InlineAlert";
 import { useInferenceSSE } from "../../hooks/useInferenceSSE";
 import { basename, join } from "../../lib/path";
-import type { ModelVersion } from "../../lib/api-types";
+import type { CheckpointEntry, ModelVersion, RunInfo } from "../../lib/api-types";
+import { buildRunDisplays, shortRunId } from "../../lib/runLabel";
+import { useCheckpointStore } from "../../store/checkpointStore";
 import { CHECKERBOARD_BG } from "../../lib/checkerboardBg";
 
 // ── Drop zone ─────────────────────────────────────────────────────────────
@@ -148,6 +150,21 @@ function ModelPanel() {
   const [instanceMeta, setInstanceMeta] = useState<Record<string, { architecture: string | null; scale: number | null }>>({});
   const [selInstance, setSelInstance] = useState<string | null>(null);
   const [versions, setVersions] = useState<ModelVersion[]>([]);
+  const [runs, setRuns] = useState<RunInfo[]>([]);
+  const [runDisplays, setRunDisplays] = useState<Map<string, { group: string; label: string }>>(new Map());
+  const [selRun, setSelRun] = useState<string | null>(null);
+  const [runCheckpoints, setRunCheckpoints] = useState<CheckpointEntry[]>([]);
+  const [sourceTab, setSourceTab] = useState<"version" | "run-checkpoint">("version");
+
+  // Model source is derived from store state: version wins, then a run
+  // checkpoint (instance + checkpoint path), then a raw file, then the tab.
+  const mode: "version" | "run-checkpoint" | "raw" = store.version
+    ? "version"
+    : store.instance && store.modelPath
+      ? "run-checkpoint"
+      : store.modelPath
+        ? "raw"
+        : sourceTab;
 
   // Fetch model instances on mount, then sync store state.
   useEffect(() => {
@@ -161,9 +178,10 @@ function ModelPanel() {
         setInstanceMeta(meta);
 
         // If the store already has an instance selected, seed the local state
-        // and fetch versions so stale selections are cleared.
+        // so stale selections are cleared. Version-mode only: fetching versions
+        // is pointless for a run-checkpoint (no version selected).
         const storedInstance = store.instance;
-        if (storedInstance && list.some((i) => i.name === storedInstance)) {
+        if (storedInstance && list.some((i) => i.name === storedInstance) && store.version) {
           setSelInstance(storedInstance);
           try {
             const { getInstanceVersions } = await import("../../lib/api");
@@ -187,30 +205,40 @@ function ModelPanel() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // §13.9b — a checkpoint preselected from the Checkpoints tab lands as a raw model file.
+  // §13.9b — a checkpoint preselected from the Checkpoints tab. It carries the
+  // owning instance; reset all local cascade/version state so a stale instance
+  // dropdown or badges can't render alongside the checkpoint file.
   useEffect(() => {
     const pre = store.preselectedCheckpointPath;
     if (pre) {
-      store.setInstance(null);
+      setSelInstance(null);
+      setVersions([]);
+      setRuns([]);
+      setRunDisplays(new Map());
+      setSelRun(null);
+      setRunCheckpoints([]);
+      store.setInstance(store.preselectedInstance);
       store.setVersion(null);
       store.setModelPath(pre);
+      store.setPreselectedInstance(null);
       store.setPreselectedCheckpointPath(null);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [store.preselectedCheckpointPath]);
+
+  // ── Version-mode handlers ────────────────────────────────────────────────
 
   const handleInstanceChange = async (name: string) => {
     setSelInstance(name || null);
     setVersions([]);
     if (!name) {
       store.setInstance(null);
-      store.setVersion(null);
       store.setModelPath(null);
+      store.setCheckpointContext(null, null);
       return;
     }
     store.setInstance(name);
-    store.setVersion(null);
-    store.setModelPath(null);
+    store.setCheckpointContext(null, null);
     try {
       const { getInstanceVersions } = await import("../../lib/api");
       const list = await getInstanceVersions(name);
@@ -244,6 +272,87 @@ function ModelPanel() {
     store.setModelPath(join(v.path, "model.pt"));
   };
 
+  // ── Run-checkpoint cascade handlers ─────────────────────────────────────
+
+  const handleCheckpointInstanceChange = async (name: string) => {
+    setSelInstance(name || null);
+    setRuns([]);
+    setSelRun(null);
+    setRunCheckpoints([]);
+    store.setCheckpointContext(null, null);
+    if (!name) return;
+    try {
+      const { listRuns } = await import("../../lib/api");
+      const all = await listRuns();
+      const inst = all.find((m) => m.name === name);
+      const instRuns = inst?.runs ?? [];
+      setRuns(instRuns);
+      setRunDisplays(buildRunDisplays(instRuns));
+    } catch {
+      setRuns([]);
+      setRunDisplays(new Map());
+    }
+  };
+
+  const handleRunChange = async (runId: string) => {
+    setSelRun(runId || null);
+    setRunCheckpoints([]);
+    if (!runId || !selInstance) return;
+    try {
+      const { listRunCheckpoints } = await import("../../lib/api");
+      const entries = await listRunCheckpoints(selInstance, runId);
+      setRunCheckpoints(entries);
+      // Mirror into checkpointStore — the shared checkpoints cache.
+      useCheckpointStore.getState().setCheckpointsForRun(runId, entries);
+    } catch {
+      setRunCheckpoints([]);
+    }
+  };
+
+  const handleEpochChange = (path: string) => {
+    const entry = runCheckpoints.find((e) => e.path === path);
+    if (!entry || !selInstance || !selRun) return;
+    store.setVersion(null);
+    store.setModelPath(entry.path);
+    store.setInstance(selInstance);
+    const label = runDisplays.get(selRun)?.label ?? shortRunId(selRun);
+    store.setCheckpointContext(selRun, label);
+  };
+
+  const handleChangeCheckpoint = () => {
+    store.setModelPath(null);
+    store.setCheckpointContext(null, null);
+    if (selInstance) handleCheckpointInstanceChange(selInstance);
+  };
+
+  // ── Source toggle ───────────────────────────────────────────────────────
+
+  const handleSelectVersionSource = () => {
+    setSourceTab("version");
+    setSelInstance(null);
+    setVersions([]);
+    setRuns([]);
+    setRunDisplays(new Map());
+    setSelRun(null);
+    setRunCheckpoints([]);
+    store.setInstance(null);
+    store.setModelPath(null);
+    store.setCheckpointContext(null, null);
+  };
+
+  const handleSelectRunCheckpointSource = () => {
+    setSourceTab("run-checkpoint");
+    setSelInstance(null);
+    setVersions([]);
+    setRuns([]);
+    setRunDisplays(new Map());
+    setSelRun(null);
+    setRunCheckpoints([]);
+    store.setInstance(null);
+    store.setModelPath(null);
+    store.setCheckpointContext(null, null);
+  };
+
   const missingAny = versions.some((v) => v.has_weights === false);
   const versionOptions: DropdownOption[] = versions
     .filter((v) => v.has_weights !== false)
@@ -252,34 +361,173 @@ function ModelPanel() {
       label: v.tag,
     }));
 
+  const runOptions: DropdownOption[] = runs.map((r) => ({
+    value: r.run_id,
+    label: runDisplays.get(r.run_id)?.label ?? shortRunId(r.run_id),
+  }));
+
+  const epochOptions: DropdownOption[] = runCheckpoints.map((e) => {
+    const psnr = e.metrics.psnr != null ? ` · PSNR ${e.metrics.psnr.toFixed(2)}` : "";
+    const ssim = e.metrics.ssim != null ? ` · SSIM ${e.metrics.ssim.toFixed(4)}` : "";
+    return { value: e.path, label: `${e.filename}${psnr}${ssim}` };
+  });
+
   const meta = selInstance ? instanceMeta[selInstance] : undefined;
-  const rawFile = !store.instance && store.modelPath;
+
+  const badgeRow = meta && (
+    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+      {meta.architecture && (
+        <span style={{ fontSize: 9, color: "var(--text)", background: "var(--green-dim)", border: "1px solid var(--green)44", borderRadius: "var(--radius-sm)", padding: "1px 6px", fontFamily: "var(--font-mono)" }}>
+          {meta.architecture}
+        </span>
+      )}
+      {meta.scale != null && (
+        <span style={{ fontSize: 9, color: "var(--text)", background: "var(--blue-dim)", border: "1px solid var(--blue)44", borderRadius: "var(--radius-sm)", padding: "1px 6px", fontFamily: "var(--font-mono)" }}>
+          {meta.scale}×
+        </span>
+      )}
+    </div>
+  );
+
+  const emptyHint: React.CSSProperties = {
+    fontSize: 10,
+    color: "var(--dim)",
+    fontFamily: "var(--font-mono)",
+    background: "var(--bg3)",
+    border: "1px solid var(--border)",
+    borderRadius: "var(--radius-sm)",
+    padding: "6px 8px",
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      <Field label="Model">
-        <Dropdown
-          value={selInstance ?? ""}
-          options={instances}
-          onChange={handleInstanceChange}
-          placeholder="Select model…"
-        />
-      </Field>
-      {meta && (
-        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          {meta.architecture && (
-            <span style={{ fontSize: 9, color: "var(--text)", background: "var(--green-dim)", border: "1px solid var(--green)44", borderRadius: "var(--radius-sm)", padding: "1px 6px", fontFamily: "var(--font-mono)" }}>
-              {meta.architecture}
-            </span>
-          )}
-          {meta.scale != null && (
-            <span style={{ fontSize: 9, color: "var(--text)", background: "var(--blue-dim)", border: "1px solid var(--blue)44", borderRadius: "var(--radius-sm)", padding: "1px 6px", fontFamily: "var(--font-mono)" }}>
-              {meta.scale}×
-            </span>
-          )}
-        </div>
+      {/* Model source toggle */}
+      <div style={{ display: "flex", gap: 4 }}>
+        <Btn small variant={mode === "version" ? "solid" : "ghost"} color="var(--green)" onClick={handleSelectVersionSource}>
+          Model version
+        </Btn>
+        <Btn small variant={mode === "run-checkpoint" ? "solid" : "ghost"} color="var(--green)" onClick={handleSelectRunCheckpointSource}>
+          Run checkpoint
+        </Btn>
+      </div>
+
+      {mode === "version" && (
+        <>
+          <Field label="Model">
+            <Dropdown
+              value={selInstance ?? ""}
+              options={instances}
+              onChange={handleInstanceChange}
+              placeholder="Select model…"
+            />
+          </Field>
+          {badgeRow}
+          <div>
+            {missingAny && (
+              <div style={{ marginBottom: 6 }}>
+                <InlineAlert tone="muted">
+                  Some versions are missing weights and are not selectable.
+                </InlineAlert>
+              </div>
+            )}
+            <Field label="Version">
+              <Dropdown
+                value={store.version ?? ""}
+                options={versionOptions}
+                onChange={handleVersionChange}
+                placeholder={selInstance ? (versionOptions.length ? "Select version…" : "No versions yet — save a checkpoint first") : "Select a model first"}
+                mono
+              />
+            </Field>
+          </div>
+        </>
       )}
-      {rawFile ? (
+
+      {mode === "run-checkpoint" && (store.instance && store.modelPath ? (
+        // A checkpoint is selected — show the owning instance + run/epoch context.
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ fontSize: 9, color: "var(--text)", background: "var(--green-dim)", border: "1px solid var(--green)44", borderRadius: "var(--radius-sm)", padding: "1px 6px", fontFamily: "var(--font-mono)" }}>
+              {store.instance}
+            </span>
+            {meta && meta.architecture && (
+              <span style={{ fontSize: 9, color: "var(--text)", background: "var(--green-dim)", border: "1px solid var(--green)44", borderRadius: "var(--radius-sm)", padding: "1px 6px", fontFamily: "var(--font-mono)" }}>
+                {meta.architecture}
+              </span>
+            )}
+            {meta && meta.scale != null && (
+              <span style={{ fontSize: 9, color: "var(--text)", background: "var(--blue-dim)", border: "1px solid var(--blue)44", borderRadius: "var(--radius-sm)", padding: "1px 6px", fontFamily: "var(--font-mono)" }}>
+                {meta.scale}×
+              </span>
+            )}
+          </div>
+          <div
+            style={{
+              fontSize: 10,
+              color: "var(--text)",
+              fontFamily: "var(--font-mono)",
+              background: "var(--bg3)",
+              border: "1px solid var(--border)",
+              borderRadius: "var(--radius-sm)",
+              padding: "5px 8px",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+            title={store.modelPath ?? ""}
+          >
+            {store.checkpointRunLabel ? `${store.checkpointRunLabel} · ${basename(store.modelPath ?? "")}` : basename(store.modelPath ?? "")}
+          </div>
+          <div>
+            <Btn small onClick={handleChangeCheckpoint}>Change checkpoint</Btn>
+          </div>
+        </div>
+      ) : (
+        // Cascade: instance → run → epoch.
+        <>
+          <Field label="Model Instance">
+            <Dropdown
+              value={selInstance ?? ""}
+              options={instances}
+              onChange={handleCheckpointInstanceChange}
+              placeholder="Select instance…"
+            />
+          </Field>
+          {badgeRow}
+          {selInstance && (
+            <Field label="Run">
+              {runs.length > 0 ? (
+                <Dropdown
+                  value={selRun ?? ""}
+                  options={runOptions}
+                  onChange={handleRunChange}
+                  placeholder="Select run…"
+                  mono
+                />
+              ) : (
+                <div style={emptyHint}>No runs yet — start training</div>
+              )}
+            </Field>
+          )}
+          {selRun && (
+            <Field label="Epoch">
+              {runCheckpoints.length > 0 ? (
+                <Dropdown
+                  value={store.modelPath ?? ""}
+                  options={epochOptions}
+                  onChange={handleEpochChange}
+                  placeholder="Select checkpoint…"
+                  mono
+                />
+              ) : (
+                <div style={emptyHint}>No checkpoints saved yet</div>
+              )}
+            </Field>
+          )}
+        </>
+      ))}
+
+      {mode === "raw" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           <span style={{ fontSize: 9, color: "var(--muted)", fontFamily: "var(--font-mono)" }}>Model file</span>
           <div
@@ -300,27 +548,8 @@ function ModelPanel() {
             {basename(store.modelPath ?? "")}
           </div>
           <div>
-            <Btn small onClick={() => store.setModelPath(null)}>Clear</Btn>
+            <Btn small onClick={() => { store.setModelPath(null); store.setCheckpointContext(null, null); }}>Clear</Btn>
           </div>
-        </div>
-      ) : (
-        <div>
-          {missingAny && (
-            <div style={{ marginBottom: 6 }}>
-              <InlineAlert tone="muted">
-                Some versions are missing weights and are not selectable.
-              </InlineAlert>
-            </div>
-          )}
-          <Field label="Version">
-            <Dropdown
-              value={store.version ?? ""}
-              options={versionOptions}
-              onChange={handleVersionChange}
-              placeholder={selInstance ? (versionOptions.length ? "Select version…" : "No versions yet — save a checkpoint first") : "Select a model first"}
-              mono
-            />
-          </Field>
         </div>
       )}
     </div>
@@ -722,9 +951,11 @@ export function ScreenInference() {
         tile: s.tileSize,
         overlap: s.overlap,
         device: s.device,
-        ...(s.instance
-          ? { instance: s.instance, version: s.version ?? undefined }
-          : { model: s.modelPath ?? undefined }),
+        ...(s.version
+          ? { instance: s.instance ?? undefined, version: s.version }
+          : s.modelPath
+            ? { model: s.modelPath, ...(s.instance ? { instance: s.instance } : {}) }
+            : {}),
       });
       store.setActiveJobId(res.job_id);
       store.setStatus("running");
